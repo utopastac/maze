@@ -1,26 +1,24 @@
 import {
-  ACESFilmicToneMapping,
-  PCFShadowMap,
+  BasicShadowMap,
+  NoToneMapping,
   SRGBColorSpace,
   WebGLRenderer,
 } from "three";
 
-export const MAX_PIXEL_RATIO = 2;
-
 export function createRenderer(canvas: HTMLCanvasElement): WebGLRenderer {
   const renderer = new WebGLRenderer({
     canvas,
-    antialias: true,
+    antialias: false,
     alpha: false,
     stencil: false,
     powerPreference: "high-performance",
   });
   renderer.outputColorSpace = SRGBColorSpace;
-  renderer.toneMapping = ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.12;
+  renderer.toneMapping = NoToneMapping;
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = PCFShadowMap;
+  renderer.shadowMap.type = BasicShadowMap;
   renderer.setClearColor(0x000000, 1);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO));
+  renderer.setPixelRatio(1);
   return renderer;
 }
+

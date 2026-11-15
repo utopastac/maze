@@ -1,10 +1,11 @@
-import { STORY, layoutTower } from "../core/layout.ts";
+import { CAMPAIGN_LIVES, campaignSizes, generateCampaign, type Campaign } from "../core/campaign.ts";
+import { STORY, layoutMaze, layoutPlans, layoutTower, type TowerLayout } from "../core/layout.ts";
 import { copyText, forgetLevel, hasLevelHash, levelFromHash, rememberLevel } from "../core/share.ts";
 import { cloneTower, generateTower, type Tower } from "../core/tower.ts";
-import { PlaySettings } from "../core/playSettings.ts";
+import { PlaySettings, snapPixels } from "../core/playSettings.ts";
 import { initPhysics, Simulation } from "../core/simulation.ts";
 import { TiltController } from "../core/tilt.ts";
-import { MAX_PIXEL_RATIO, createRenderer } from "../render/createRenderer.ts";
+import { createRenderer } from "../render/createRenderer.ts";
 import { MazeWorld } from "../render/MazeWorld.ts";
 import { LevelEditor } from "../ui/editor.ts";
 import { Hud } from "../ui/hud.ts";
@@ -13,8 +14,11 @@ import { SettingsPanel } from "../ui/settingsPanel.ts";
 import type { WebGLRenderer } from "three";
 
 const FIRST_SEED = 11;
+const TILT_KEYS = ["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d"];
+const GLANCE_KEYS = new Set(["q", "e", "z", "c"]);
 
-type Phase = "play" | "falling" | "won";
+type Phase = "play" | "falling" | "escaping" | "won" | "lost";
+type Mode = "free" | "campaign";
 
 export class App {
   private readonly canvas: HTMLCanvasElement;
@@ -27,6 +31,9 @@ export class App {
   private readonly editor: LevelEditor;
   private tower: Tower | null = null;
   private authored: Tower | null = null;
+  private mode: Mode = "free";
+  private campaign: Campaign | null = null;
+  private lives = CAMPAIGN_LIVES;
   private shareNote = false;
   private shareTimer = 0;
   private floorAt = 1;
@@ -45,6 +52,7 @@ export class App {
   private lastX = 0;
   private lastY = 0;
   private dragging = false;
+  private recallCamera = false;
   private motion = false;
   private sheetOpen = false;
   private calibrateMotion = false;
@@ -67,6 +75,8 @@ export class App {
     this.settings.subscribe(() => {
       this.sim?.apply(this.settings);
       this.view?.applyCamera();
+      this.view?.applyPicture();
+      this.resize();
     });
     this.editor = new LevelEditor(editor, {
       onPlay: (tower) => this.playEdited(tower),
@@ -77,6 +87,7 @@ export class App {
       onLevel: () => this.level(),
       onReset: () => this.resetBall(),
       onNew: () => this.newMaze(),
+      onCampaign: () => this.startCampaign(),
       onMotion: () => this.toggleMotion(),
       onSettings: () => this.toggleSettings(),
       onEdit: () => this.openEditor(),
@@ -86,7 +97,8 @@ export class App {
       },
     });
     this.overlay = new Overlay(overlay, {
-      onAgain: () => this.newMaze(),
+      onAgain: () => this.replay(),
+      onLeave: () => this.newMaze(),
     });
     this.canvas.addEventListener("pointerdown", this.onPointerDown);
     this.canvas.addEventListener("pointermove", this.onPointerMove);
@@ -104,7 +116,6 @@ export class App {
     await initPhysics();
     this.renderer = createRenderer(this.canvas);
     this.view = new MazeWorld();
-    this.view.bind(this.renderer);
     this.view.useSettings(this.settings);
     const shared = levelFromHash(location.hash);
     if (shared) this.mountTower(shared, true);
@@ -123,15 +134,49 @@ export class App {
   }
 
   private mountTower(tower: Tower, shared: boolean): void {
+    this.mode = "free";
+    this.campaign = null;
+    this.hud.setCampaign(false);
+    const view = this.view;
+    if (!view) return;
+    this.tower = tower;
+    this.authored = cloneTower(tower);
+    this.beginRun(layoutTower(tower), 1, tower.floors.length);
+    if (shared) {
+      if (!this.authored || !rememberLevel(this.authored)) {
+        forgetLevel();
+        this.hud.setNote("Too big to share");
+      }
+    } else forgetLevel();
+  }
+
+  private mountCampaign(): void {
+    const campaign = this.campaign;
+    const view = this.view;
+    if (!campaign || !view) return;
+    this.mode = "campaign";
+    this.authored = null;
+    const count = Math.min(3, campaign.floors.length);
+    const plans = campaign.floors.slice(0, count).map((floor, index) => ({
+      maze: floor.maze,
+      hearts: floor.hearts,
+      goal: index === campaign.floors.length - 1,
+    }));
+    this.tower = { floors: plans.map((plan) => plan.maze) };
+    this.hud.setCampaign(true);
+    this.hud.setLives(this.lives);
+    this.hud.setTower(campaignSizes(campaign), 1);
+    this.beginRun(layoutPlans(plans), 1, campaign.floors.length);
+    forgetLevel();
+  }
+
+  private beginRun(layout: TowerLayout, floorAt: number, floorCount: number): void {
     const view = this.view;
     if (!view) return;
     this.clearFall();
     this.sim?.dispose();
-    this.tower = tower;
-    this.authored = cloneTower(tower);
-    this.floorAt = 1;
-    this.floorCount = tower.floors.length;
-    const layout = layoutTower(tower);
+    this.floorAt = floorAt;
+    this.floorCount = floorCount;
     this.sim = new Simulation(layout, this.settings);
     view.setTower(layout);
     this.phase = "play";
@@ -140,18 +185,27 @@ export class App {
     this.running = false;
     this.tilt.snap();
     this.overlay.hide();
+    this.hud.setCelebrate(false);
     this.hud.showHint();
     this.clearShareNote();
     this.hud.setNote("");
     this.hud.setStats(0, 0);
     this.hud.setFloor(this.floorAt, this.floorCount);
-    if (shared) {
-      if (!rememberLevel(this.authored)) {
-        forgetLevel();
-        this.hud.setNote("Too big to share");
-      }
-    } else forgetLevel();
     view.update(0, this.sim.pose());
+  }
+
+  private startCampaign(): void {
+    if (!this.view) return;
+    if (this.mode === "campaign" && (this.phase === "play" || this.phase === "falling")) return;
+    if (this.editor.isOpen()) {
+      this.editor.hide();
+      this.finishEditing();
+    }
+    this.closeSettings();
+    this.lives = CAMPAIGN_LIVES;
+    this.campaign = generateCampaign(Math.floor(Math.random() * 0x7fffffff));
+    this.mountCampaign();
+    this.resize();
   }
 
   private frame = (now: number): void => {
@@ -169,22 +223,31 @@ export class App {
       return;
     }
 
-    if (this.phase !== "won") {
-      const beforePitch = this.tilt.targetPitch;
-      const beforeRoll = this.tilt.targetRoll;
-      this.tilt.applyKeys(dt, this.keys);
-      if (this.tilt.targetPitch !== beforePitch || this.tilt.targetRoll !== beforeRoll) {
-        this.noteActivity();
+    let tilting = false;
+    if (this.phase === "play" || this.phase === "falling" || this.phase === "escaping") {
+      if (this.phase !== "escaping") {
+        const beforePitch = this.tilt.targetPitch;
+        const beforeRoll = this.tilt.targetRoll;
+        this.tilt.applyKeys(dt, this.keys);
+        if (this.tilt.targetPitch !== beforePitch || this.tilt.targetRoll !== beforeRoll) {
+          this.noteActivity();
+        }
+        tilting = TILT_KEYS.some((key) => this.keys.has(key)) || this.recallCamera;
       }
       this.tilt.smooth(dt);
     }
+    this.recallCamera = false;
+    this.driveCamera(dt, tilting);
 
     const event = sim.update(dt, this.tilt.pitch, this.tilt.roll);
+    const picked = sim.takeHearts();
+    if (this.phase === "play" && picked.length > 0) this.gainLives(picked);
     if (this.phase === "play" && event === "fell") this.drop();
-    else if (this.phase === "play" && event === "goal") this.win();
+    else if (this.phase === "play" && event === "escape") this.beginEscape();
+    else if ((this.phase === "play" || this.phase === "escaping") && event === "goal") this.win();
     else if (this.phase === "play" && event === "descend") this.beginDescend();
 
-    if (this.running && this.phase !== "won") this.seconds += dt;
+    if (this.running && this.phase !== "won" && this.phase !== "lost") this.seconds += dt;
     this.hud.setStats(this.seconds, this.drops);
     const tiltLimit = Math.max(this.settings.tiltRad, 0.001);
     this.hud.setTilt(this.tilt.roll / tiltLimit, this.tilt.pitch / tiltLimit);
@@ -197,9 +260,14 @@ export class App {
   private resize(): void {
     const width = window.innerWidth;
     const height = window.innerHeight;
-    this.renderer?.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO));
-    this.renderer?.setSize(width, height, false);
-    this.view?.resize(width, height);
+    const scale = snapPixels(this.settings.values.pixels);
+    const bufferW = Math.max(1, Math.floor(width / scale));
+    const bufferH = Math.max(1, Math.floor(height / scale));
+    this.renderer?.setPixelRatio(1);
+    this.renderer?.setSize(bufferW, bufferH, false);
+    this.canvas.style.width = `${bufferW * scale}px`;
+    this.canvas.style.height = `${bufferH * scale}px`;
+    this.view?.resize(bufferW * scale, bufferH * scale);
   }
 
   private beginDescend(): void {
@@ -213,13 +281,60 @@ export class App {
     this.tower = { floors: this.tower.floors.slice(1) };
     this.floorAt += 1;
     this.hud.setFloor(this.floorAt, this.floorCount);
+    if (this.mode === "campaign") this.extendCampaign();
     this.clearShareNote();
     this.hud.setNote("");
   }
 
+  private beginEscape(): void {
+    const sim = this.sim;
+    const view = this.view;
+    if (!sim || !view) return;
+    this.phase = "escaping";
+    this.tilt.level();
+    this.tilt.snap();
+    this.dragging = false;
+    this.dragPointer = null;
+    view.shatterEscape();
+    sim.beginEscape();
+    this.clearShareNote();
+    this.hud.setNote("");
+    this.hud.hideHint();
+  }
+
+  private extendCampaign(): void {
+    const campaign = this.campaign;
+    const sim = this.sim;
+    const view = this.view;
+    if (!campaign || !sim || !view) return;
+    const index = this.floorAt + 1;
+    const floor = campaign.floors[index];
+    if (floor) {
+      const layout = layoutMaze(floor.maze, index === campaign.floors.length - 1, floor.hearts);
+      sim.appendFloor(layout);
+      view.appendFloor(layout);
+    }
+    this.hud.setTowerFloor(this.floorAt);
+  }
+
+  private gainLives(cells: string[]): void {
+    if (this.mode !== "campaign") return;
+    this.lives += cells.length;
+    for (const cell of cells) this.view?.collectHeart(cell);
+    this.hud.setLives(this.lives, true);
+  }
+
   private drop(): void {
-    this.phase = "falling";
     this.drops += 1;
+    if (this.mode === "campaign") {
+      this.lives -= 1;
+      this.hud.setLives(this.lives);
+      if (this.lives <= 0) {
+        this.lose();
+        return;
+      }
+    }
+    this.phase = "falling";
     this.sim?.hold();
     this.clearShareNote();
     this.hud.setNote("Dropped");
@@ -239,18 +354,59 @@ export class App {
     this.running = false;
     this.dragging = false;
     this.dragPointer = null;
-    this.overlay.showWin(this.seconds, this.drops);
+    this.hud.hideHint();
+    this.hud.setCelebrate(true);
+    this.closeSettings();
+    this.clearFall();
+    this.fallTimer = window.setTimeout(() => {
+      this.fallTimer = 0;
+      if (this.phase !== "won") return;
+      if (this.mode === "campaign") this.overlay.showCampaignWin(this.seconds, this.drops, this.lives);
+      else this.overlay.showWin(this.seconds, this.drops);
+    }, 1100);
+  }
+
+  private lose(): void {
+    this.phase = "lost";
+    this.clearShareNote();
+    this.running = false;
+    this.dragging = false;
+    this.dragPointer = null;
+    this.sim?.hold();
+    this.clearFall();
+    this.overlay.showCampaignLoss(this.floorAt, this.floorCount, this.seconds);
     this.hud.hideHint();
     this.closeSettings();
   }
 
   private resetBall(): void {
+    if (this.phase === "lost") return;
     this.clearFall();
     this.sim?.resetBall();
     this.clearShareNote();
     this.hud.setNote("");
-    if (this.phase === "won") this.overlay.hide();
+    if (this.phase === "won") {
+      this.overlay.hide();
+      this.hud.setCelebrate(false);
+    }
     if (this.phase !== "play") this.phase = "play";
+  }
+
+  private replay(): void {
+    if (this.mode === "campaign" && this.campaign) {
+      this.lives = CAMPAIGN_LIVES;
+      this.campaign = generateCampaign(this.campaign.seed);
+      this.mountCampaign();
+      this.resize();
+      return;
+    }
+    if (this.authored) {
+      this.mountTower(cloneTower(this.authored), hasLevelHash(location.hash));
+      this.resize();
+      return;
+    }
+    this.mount(this.seed);
+    this.resize();
   }
 
   private newMaze(): void {
@@ -262,6 +418,7 @@ export class App {
   private level(): void {
     this.tilt.level();
     this.calibrateMotion = true;
+    this.recallCamera = true;
   }
 
   private openEditor(): void {
@@ -270,6 +427,8 @@ export class App {
     this.dragging = false;
     this.dragPointer = null;
     this.keys.clear();
+    this.hud.setHeld(this.keys);
+    this.view?.restCamera();
     this.editor.open(this.authored);
     this.hud.setEditSelected(true);
     this.hud.hideHint();
@@ -380,7 +539,13 @@ export class App {
   }
 
   private onPointerDown = (event: PointerEvent): void => {
-    if (this.editor.isOpen() || event.button !== 0 || this.phase === "won") return;
+    if (
+      this.editor.isOpen()
+      || event.button !== 0
+      || this.phase === "won"
+      || this.phase === "lost"
+      || this.phase === "escaping"
+    ) return;
     this.dragPointer = event.pointerId;
     this.lastX = event.clientX;
     this.lastY = event.clientY;
@@ -396,6 +561,7 @@ export class App {
     this.lastY = event.clientY;
     if (dx === 0 && dy === 0) return;
     this.tilt.drag(dx, dy);
+    this.recallCamera = true;
     this.noteActivity();
   };
 
@@ -414,25 +580,58 @@ export class App {
     }
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
     if (event.key.startsWith("Arrow") || event.key === " ") event.preventDefault();
-    this.keys.add(key);
+    const chord = event.metaKey || event.ctrlKey || event.altKey;
+    if (!(chord && GLANCE_KEYS.has(key))) this.keys.add(key);
+    this.hud.setHeld(this.keys);
     if (event.repeat) return;
     if (key === "r") this.resetBall();
     if (key === "n") this.newMaze();
     if (key === "l" || event.key === " ") this.level();
+    if (
+      (this.phase === "escaping" || this.phase === "won")
+      && (key === "t" || key === "]" || key === "[")
+    ) {
+      this.view?.cycleWinScene(key === "[" ? -1 : 1);
+    }
   };
 
   private onKeyUp = (event: KeyboardEvent): void => {
     this.keys.delete(event.key.toLowerCase());
+    this.hud.setHeld(this.keys);
   };
 
   private onBlur = (): void => {
     this.keys.clear();
+    this.hud.setHeld(this.keys);
     this.dragging = false;
     this.dragPointer = null;
   };
 
+  private driveCamera(dt: number, tilting: boolean): void {
+    const view = this.view;
+    if (!view) return;
+    if (tilting) {
+      view.recallCamera();
+    } else {
+      let dAngle = 0;
+      let dOrbit = 0;
+      if (this.keys.has("q")) dAngle -= 28 * dt;
+      if (this.keys.has("e")) dAngle += 28 * dt;
+      if (this.keys.has("z")) dOrbit -= 80 * dt;
+      if (this.keys.has("c")) dOrbit += 80 * dt;
+      if (dAngle !== 0 || dOrbit !== 0) view.nudgeCamera(dAngle, dOrbit);
+    }
+    view.stepCamera(dt);
+  };
+
   private onOrientation = (event: DeviceOrientationEvent): void => {
-    if (this.editor.isOpen() || !this.motion || this.dragging || this.phase === "won") return;
+    if (
+      this.editor.isOpen()
+      || !this.motion
+      || this.dragging
+      || this.phase === "won"
+      || this.phase === "escaping"
+    ) return;
     if (event.beta === null || event.gamma === null) return;
     if (this.calibrateMotion || !this.motionOrigin) {
       this.motionOrigin = { beta: event.beta, gamma: event.gamma };
@@ -444,7 +643,12 @@ export class App {
     const gain = (this.settings.tiltRad / (16 * deg)) * this.settings.values.sensitivity;
     const pitch = (event.beta - this.motionOrigin.beta) * deg * gain;
     const roll = (event.gamma - this.motionOrigin.gamma) * deg * gain;
+    const beforePitch = this.tilt.targetPitch;
+    const beforeRoll = this.tilt.targetRoll;
     this.tilt.setAbsolute(-pitch * this.settings.pitchSign(), -roll);
+    if (Math.abs(this.tilt.targetPitch - beforePitch) > 0.01 || Math.abs(this.tilt.targetRoll - beforeRoll) > 0.01) {
+      this.recallCamera = true;
+    }
     this.noteActivity();
   };
 }

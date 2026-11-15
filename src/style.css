@@ -1,6 +1,6 @@
 @font-face {
-  font-family: "Instrument Sans";
-  src: url("./assets/fonts/InstrumentSans.ttf") format("truetype");
+  font-family: "Pixelify Sans";
+  src: url("./assets/fonts/PixelifySans.ttf") format("truetype");
   font-weight: 400 700;
   font-style: normal;
   font-display: swap;
@@ -12,23 +12,18 @@
   --ink-dim: rgba(255, 255, 255, 0.65);
   --ink-faint: rgba(255, 255, 255, 0.45);
   --ink-muted: rgba(255, 255, 255, 0.4);
-  --glass: rgba(0, 0, 0, 0.45);
-  --glass-border: rgba(255, 255, 255, 0.18);
-  --panel-fill: rgba(18, 18, 18, 0.92);
+  --glass: #161616;
+  --glass-border: rgba(255, 255, 255, 0.28);
+  --panel-fill: #121212;
   --selected-fill: #ffffff;
   --selected-ink: #000000;
-  --panel-radius: 40px;
-  --scrim: rgba(0, 0, 0, 0.28);
-  --page-blur: 18px;
+  --panel-radius: 0px;
+  --control-radius: 0px;
+  --panel-shadow: 4px 4px 0 var(--maze-void);
+  --type-shadow: 2px 2px 0 var(--maze-void);
+  --scrim: rgba(0, 0, 0, 0.55);
+  --page-blur: 0px;
   --seam: #ffbc61;
-  --metal-0: #d49214;
-  --metal-1: #6aafdf;
-  --metal-2: #e8b22e;
-  --metal-3: #a84416;
-  --hover-metal-0: #ffbd66;
-  --hover-metal-1: #dbefff;
-  --hover-metal-2: #ffe69e;
-  --hover-metal-3: #c75c29;
   --gap: 14px;
   --icon: 52px;
   --chrome-top: 22px;
@@ -37,7 +32,7 @@
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-left: env(safe-area-inset-left, 0px);
   --safe-right: env(safe-area-inset-right, 0px);
-  --font: "Instrument Sans", system-ui, sans-serif;
+  --font: "Pixelify Sans", ui-monospace, monospace;
   --maze-void: #000000;
   --maze-floor: #2c333b;
   --maze-grout: #514c47;
@@ -70,14 +65,189 @@
   --maze-switch-5: #f4f1ea;
   --maze-goal: #ffbc61;
   --maze-goal-floor: #2a2118;
-  --maze-ball: #f4f1ea;
-  --maze-mark: #ffbc61;
+  --maze-grass: #3f6b3a;
+  --maze-grass-dark: #2a4a28;
+  --maze-sand: #d6c09a;
+  --maze-sand-dark: #b89a6a;
+  --maze-snow: #e8eef4;
+  --maze-snow-shade: #c5d0dc;
+  --maze-dune: #c9a56b;
+  --maze-dune-dark: #a67c43;
+  --maze-lavender: #6b5a7a;
+  --maze-lavender-dark: #4a3d56;
+  --maze-seabed: #2f6f78;
+  --maze-seabed-dark: #1f4f58;
+  --maze-seabed-lit: #4a9aa4;
+  --maze-seabed-sand: #d2c08a;
+  --maze-coral: #e2586c;
+  --maze-coral-lit: #ffbc61;
+  --maze-anemone: #6aafdf;
+  --maze-seaweed: #3a8a48;
+  --maze-pavement: #4a5058;
+  --maze-pavement-dark: #2e333a;
+  --maze-building: #6a7582;
+  --maze-building-lit: #d5dde6;
+  --maze-building-brick: #8a4a3a;
+  --maze-building-glass: #4a6a7a;
+  --maze-awning: #c75c29;
+  --maze-lamp: #ffbc61;
+  --maze-window: #ffbc61;
+  --maze-wreck: #5a3a22;
+  --maze-wreck-dark: #2a2118;
+  --maze-cobble: #5a5248;
+  --maze-cobble-dark: #3f3832;
+  --maze-roof: #8a3a2a;
+  --maze-plaster: #d5c4a8;
+  --maze-fire: #ffbc61;
+  --maze-fire-core: #e2586c;
+  --maze-ember: #c75c29;
+  --maze-cactus: #3f6b3a;
+  --maze-cactus-lit: #5a8f52;
+  --maze-ocean: #2f6f9e;
+  --maze-ocean-deep: #1d4f75;
+  --maze-stream: #3d7ea8;
+  --maze-stream-deep: #2a5f84;
+  --maze-trunk: #5a3a22;
+  --maze-trunk-pale: #c4b59a;
+  --maze-leaf: #2f5e2c;
+  --maze-leaf-lit: #4a8a3e;
+  --maze-pine: #1f4a28;
+  --maze-pine-lit: #3a6b3f;
+  --maze-autumn: #c75c29;
+  --maze-autumn-lit: #ffbc61;
+  --maze-palm: #2f5e2c;
+  --maze-palm-lit: #5a8f52;
+  --maze-cow: #f4f1ea;
+  --maze-cow-spot: #2a2118;
+  --maze-sheep: #f4f1ea;
+  --maze-sheep-face: #3a4652;
+  --maze-dog: #c75c29;
+  --maze-dog-ear: #2a2118;
+  --maze-horse: #6a4530;
+  --maze-horse-mane: #2a2118;
+  --maze-crab: #c75c29;
+  --maze-seagull: #f4f1ea;
+  --maze-seagull-wing: #3a4652;
+  --maze-turtle: #3f6b3a;
+  --maze-turtle-shell: #2a4a28;
+  --maze-seal: #6a7582;
+  --maze-penguin: #2a2118;
+  --maze-penguin-belly: #f4f1ea;
+  --maze-bear: #f4f1ea;
+  --maze-fox: #c75c29;
+  --maze-fox-tip: #f4f1ea;
+  --maze-hare: #d5dde6;
+  --maze-camel: #c9a56b;
+  --maze-lizard: #5a8f52;
+  --maze-snake: #a67c43;
+  --maze-scorpion: #2a2118;
+  --maze-chicken: #f4f1ea;
+  --maze-chicken-comb: #e2586c;
+  --maze-pig: #e8a0a8;
+  --maze-goat: #d5dde6;
+  --maze-rabbit: #f4f1ea;
+  --maze-deer: #8a5a32;
+  --maze-owl: #6a4530;
+  --maze-raccoon: #3a4652;
+  --maze-fish: #6aafdf;
+  --maze-fish-fin: #ffbc61;
+  --maze-octopus: #a65a8a;
+  --maze-seahorse: #e8b86d;
+  --maze-ray: #3a4652;
+  --maze-shark: #4a5562;
+  --maze-shark-belly: #d5dde6;
+  --maze-whale: #3a4652;
+  --maze-whale-belly: #8a9aa8;
+  --maze-jelly: #c89ad4;
+  --maze-jelly-glow: #e8b8f0;
+  --maze-pigeon: #6a7582;
+  --maze-cat: #c75c29;
+  --maze-rat: #5a5248;
+  --maze-flower-0: #f4f1ea;
+  --maze-flower-1: #ffbc61;
+  --maze-flower-2: #e2586c;
+  --maze-flower-3: #6aafdf;
+  --maze-meadow-sky: #7eb3d4;
+  --maze-beach-sky: #87c4e0;
+  --maze-snow-sky: #b8c8d8;
+  --maze-desert-sky: #e8b86d;
+  --maze-orchard-sky: #8eb8a0;
+  --maze-twilight-sky: #3a3f6b;
+  --maze-underwater-sky: #1a6a7a;
+  --maze-city-sky: #5a6a7a;
+  --maze-village-sky: #3a2a28;
+  --maze-lava-sky: #2a1410;
+  --maze-moon-sky: #05060a;
+  --maze-venus-sky: #c47a3a;
+  --maze-forest-sky: #6aa88a;
+  --maze-rainforest-sky: #4a9a8a;
+  --maze-aurora-sky: #060814;
+  --maze-disco-sky: #120818;
+  --maze-disco-floor: #1a1218;
+  --maze-disco-floor-dark: #0c080c;
+  --maze-disco-0: #ff2d95;
+  --maze-disco-1: #2de2ff;
+  --maze-disco-2: #ffe14a;
+  --maze-disco-3: #b44aff;
+  --maze-disco-4: #3dff8a;
+  --maze-disco-5: #ff5a3c;
+  --maze-disco-6: #6a7dff;
+  --maze-disco-7: #ff9ad5;
+  --maze-space: #12161f;
+  --maze-space-dark: #080a10;
+  --maze-star: #e8eef4;
+  --maze-aurora-green: #5dffb0;
+  --maze-aurora-teal: #4ad4c8;
+  --maze-aurora-violet: #9a7dff;
+  --maze-aurora-pink: #ff7ad9;
+  --maze-aurora-blue: #6aafdf;
+  --maze-moss: #3f6b3a;
+  --maze-moss-lit: #5a8f52;
+  --maze-mushroom: #e8d5b8;
+  --maze-mushroom-cap: #c75c29;
+  --maze-mushroom-spot: #f4f1ea;
+  --maze-canopy: #1f6b3a;
+  --maze-canopy-lit: #3aaa58;
+  --maze-canopy-bright: #7ad45a;
+  --maze-vine: #2f8a4a;
+  --maze-bromeliad: #e2586c;
+  --maze-orchid: #c89ad4;
+  --maze-parrot: #e2586c;
+  --maze-parrot-wing: #ffbc61;
+  --maze-parrot-tail: #6aafdf;
+  --maze-frog: #3aaa58;
+  --maze-frog-belly: #c8e86a;
+  --maze-toucan: #2a2118;
+  --maze-toucan-beak: #ffbc61;
+  --maze-toucan-chest: #e2586c;
+  --maze-monkey: #8a5a32;
+  --maze-monkey-face: #d5c4a8;
+  --maze-basalt: #2a2422;
+  --maze-basalt-dark: #161210;
+  --maze-lava: #ff6a28;
+  --maze-lava-deep: #c23a12;
+  --maze-lava-mid: #e24a18;
+  --maze-lava-bright: #ff9a3a;
+  --maze-lava-glow: #ffbc61;
+  --maze-lava-cool: #8a2a12;
+  --maze-ash: #4a4540;
+  --maze-moon-dust: #9aa0a8;
+  --maze-moon-dust-dark: #6a7078;
+  --maze-moon-rock: #5a6068;
+  --maze-venus-ground: #b86a3a;
+  --maze-venus-ground-dark: #8a4a28;
+  --maze-venus-rock: #6a3a28;
+  --maze-sulfur: #e8c84a;
+  --maze-sulfur-glow: #ffe08a;
+  --maze-heart: #e2586c;
+  --maze-ball: #ffffff;
+  --maze-mark: #1a1a1a;
   --maze-sky: #6aafdf;
   font-family: var(--font);
   font-weight: 400;
   font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
+  -webkit-font-smoothing: none;
 }
 
 * {
@@ -120,6 +290,8 @@ body,
   display: block;
   cursor: grab;
   touch-action: none;
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
   filter: blur(0px);
   transition: filter 0.45s ease-in-out;
 
@@ -176,8 +348,40 @@ body,
     min-width: 0;
     max-width: 100%;
     margin: 0;
-    accent-color: var(--seam);
+    appearance: none;
+    height: 16px;
+    background: transparent;
     touch-action: pan-x;
+
+    &::-webkit-slider-runnable-track {
+      height: 8px;
+      background: var(--glass);
+      box-shadow: inset 0 0 0 2px var(--glass-border);
+    }
+
+    &::-webkit-slider-thumb {
+      appearance: none;
+      width: 16px;
+      height: 16px;
+      margin-top: -4px;
+      border: 0;
+      border-radius: var(--control-radius);
+      background: var(--seam);
+    }
+
+    &::-moz-range-track {
+      height: 8px;
+      background: var(--glass);
+      border: 2px solid var(--glass-border);
+    }
+
+    &::-moz-range-thumb {
+      width: 16px;
+      height: 16px;
+      border: 0;
+      border-radius: var(--control-radius);
+      background: var(--seam);
+    }
   }
 }
 
@@ -199,10 +403,8 @@ button:focus-visible {
   border: 0;
   position: relative;
   color: var(--ink);
-  background: rgba(255, 255, 255, 0.1);
-  box-shadow: inset 0 0 0 1px var(--glass-border);
-  backdrop-filter: blur(18px) saturate(0.6);
-  -webkit-backdrop-filter: blur(18px) saturate(0.6);
+  background: var(--panel-fill);
+  box-shadow: inset 0 0 0 2px var(--glass-border);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -219,96 +421,39 @@ button:focus-visible {
     display: block;
     stroke: currentColor;
     fill: none;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    stroke-width: 1.5;
+    stroke-linecap: square;
+    stroke-linejoin: miter;
+    stroke-width: 2;
+    shape-rendering: crispEdges;
     pointer-events: none;
   }
 
   &.selected {
     background: var(--selected-fill);
     color: var(--selected-ink);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
   }
 
   &:active {
     transform: scale(0.96);
-  }
-
-  &::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: 1;
-    border-radius: inherit;
-    padding: 4.6px;
-    background: conic-gradient(
-      from var(--border-angle, 0deg),
-      var(--hover-metal-0),
-      var(--hover-metal-1),
-      var(--hover-metal-2),
-      var(--hover-metal-3),
-      var(--hover-metal-0)
-    );
-    -webkit-mask:
-      linear-gradient(#000 0 0) content-box,
-      linear-gradient(#000 0 0);
-    -webkit-mask-composite: xor;
-    mask:
-      linear-gradient(#000 0 0) content-box,
-      linear-gradient(#000 0 0);
-    mask-composite: exclude;
-    opacity: 0;
-    pointer-events: none;
-    animation: spinBorder 2.5s linear infinite;
-    transition: opacity 0.16s ease;
-  }
-
-  @media (hover: hover) and (pointer: fine) {
-    &:hover:not(:disabled)::before {
-      opacity: 1;
-    }
   }
 }
 
 .glass-btn {
   width: var(--icon);
   height: var(--icon);
-  border-radius: 999px;
+  border-radius: var(--control-radius);
   flex: 0 0 var(--icon);
 }
 
 .glass-pill {
   height: var(--icon);
   padding: 0 18px;
-  border-radius: 999px;
+  border-radius: var(--control-radius);
   font-size: 17px;
 }
 
-.metal-ring::before {
-  opacity: 1;
-  padding: 3.1px;
-}
-
-@property --border-angle {
-  syntax: "<angle>";
-  initial-value: 0deg;
-  inherits: false;
-}
-
-@keyframes spinBorder {
-  to {
-    --border-angle: 360deg;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .glass-btn::before,
-  .glass-pill::before,
-  .metal-ring::before {
-    animation: none;
-  }
+.metal-ring {
+  box-shadow: inset 0 0 0 2px var(--seam);
 }
 
 .boot-error {

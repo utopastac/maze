@@ -63,14 +63,14 @@ const TOOLS: readonly { id: Tool; label: string; icon: IconName }[] = [
   { id: "switch", label: "Switch", icon: "switch" },
   { id: "hatch", label: "Hatch", icon: "hatch" },
   { id: "start", label: "Start", icon: "start" },
-  { id: "goal", label: "Goal", icon: "goal" },
+  { id: "goal", label: "Exit", icon: "goal" },
 ];
 
 const HINTS: Record<Tool, string> = {
   wall: "Drag along a row or column, in one direction, to open or close walls.",
   pit: "Paint pits the ball can fall through.",
   start: "Place the start cell.",
-  goal: "Place the goal on the lowest floor.",
+  goal: "Place the exit hole on the lowest floor. Fall through to escape.",
   hatch: "Cut a hole through to the floor below.",
   floor: "Clear pits and special tiles.",
   boost: "Pick a direction, then paint lanes that shove the ball.",
@@ -133,7 +133,7 @@ export class LevelEditor {
         <header class="${styles.head}">
           <div>
             <p class="${styles.kicker}" id="editor-title">Level</p>
-            <p class="${styles.lead}">Stack floors, cut a hatch to the one below, and put the goal on the lowest floor.</p>
+            <p class="${styles.lead}">Stack floors, cut a hatch to the one below, and put the exit hole on the lowest floor.</p>
           </div>
           <button type="button" class="glass-btn ${styles.close}" data-close aria-label="Close editor">${iconSvg("close")}</button>
         </header>
@@ -701,7 +701,7 @@ function describeCell(
     return { kind: "start", label: `${landing ? "Landing" : "Start"}, ${where}` };
   }
   if (maze.hatch && maze.hatch.c === c && maze.hatch.r === r) return { kind: "hatch", label: `Hatch, ${where}` };
-  if (showGoal && maze.goal.c === c && maze.goal.r === r) return { kind: "goal", label: `Goal, ${where}` };
+  if (showGoal && maze.goal.c === c && maze.goal.r === r) return { kind: "goal", label: `Exit, ${where}` };
   if (maze.holes.some((hole) => hole.c === c && hole.r === r)) return { kind: "pit", label: `Pit, ${where}` };
   const tile = tileAt(maze, c, r);
   if (tile?.kind === "boost") return { kind: "boost", dir: tile.dir, label: `Boost ${DIR_WORD[tile.dir]}, ${where}` };

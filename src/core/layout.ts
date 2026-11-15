@@ -12,6 +12,7 @@ export const FLOOR_T = 0.18;
 export const SPAWN_Y = BALL_R + 0.02;
 export const GOAL_REACH = (CELL - WALL) * 0.5 - 0.04;
 export const STORY = 1.85;
+export const MEADOW_DROP = STORY * 5.5;
 export const PIT_WELL = 1.16;
 
 export type PieceKind =
@@ -28,6 +29,7 @@ export type PieceKind =
   | "pit"
   | "lip"
   | "hatch"
+  | "exit"
   | "grout";
 
 export interface BoostMark {
@@ -70,6 +72,13 @@ export interface SwitchMark {
   gate: string | null;
 }
 
+export interface HeartMark {
+  c: number;
+  r: number;
+  x: number;
+  z: number;
+}
+
 export interface Piece {
   kind: PieceKind;
   x: number;
@@ -91,6 +100,7 @@ export interface MazeLayout {
   ices: IceMark[];
   crumbles: CrumbleMark[];
   switches: SwitchMark[];
+  hearts: HeartMark[];
   start: { x: number; z: number };
   goal: { x: number; z: number };
   hatch: { x: number; z: number } | null;
@@ -98,6 +108,17 @@ export interface MazeLayout {
   depth: number;
   cols: number;
   rows: number;
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+  finale: boolean;
+}
+
+export interface FloorPlan {
+  maze: Maze;
+  hearts?: GridPoint[];
+  goal?: boolean;
 }
 
 export interface TowerLayout {
@@ -124,7 +145,11 @@ export function isSolid(kind: PieceKind): boolean {
 
 export function layoutTower(tower: Tower): TowerLayout {
   const last = tower.floors.length - 1;
-  const floors = tower.floors.map((maze, index) => layoutMaze(maze, index === last));
+  return layoutPlans(tower.floors.map((maze, index) => ({ maze, goal: index === last })));
+}
+
+export function layoutPlans(plans: FloorPlan[]): TowerLayout {
+  const floors = plans.map((plan) => layoutMaze(plan.maze, plan.goal === true, plan.hearts ?? []));
   let width = 0;
   let depth = 0;
   for (const floor of floors) {
@@ -134,7 +159,7 @@ export function layoutTower(tower: Tower): TowerLayout {
   return { floors, width, depth, story: STORY };
 }
 
-export function layoutMaze(maze: Maze, showGoal = true): MazeLayout {
+export function layoutMaze(maze: Maze, showGoal = true, hearts: GridPoint[] = []): MazeLayout {
   const width = maze.cols * CELL;
   const depth = maze.rows * CELL;
   const originX = -width / 2;
@@ -145,6 +170,7 @@ export function layoutMaze(maze: Maze, showGoal = true): MazeLayout {
   const ices: IceMark[] = [];
   const crumbles: CrumbleMark[] = [];
   const switches: SwitchMark[] = [];
+  const heartMarks: HeartMark[] = [];
   const switchWalls = new Map<string, number>();
   const holes = new Set(maze.holes.map((hole) => `${hole.c},${hole.r}`));
   const warpCount = new Map<number, number>();
@@ -207,12 +233,16 @@ export function layoutMaze(maze: Maze, showGoal = true): MazeLayout {
         pieces.push(...lips(at.x, at.z, "hatch"));
         continue;
       }
+      if (showGoal && c === maze.goal.c && r === maze.goal.r) {
+        pieces.push(...lips(at.x, at.z, "exit"));
+        continue;
+      }
       if (holes.has(`${c},${r}`)) {
         pieces.push(...pit(at.x, at.z), ...lips(at.x, at.z));
         continue;
       }
       const tile = tileAt(maze, c, r);
-      const kind = floorKind(maze, c, r, tile, showGoal);
+      const kind = floorKind(maze, c, r, tile);
       const span = (CELL - WALL) / 2 + 0.02;
       pieces.push({
         kind,
@@ -242,7 +272,13 @@ export function layoutMaze(maze: Maze, showGoal = true): MazeLayout {
     }
   }
 
-  addGrout(pieces, maze, originX, originZ, holes);
+  addGrout(pieces, maze, originX, originZ, holes, showGoal);
+
+  for (const heart of hearts) {
+    if (heart.c < 0 || heart.r < 0 || heart.c >= maze.cols || heart.r >= maze.rows) continue;
+    const at = center(originX, originZ, heart);
+    heartMarks.push({ c: heart.c, r: heart.r, x: at.x, z: at.z });
+  }
 
   return {
     pieces,
@@ -252,6 +288,7 @@ export function layoutMaze(maze: Maze, showGoal = true): MazeLayout {
     ices,
     crumbles,
     switches,
+    hearts: heartMarks,
     start: center(originX, originZ, maze.start),
     goal: center(originX, originZ, maze.goal),
     hatch: maze.hatch ? center(originX, originZ, maze.hatch) : null,
@@ -259,6 +296,11 @@ export function layoutMaze(maze: Maze, showGoal = true): MazeLayout {
     depth,
     cols: maze.cols,
     rows: maze.rows,
+    minX: originX,
+    maxX: originX + width,
+    minZ: originZ,
+    maxZ: originZ + depth,
+    finale: showGoal,
   };
 }
 
@@ -267,10 +309,8 @@ function floorKind(
   c: number,
   r: number,
   tile: FloorTile | undefined,
-  showGoal: boolean,
 ): PieceKind {
   if (c === maze.start.c && r === maze.start.r) return "start";
-  if (showGoal && c === maze.goal.c && r === maze.goal.r) return "goal";
   if (tile) return tile.kind;
   return "floor";
 }
@@ -307,14 +347,21 @@ function segment(
   return { kind: frame ? "frame" : "wall", x, y, z, hx, hy, hz, gate, tone };
 }
 
-function addGrout(pieces: Piece[], maze: Maze, originX: number, originZ: number, holes: Set<string>): void {
+function addGrout(
+  pieces: Piece[],
+  maze: Maze,
+  originX: number,
+  originZ: number,
+  holes: Set<string>,
+  finale: boolean,
+): void {
   const joint = WALL / 2;
   const along = CELL / 2 - joint + 0.006;
 
   for (let row = 0; row < maze.rows; row += 1) {
     for (let edge = 1; edge < maze.cols; edge += 1) {
       if (hasVertical(maze, edge, row)) continue;
-      if (!hasFloor(maze, holes, edge - 1, row) && !hasFloor(maze, holes, edge, row)) continue;
+      if (!hasFloor(maze, holes, edge - 1, row, finale) && !hasFloor(maze, holes, edge, row, finale)) continue;
       pieces.push(grout(
         originX + edge * CELL,
         originZ + (row + 0.5) * CELL,
@@ -327,7 +374,7 @@ function addGrout(pieces: Piece[], maze: Maze, originX: number, originZ: number,
   for (let edge = 1; edge < maze.rows; edge += 1) {
     for (let col = 0; col < maze.cols; col += 1) {
       if (hasHorizontal(maze, col, edge)) continue;
-      if (!hasFloor(maze, holes, col, edge - 1) && !hasFloor(maze, holes, col, edge)) continue;
+      if (!hasFloor(maze, holes, col, edge - 1, finale) && !hasFloor(maze, holes, col, edge, finale)) continue;
       pieces.push(grout(
         originX + (col + 0.5) * CELL,
         originZ + edge * CELL,
@@ -341,10 +388,10 @@ function addGrout(pieces: Piece[], maze: Maze, originX: number, originZ: number,
     for (let vx = 1; vx < maze.cols; vx += 1) {
       if (walledVertex(maze, vx, vz)) continue;
       const touched =
-        hasFloor(maze, holes, vx - 1, vz - 1) ||
-        hasFloor(maze, holes, vx, vz - 1) ||
-        hasFloor(maze, holes, vx - 1, vz) ||
-        hasFloor(maze, holes, vx, vz);
+        hasFloor(maze, holes, vx - 1, vz - 1, finale) ||
+        hasFloor(maze, holes, vx, vz - 1, finale) ||
+        hasFloor(maze, holes, vx - 1, vz, finale) ||
+        hasFloor(maze, holes, vx, vz, finale);
       if (!touched) continue;
       pieces.push(grout(originX + vx * CELL, originZ + vz * CELL, joint, joint));
     }
@@ -359,9 +406,10 @@ function grout(x: number, z: number, hx: number, hz: number): Piece {
   return { kind: "grout", x, y: (top + bottom) / 2, z, hx, hy, hz };
 }
 
-function hasFloor(maze: Maze, holes: Set<string>, c: number, r: number): boolean {
+function hasFloor(maze: Maze, holes: Set<string>, c: number, r: number, finale: boolean): boolean {
   if (c < 0 || r < 0 || c >= maze.cols || r >= maze.rows) return false;
   if (maze.hatch && maze.hatch.c === c && maze.hatch.r === r) return false;
+  if (finale && maze.goal.c === c && maze.goal.r === r) return false;
   return !holes.has(`${c},${r}`);
 }
 
@@ -391,7 +439,7 @@ function pit(x: number, z: number): Piece[] {
   ];
 }
 
-function lips(x: number, z: number, kind: "lip" | "hatch" = "lip"): Piece[] {
+function lips(x: number, z: number, kind: "lip" | "hatch" | "exit" = "lip"): Piece[] {
   const gap = (CELL - WALL) / 2 - 0.012;
   const lipT = 0.03;
   const hy = 0.012;

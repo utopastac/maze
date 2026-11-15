@@ -10,9 +10,11 @@ export type SettingKey =
   | "zoom"
   | "angle"
   | "orbit"
-  | "field";
+  | "field"
+  | "pixels"
+  | "shade";
 
-export type SettingGroup = "Controls" | "Physics" | "Camera";
+export type SettingGroup = "Controls" | "Physics" | "Camera" | "Picture";
 
 export interface SettingSpec {
   key: SettingKey;
@@ -35,6 +37,8 @@ export const SETTING_SPECS: readonly SettingSpec[] = [
   { key: "angle", label: "Angle", group: "Camera", min: 22, max: 80, step: 0.5, format: (value) => `${value.toFixed(1)}°` },
   { key: "orbit", label: "Orbit", group: "Camera", min: -180, max: 180, step: 1, format: (value) => `${value.toFixed(0)}°` },
   { key: "field", label: "Field", group: "Camera", min: 20, max: 48, step: 1, format: (value) => `${value.toFixed(0)}°` },
+  { key: "pixels", label: "Pixels", group: "Picture", min: 1, max: 6, step: 1, format: formatPixels },
+  { key: "shade", label: "Shade", group: "Picture", min: 2, max: 6, step: 0.1, format: (value) => `${value.toFixed(1)} steps` },
 ];
 
 export const SETTING_DEFAULTS: Record<SettingKey, number> = {
@@ -48,6 +52,8 @@ export const SETTING_DEFAULTS: Record<SettingKey, number> = {
   angle: 46.5,
   orbit: 0,
   field: 30,
+  pixels: 3,
+  shade: 3,
 };
 
 const STORAGE_KEY = "maze.settings";
@@ -128,8 +134,28 @@ export class PlaySettings {
   }
 }
 
+export function pixelStep(): number {
+  const dpr = window.devicePixelRatio || 1;
+  return 1 / dpr;
+}
+
+export function snapPixels(value: number): number {
+  const dpr = window.devicePixelRatio || 1;
+  const minDevice = Math.max(1, Math.round(dpr));
+  const maxDevice = Math.max(minDevice, Math.round(6 * dpr));
+  const device = Math.min(maxDevice, Math.max(minDevice, Math.round(value * dpr)));
+  return device / dpr;
+}
+
+function formatPixels(value: number): string {
+  const css = snapPixels(value);
+  if (Math.abs(css - Math.round(css)) < 1e-6) return `${Math.round(css)} px`;
+  return `${css.toFixed(2).replace(/0+$/, "").replace(/\.$/, "")} px`;
+}
+
 function clampSetting(key: SettingKey, value: number): number {
   const spec = SETTING_SPECS.find((item) => item.key === key);
   if (!spec || !Number.isFinite(value)) return SETTING_DEFAULTS[key];
-  return clamp(value, spec.min, spec.max);
+  const next = clamp(value, spec.min, spec.max);
+  return key === "pixels" ? snapPixels(next) : next;
 }

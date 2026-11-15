@@ -5,11 +5,15 @@ import {
   ArrowRight,
   ArrowUp,
   BrickWall,
+  Castle,
+  ChevronDown,
+  ChevronUp,
   Circle,
   Compass,
   Eraser,
   FastForward,
   Flag,
+  Heart,
   Hourglass,
   Link,
   Snowflake,
@@ -18,6 +22,7 @@ import {
   Pencil,
   Plus,
   RotateCcw,
+  RotateCw,
   Shuffle,
   SlidersHorizontal,
   Smartphone,
@@ -35,6 +40,8 @@ export type IconName =
   | "level"
   | "reset"
   | "new"
+  | "campaign"
+  | "heart"
   | "motion"
   | "settings"
   | "edit"
@@ -56,12 +63,18 @@ export type IconName =
   | "close"
   | "minus"
   | "plus"
-  | "share";
+  | "share"
+  | "angleDown"
+  | "angleUp"
+  | "orbitLeft"
+  | "orbitRight";
 
 const NODES: Record<IconName, IconNode> = {
   level: Compass,
   reset: RotateCcw,
   new: Shuffle,
+  campaign: Castle,
+  heart: Heart,
   motion: Smartphone,
   settings: SlidersHorizontal,
   edit: Pencil,
@@ -84,6 +97,10 @@ const NODES: Record<IconName, IconNode> = {
   minus: Minus,
   plus: Plus,
   share: Link,
+  angleDown: ChevronDown,
+  angleUp: ChevronUp,
+  orbitLeft: RotateCcw,
+  orbitRight: RotateCw,
 };
 
 export function iconSvg(name: IconName, size = ICON_SIZE): string {

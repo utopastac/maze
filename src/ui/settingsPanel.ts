@@ -1,5 +1,6 @@
 import {
   SETTING_SPECS,
+  pixelStep,
   type PlaySettings,
   type SettingGroup,
   type SettingKey,
@@ -10,7 +11,7 @@ export interface SettingsPanelCallbacks {
   onClose: () => void;
 }
 
-const GROUPS: readonly SettingGroup[] = ["Controls", "Physics", "Camera"];
+const GROUPS: readonly SettingGroup[] = ["Controls", "Physics", "Camera", "Picture"];
 
 export class SettingsPanel {
   private readonly host: HTMLElement;
@@ -54,6 +55,7 @@ export class SettingsPanel {
       const input = field.querySelector("input");
       const readout = field.querySelector<HTMLElement>("[data-readout]");
       if (!input || !readout) continue;
+      if (spec.key === "pixels") input.step = String(pixelStep());
       input.addEventListener("input", () => {
         this.settings.set(spec.key, Number(input.value));
         readout.textContent = spec.format(this.settings.values[spec.key]);
@@ -95,7 +97,10 @@ export class SettingsPanel {
       const input = this.inputs.get(spec.key);
       const readout = this.readouts.get(spec.key);
       const value = this.settings.values[spec.key];
-      if (input) input.value = String(value);
+      if (input) {
+        if (spec.key === "pixels") input.step = String(pixelStep());
+        input.value = String(value);
+      }
       if (readout) readout.textContent = spec.format(value);
     }
     if (this.invertInput) this.invertInput.checked = this.settings.invertY;

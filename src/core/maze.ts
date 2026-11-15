@@ -69,7 +69,18 @@ export function generateMaze(seed: number, cols = 7, rows = 7): Maze {
   return carveFloor(seed, cols, rows, { c: 0, r: 0 });
 }
 
-export function carveFloor(seed: number, cols: number, rows: number, start: GridPoint): Maze {
+export interface CarveOptions {
+  braid?: number;
+  holes?: number;
+}
+
+export function carveFloor(
+  seed: number,
+  cols: number,
+  rows: number,
+  start: GridPoint,
+  options?: CarveOptions,
+): Maze {
   const originCell = {
     c: Math.min(Math.max(start.c, 0), cols - 1),
     r: Math.min(Math.max(start.r, 0), rows - 1),
@@ -103,11 +114,11 @@ export function carveFloor(seed: number, cols: number, rows: number, start: Grid
     stack.push({ c: nc, r: nr });
   }
 
-  braid(walls, cols, rows, rand, 3);
+  braid(walls, cols, rows, rand, options?.braid ?? 3);
 
   const goal = farthest(walls, cols, rows, originCell);
   const onPath = shortestPath(walls, cols, rows, originCell, goal);
-  const holes = pickHoles(walls, cols, rows, originCell, goal, onPath, rand, 2);
+  const holes = pickHoles(walls, cols, rows, originCell, goal, onPath, rand, options?.holes ?? 2);
 
   return { cols, rows, walls, holes, tiles: [], start: originCell, goal, hatch: null };
 }
@@ -576,7 +587,7 @@ function shuffled(items: GridPoint[], rand: () => number): GridPoint[] {
   return copy;
 }
 
-function mulberry32(seed: number): () => number {
+export function mulberry32(seed: number): () => number {
   let state = seed >>> 0;
   return () => {
     state |= 0;
