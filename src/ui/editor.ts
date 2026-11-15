@@ -5,8 +5,10 @@ import {
   clearFloor,
   clearInterior,
   interiorClosed,
+  liftAt,
   loneWarpPair,
   bindSwitchWall,
+  moveLifted,
   paintSwitch,
   paintWarp,
   pendingSwitch,
@@ -20,27 +22,53 @@ import {
   setPit,
   tileAt,
   type Direction,
+  type LiftedTile,
   type Maze,
   type WallAxis,
 } from "../core/maze.ts";
+import {
+  copyText,
+  formatAuthoredFloorLine,
+  parseLevelInput,
+  readText,
+} from "../core/share.ts";
+import {
+  DEFAULT_FLOOR_THEME,
+  FLOOR_THEMES,
+  FLOOR_THEME_META,
+  parseFloorTheme,
+  type FloorThemeId,
+} from "../core/theme.ts";
 import {
   FLOOR_MAX,
   FLOOR_MIN,
   addFloor,
   cloneTower,
   removeFloor,
-  resizeTower,
+  resizeFloor,
   setHatch,
   type Tower,
 } from "../core/tower.ts";
 import { iconSvg, type IconName } from "./icons.ts";
 import styles from "./editor.module.css";
 
+export type EditorMode = "share" | "campaign";
+
 export interface EditorCallbacks {
   onPlay: (tower: Tower) => void;
   onClose: () => void;
   onShare: (tower: Tower) => Promise<boolean | null>;
 }
+
+const SHARE_COPY = {
+  title: "Share level",
+  lead: "Stack floors, cut hatches between them, and share a link others can play. Drag Start and Exit on the board to move them.",
+};
+
+const CAMPAIGN_COPY = {
+  title: "Campaign floor",
+  lead: "Design one floor. Drag Start and Exit on the board — Exit is where the ball drops through (floor 100 is the real exit). Copy model, then paste into authoredFloors.ts.",
+};
 
 type Tool = "wall" | "pit" | "start" | "goal" | "floor" | "boost" | "warp" | "ice" | "crumble" | "switch" | "hatch";
 type Stroke = "open" | "close";
@@ -50,6 +78,12 @@ type WallDrag = {
   anchor: number;
   origin: number;
   dir: -1 | 1 | 0;
+};
+
+type TileDrag = {
+  lift: LiftedTile;
+  at: { c: number; r: number };
+  moved: boolean;
 };
 
 const TOOLS: readonly { id: Tool; label: string; icon: IconName }[] = [
@@ -62,21 +96,19 @@ const TOOLS: readonly { id: Tool; label: string; icon: IconName }[] = [
   { id: "crumble", label: "Crumble", icon: "crumble" },
   { id: "switch", label: "Switch", icon: "switch" },
   { id: "hatch", label: "Hatch", icon: "hatch" },
-  { id: "start", label: "Start", icon: "start" },
-  { id: "goal", label: "Exit", icon: "goal" },
 ];
 
 const HINTS: Record<Tool, string> = {
-  wall: "Drag along a row or column, in one direction, to open or close walls.",
+  wall: "Drag along a row or column, in one direction, to open or close walls. Drag placed tiles to move them.",
   pit: "Paint pits the ball can fall through.",
-  start: "Place the start cell.",
-  goal: "Place the exit hole on the lowest floor. Fall through to escape.",
+  start: "Drag the start marker on the board.",
+  goal: "Drag the exit marker on the board.",
   hatch: "Cut a hole through to the floor below.",
   floor: "Clear pits and special tiles.",
   boost: "Pick a direction, then paint lanes that shove the ball.",
   warp: "Click two cells to link a warp. Click a warp to remove that end.",
   ice: "Paint slick tiles. The ball keeps sliding until it reaches something with grip.",
-  crumble: "Paint floors that hold for a moment, then fall away.",
+  crumble: "Paint floors that start crumbling when the ball touches them. They break even if it leaves, then reform after five seconds.",
   switch: "Click a cell, then a wall. Stop on the plate to open that wall.",
 };
 
@@ -107,19 +139,34 @@ export class LevelEditor {
   private tower: Tower = {
     floors: [
       resizeMaze(
-        { cols: 1, rows: 1, walls: [[0]], holes: [], tiles: [], start: { c: 0, r: 0 }, goal: { c: 0, r: 0 }, hatch: null },
+        {
+          cols: 1,
+          rows: 1,
+          walls: [[0]],
+          holes: [],
+          tiles: [],
+          start: { c: 0, r: 0 },
+          goal: { c: 0, r: 0 },
+          hatch: null,
+          theme: DEFAULT_FLOOR_THEME,
+        },
         MAZE_MIN,
         MAZE_MIN,
       ),
     ],
   };
   private floorIndex = 0;
+  private mode: EditorMode = "share";
   private tool: Tool = "wall";
   private boostDir: Direction = "n";
   private readonly dirs: HTMLElement;
+  private readonly themeSelect: HTMLSelectElement;
+  private readonly titleEl: HTMLElement;
+  private readonly leadEl: HTMLElement;
   private readonly dirButtons = new Map<Direction, HTMLButtonElement>();
   private stroke: Stroke | null = null;
   private wallDrag: WallDrag | null = null;
+  private tileDrag: TileDrag | null = null;
   private pointerId: number | null = null;
   private noticeTimer = 0;
 
@@ -127,49 +174,60 @@ export class LevelEditor {
     this.root = root;
     this.callbacks = callbacks;
     this.root.className = styles.root;
+    this.root.dataset.mode = "share";
     this.root.innerHTML = `
       <div class="${styles.scrim}" data-scrim></div>
       <div class="${styles.card}" role="dialog" aria-modal="true" aria-labelledby="editor-title">
         <header class="${styles.head}">
           <div>
-            <p class="${styles.kicker}" id="editor-title">Level</p>
-            <p class="${styles.lead}">Stack floors, cut a hatch to the one below, and put the exit hole on the lowest floor.</p>
+            <p class="${styles.kicker}" id="editor-title" data-title>${SHARE_COPY.title}</p>
+            <p class="${styles.lead}" data-lead>${SHARE_COPY.lead}</p>
           </div>
           <button type="button" class="glass-btn ${styles.close}" data-close aria-label="Close editor">${iconSvg("close")}</button>
         </header>
-        <div class="${styles.toolbar}">
-          <div class="${styles.sizes}" data-sizes>
-            <div class="${styles.size}">
-              <span class="${styles.label}">Columns</span>
-              <div class="${styles.stepper}">
-                <button type="button" class="glass-btn ${styles.step}" data-axis="cols" data-delta="-1" aria-label="Fewer columns">${iconSvg("minus")}</button>
-                <span class="${styles.count}" data-cols>7</span>
-                <button type="button" class="glass-btn ${styles.step}" data-axis="cols" data-delta="1" aria-label="More columns">${iconSvg("plus")}</button>
+        <div class="${styles.body}">
+          <div class="${styles.side}">
+            <div class="${styles.toolbar}">
+              <div class="${styles.sizes}" data-sizes>
+                <div class="${styles.size}">
+                  <span class="${styles.label}">Columns</span>
+                  <div class="${styles.stepper}">
+                    <button type="button" class="glass-btn ${styles.step}" data-axis="cols" data-delta="-1" aria-label="Fewer columns">${iconSvg("minus")}</button>
+                    <span class="${styles.count}" data-cols>7</span>
+                    <button type="button" class="glass-btn ${styles.step}" data-axis="cols" data-delta="1" aria-label="More columns">${iconSvg("plus")}</button>
+                  </div>
+                </div>
+                <div class="${styles.size}">
+                  <span class="${styles.label}">Rows</span>
+                  <div class="${styles.stepper}">
+                    <button type="button" class="glass-btn ${styles.step}" data-axis="rows" data-delta="-1" aria-label="Fewer rows">${iconSvg("minus")}</button>
+                    <span class="${styles.count}" data-rows>7</span>
+                    <button type="button" class="glass-btn ${styles.step}" data-axis="rows" data-delta="1" aria-label="More rows">${iconSvg("plus")}</button>
+                  </div>
+                </div>
               </div>
+              <div class="${styles.floors}" data-floors data-share-only role="tablist" aria-label="Floors"></div>
+              <button type="button" class="glass-pill ${styles.clear}" data-clear>Clear</button>
             </div>
-            <div class="${styles.size}">
-              <span class="${styles.label}">Rows</span>
-              <div class="${styles.stepper}">
-                <button type="button" class="glass-btn ${styles.step}" data-axis="rows" data-delta="-1" aria-label="Fewer rows">${iconSvg("minus")}</button>
-                <span class="${styles.count}" data-rows>7</span>
-                <button type="button" class="glass-btn ${styles.step}" data-axis="rows" data-delta="1" aria-label="More rows">${iconSvg("plus")}</button>
-              </div>
+            <div class="${styles.tools}" role="radiogroup" aria-label="Brush" data-tools></div>
+            <div class="${styles.dirs}" data-dirs role="radiogroup" aria-label="Boost direction" hidden>
+              <span class="${styles.dirLabel}">Direction</span>
+            </div>
+            <label class="${styles.themeField}">
+              <span class="${styles.label}">Theme</span>
+              <select class="${styles.themeSelect}" data-theme-select aria-label="Floor theme"></select>
+            </label>
+            <p class="${styles.hint}" data-hint aria-live="polite"></p>
+            <div class="${styles.footer}">
+              <button type="button" class="glass-pill" data-paste title="Paste a model into the editor">${iconSvg("paste")}Paste</button>
+              <button type="button" class="glass-pill" data-copy data-campaign-only title="Copy a paste-ready line for authoredFloors.ts">${iconSvg("copy")}Copy model</button>
+              <button type="button" class="glass-pill" data-share data-share-only>${iconSvg("share")}Share</button>
+              <button type="button" class="glass-pill metal-ring ${styles.play}" data-play>Play</button>
             </div>
           </div>
-          <div class="${styles.floors}" data-floors role="tablist" aria-label="Floors"></div>
-          <button type="button" class="glass-pill ${styles.clear}" data-clear>Clear</button>
-        </div>
-        <div class="${styles.tools}" role="radiogroup" aria-label="Brush" data-tools></div>
-        <div class="${styles.dirs}" data-dirs role="radiogroup" aria-label="Boost direction" hidden>
-          <span class="${styles.dirLabel}">Direction</span>
-        </div>
-        <div class="${styles.stage}">
-          <div class="${styles.board}" data-board data-tool="wall" role="group" aria-label="Maze grid"></div>
-        </div>
-        <p class="${styles.hint}" data-hint aria-live="polite"></p>
-        <div class="${styles.footer}">
-          <button type="button" class="glass-pill" data-share>${iconSvg("share")}Share</button>
-          <button type="button" class="glass-pill metal-ring ${styles.play}" data-play>Play</button>
+          <div class="${styles.stage}">
+            <div class="${styles.board}" data-board data-tool="wall" data-theme="${DEFAULT_FLOOR_THEME}" role="group" aria-label="Maze grid"></div>
+          </div>
         </div>
       </div>
     `;
@@ -179,13 +237,23 @@ export class LevelEditor {
     this.colReadout = this.require("[data-cols]");
     this.rowReadout = this.require("[data-rows]");
     this.dirs = this.require("[data-dirs]");
+    this.themeSelect = this.require("[data-theme-select]");
+    this.titleEl = this.require("[data-title]");
+    this.leadEl = this.require("[data-lead]");
     this.mountTools();
     this.mountDirections();
+    this.mountThemes();
     this.require("[data-scrim]").addEventListener("click", this.requestClose);
     this.require("[data-close]").addEventListener("click", this.requestClose);
     this.require("[data-clear]").addEventListener("click", () => {
       clearInterior(this.draft);
       this.renderBoard();
+    });
+    this.require("[data-copy]").addEventListener("click", () => {
+      void this.copyModel();
+    });
+    this.require("[data-paste]").addEventListener("click", () => {
+      void this.pasteModel();
     });
     this.require("[data-share]").addEventListener("click", () => {
       void this.share();
@@ -209,6 +277,9 @@ export class LevelEditor {
       const axis = button.dataset.axis === "rows" ? "rows" : "cols";
       this.changeSize(axis, Number(button.dataset.delta));
     });
+    this.themeSelect.addEventListener("change", () => {
+      this.setTheme(parseFloorTheme(this.themeSelect.value));
+    });
     this.board.addEventListener("pointerdown", this.onPointerDown);
     this.board.addEventListener("pointermove", this.onPointerMove);
     this.board.addEventListener("pointerup", this.onPointerUp);
@@ -222,13 +293,26 @@ export class LevelEditor {
     return !this.root.hidden;
   }
 
-  open(tower: Tower): void {
+  modeOf(): EditorMode {
+    return this.mode;
+  }
+
+  open(tower: Tower, mode: EditorMode = "share"): void {
+    this.mode = mode;
+    this.root.dataset.mode = mode;
+    const copy = mode === "campaign" ? CAMPAIGN_COPY : SHARE_COPY;
+    this.titleEl.textContent = copy.title;
+    this.leadEl.textContent = copy.lead;
     this.tower = cloneTower(tower);
+    if (mode === "campaign" && this.tower.floors.length > 1) {
+      this.tower = { floors: [cloneTower(this.tower).floors[0]!] };
+    }
     this.floorIndex = 0;
     this.setTool("wall");
     this.syncSize();
     this.syncFloors();
     this.syncTools();
+    this.syncThemes();
     this.renderBoard();
     this.root.hidden = false;
     this.root.dataset.phase = "out";
@@ -241,6 +325,8 @@ export class LevelEditor {
     this.pointerId = null;
     this.stroke = null;
     this.wallDrag = null;
+    this.tileDrag = null;
+    this.board.classList.remove(styles.dragging);
     this.clearNotice();
     delete this.root.dataset.phase;
     this.root.hidden = true;
@@ -285,12 +371,34 @@ export class LevelEditor {
     this.syncDirections();
   }
 
+  private mountThemes(): void {
+    this.themeSelect.replaceChildren();
+    for (const id of FLOOR_THEMES) {
+      const option = document.createElement("option");
+      option.value = id;
+      option.textContent = FLOOR_THEME_META[id].label;
+      this.themeSelect.append(option);
+    }
+    this.syncThemes();
+  }
+
   private syncDirections(): void {
     for (const [id, button] of this.dirButtons) {
       const on = id === this.boostDir;
       button.classList.toggle("selected", on);
       button.setAttribute("aria-checked", String(on));
     }
+  }
+
+  private setTheme(theme: FloorThemeId): void {
+    this.draft.theme = theme;
+    this.syncThemes();
+  }
+
+  private syncThemes(): void {
+    const theme = parseFloorTheme(this.draft.theme);
+    this.board.dataset.theme = theme;
+    this.themeSelect.value = theme;
   }
 
   private setTool(tool: Tool): void {
@@ -311,6 +419,50 @@ export class LevelEditor {
     if (result === null) this.flash("This level is too big to fit in a link.");
     else if (result) this.flash("Link copied.");
     else this.flash("Couldn't copy. The address bar has the link.");
+  }
+
+  private async copyModel(): Promise<void> {
+    if (this.mode !== "campaign") return;
+    const line = formatAuthoredFloorLine(this.tower);
+    if (!line) {
+      this.flash("This level is too big to copy.");
+      return;
+    }
+    const ok = await copyText(line);
+    if (!this.isOpen()) return;
+    if (ok) this.flash("Copied model. Paste it into authoredFloors.ts.");
+    else this.flash("Couldn't copy. Try again or check clipboard permission.");
+  }
+
+  private async pasteModel(): Promise<void> {
+    const text = await readText();
+    if (!this.isOpen()) return;
+    if (!text) {
+      this.flash("Clipboard is empty or blocked. Allow paste, then try again.");
+      return;
+    }
+    const tower = parseLevelInput(text);
+    if (!tower) {
+      this.flash("That clipboard text isn't a level model.");
+      return;
+    }
+    this.applyTower(tower);
+    this.flash("Model pasted.");
+  }
+
+  private applyTower(tower: Tower): void {
+    this.tower = cloneTower(tower);
+    this.floorIndex = 0;
+    this.stroke = null;
+    this.wallDrag = null;
+    this.tileDrag = null;
+    this.board.classList.remove(styles.dragging);
+    this.syncSize();
+    this.syncFloors();
+    this.syncTools();
+    this.syncThemes();
+    this.renderBoard();
+    this.refreshHint();
   }
 
   private flash(message: string): void {
@@ -349,7 +501,7 @@ export class LevelEditor {
   private changeSize(axis: "cols" | "rows", delta: number): void {
     const cols = this.draft.cols + (axis === "cols" ? delta : 0);
     const rows = this.draft.rows + (axis === "rows" ? delta : 0);
-    this.tower = resizeTower(this.tower, cols, rows);
+    this.tower = resizeFloor(this.tower, this.floorIndex, cols, rows);
     this.syncSize();
     this.renderBoard();
   }
@@ -360,13 +512,16 @@ export class LevelEditor {
     this.floorIndex = index;
     this.stroke = null;
     this.wallDrag = null;
+    this.tileDrag = null;
     this.syncFloors();
     this.syncTools();
+    this.syncThemes();
     this.renderBoard();
     this.refreshHint();
   }
 
   private changeFloors(delta: number): void {
+    if (this.mode === "campaign") return;
     if (delta > 0) {
       this.tower = addFloor(this.tower);
       this.floorIndex = this.tower.floors.length - 1;
@@ -376,8 +531,10 @@ export class LevelEditor {
     }
     this.stroke = null;
     this.wallDrag = null;
+    this.tileDrag = null;
     this.syncFloors();
     this.syncTools();
+    this.syncThemes();
     this.renderBoard();
     this.refreshHint();
   }
@@ -426,8 +583,8 @@ export class LevelEditor {
       crumble: true,
       switch: true,
       hatch: this.floorIndex !== last,
-      start: this.floorIndex === 0,
-      goal: this.floorIndex === last,
+      start: false,
+      goal: false,
     };
     for (const [id, button] of this.toolButtons) button.hidden = !allow[id];
     if (!allow[this.tool]) this.setTool("wall");
@@ -538,21 +695,110 @@ export class LevelEditor {
     this.pointerId = event.pointerId;
     this.stroke = null;
     this.wallDrag = null;
+    this.tileDrag = null;
     this.board.setPointerCapture(event.pointerId);
+
+    if (this.tool === "wall") {
+      this.beginWallDrag(event.clientX, event.clientY);
+      if (this.wallDrag) return;
+    }
+
+    if (this.tool === "switch" && pendingSwitch(this.draft)) {
+      const wall = elementAt(event.clientX, event.clientY, "data-wall");
+      if (wall) {
+        this.stroke = "close";
+        this.bindSwitch(wall);
+        this.syncCells();
+        this.syncWalls();
+        this.refreshHint();
+        return;
+      }
+    }
+
+    if (this.beginTileDrag(event.clientX, event.clientY)) return;
     this.applyPaint(event.clientX, event.clientY);
   };
 
   private onPointerMove = (event: PointerEvent): void => {
     if (event.pointerId !== this.pointerId) return;
+    if (this.tileDrag) {
+      this.extendTileDrag(event.clientX, event.clientY);
+      return;
+    }
     this.applyPaint(event.clientX, event.clientY);
   };
 
   private onPointerUp = (event: PointerEvent): void => {
     if (event.pointerId !== this.pointerId) return;
+    const drag = this.tileDrag;
     this.pointerId = null;
     this.stroke = null;
     this.wallDrag = null;
+    this.tileDrag = null;
+    this.board.classList.remove(styles.dragging);
+    if (drag && !drag.moved) this.clickLift(drag);
   };
+
+  private beginTileDrag(x: number, y: number): boolean {
+    const cell = elementAt(x, y, "data-cell");
+    if (!cell) return false;
+    const c = Number(cell.dataset.c);
+    const r = Number(cell.dataset.r);
+    if (!Number.isInteger(c) || !Number.isInteger(r)) return false;
+    const last = this.tower.floors.length - 1;
+    const lift = liftAt(this.draft, { c, r }, {
+      start: this.floorIndex === 0,
+      goal: this.floorIndex === last,
+      hatch: this.floorIndex !== last,
+    });
+    if (!lift) return false;
+    this.tileDrag = { lift, at: { c, r }, moved: false };
+    this.board.classList.add(styles.dragging);
+    return true;
+  }
+
+  private extendTileDrag(x: number, y: number): void {
+    const drag = this.tileDrag;
+    if (!drag) return;
+    const cell = elementAt(x, y, "data-cell");
+    if (!cell) return;
+    const c = Number(cell.dataset.c);
+    const r = Number(cell.dataset.r);
+    if (!Number.isInteger(c) || !Number.isInteger(r)) return;
+    if (drag.at.c === c && drag.at.r === r) return;
+    if (!this.relocateLift(drag.at, { c, r }, drag.lift)) return;
+    drag.at = { c, r };
+    drag.moved = true;
+    this.syncCells();
+    this.syncWalls();
+  }
+
+  private relocateLift(from: { c: number; r: number }, to: { c: number; r: number }, lift: LiftedTile): boolean {
+    if (lift.kind === "hatch") {
+      const below = this.tower.floors[this.floorIndex + 1];
+      if (!below) return false;
+      if (to.c >= below.cols || to.r >= below.rows) return false;
+      if (samePoint(to, this.draft.start)) return false;
+      setHatch(this.tower, this.floorIndex, to);
+      return !!this.draft.hatch && samePoint(this.draft.hatch, to);
+    }
+    return moveLifted(this.draft, from, to, lift);
+  }
+
+  private clickLift(drag: TileDrag): void {
+    if (drag.lift.kind === "warp" && this.tool === "warp") {
+      paintWarp(this.draft, drag.at);
+      this.syncCells();
+      this.refreshHint();
+      return;
+    }
+    if (drag.lift.kind === "switch" && this.tool === "switch") {
+      paintSwitch(this.draft, drag.at);
+      this.syncCells();
+      this.syncWalls();
+      this.refreshHint();
+    }
+  }
 
   private applyPaint(x: number, y: number): void {
     if (this.tool === "wall") {
@@ -662,10 +908,26 @@ export class LevelEditor {
   }
 
   private onKey = (event: KeyboardEvent): void => {
-    if (!this.isOpen() || event.key !== "Escape") return;
-    event.preventDefault();
-    event.stopPropagation();
-    this.requestClose();
+    if (!this.isOpen()) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      this.requestClose();
+      return;
+    }
+    const meta = event.metaKey || event.ctrlKey;
+    if (!meta || event.altKey || event.shiftKey) return;
+    const key = event.key.toLowerCase();
+    if (key === "c") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (this.mode === "campaign") void this.copyModel();
+      else void this.share();
+    } else if (key === "v") {
+      event.preventDefault();
+      event.stopPropagation();
+      void this.pasteModel();
+    }
   };
 
   private require<T extends Element>(selector: string): T {
@@ -741,6 +1003,10 @@ function switchTone(maze: Maze, axis: WallAxis, c: number, r: number): number | 
     if (tile.wall.axis === axis && tile.wall.c === c && tile.wall.r === r) return tile.tone % 6;
   }
   return null;
+}
+
+function samePoint(a: { c: number; r: number }, b: { c: number; r: number }): boolean {
+  return a.c === b.c && a.r === b.r;
 }
 
 function elementAt(x: number, y: number, attr: "data-wall" | "data-cell"): HTMLElement | null {

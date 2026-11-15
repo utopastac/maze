@@ -26,6 +26,7 @@ const BOOST_ACCEL = 34;
 const STICK_LIFT = 0.035;
 const STICK_SINK = 0.02;
 const CRUMBLE_HOLD = 0.7;
+const CRUMBLE_REGEN = 5;
 const SWITCH_SPEED = 1.15;
 const ICE_DAMP = 0.08;
 
@@ -191,6 +192,7 @@ export class Simulation {
       this.appliedRoll = fromRoll + (roll - fromRoll) * blend;
       this.board.setNextKinematicRotation(quatFromTilt(this.appliedPitch, this.appliedRoll));
       this.world.step();
+      this.tickCrumble();
       if (this.dropping) {
         this.advanceDrop();
         if (this.dropSettled && !this.dropReported) {
@@ -232,11 +234,15 @@ export class Simulation {
       board: { x: this.boardRot.x, y: this.boardRot.y, z: this.boardRot.z, w: this.boardRot.w },
       ballPosition: { x: this.ballPos.x, y: this.ballPos.y, z: this.ballPos.z },
       ballRotation: { x: this.ballRot.x, y: this.ballRot.y, z: this.ballRot.z, w: this.ballRot.w },
-      crumbles: [...this.crumbles].map((cell) => ({
-        cell,
-        progress: Math.min(1, (this.crumbleTime.get(cell) ?? 0) / CRUMBLE_HOLD),
-        gone: this.crumbleGone.has(cell),
-      })),
+      crumbles: [...this.crumbles].map((cell) => {
+        const gone = this.crumbleGone.has(cell);
+        const time = this.crumbleTime.get(cell) ?? 0;
+        return {
+          cell,
+          progress: gone ? 1 : Math.min(1, time / CRUMBLE_HOLD),
+          gone,
+        };
+      }),
       gates: [...this.openGates],
     };
   }
@@ -254,7 +260,7 @@ export class Simulation {
     this.ball.setAngvel({ x: 0, y: 0, z: 0 }, true);
   }
 
-  resetBall(): void {
+  resetBall(repairCrumble = true): void {
     this.board.rotation(this.boardRot);
     const placed = rotateVec(this.boardRot, {
       x: this.layout.start.x,
@@ -273,7 +279,7 @@ export class Simulation {
     this.sentDescend = false;
     this.sentEscape = false;
     this.fallShield = 0;
-    this.restoreTiles();
+    this.restoreTiles(repairCrumble);
     this.clearDrop();
   }
 
@@ -441,7 +447,6 @@ export class Simulation {
 
     if (local.y < TILE_Y) this.applyBoost(id);
     this.applyIce(id, local);
-    this.applyCrumble(id, local);
     this.applySwitch(id, local);
     this.applyHeart(id, local);
   }
@@ -485,24 +490,39 @@ export class Simulation {
     this.ball.setAngularDamping(this.damping * 0.51 * (on ? 0.25 : 1));
   }
 
-  private applyCrumble(id: string, local: Vec3): void {
-    const standing = local.y < TILE_Y && local.y > FALL_Y;
+  private tickCrumble(): void {
+    if (this.crumbles.size === 0) return;
+    const local = this.localBall();
+    const standing = this.ball.gravityScale() !== 0 && local.y < TILE_Y && local.y > FALL_Y;
+    const id = standing ? this.cellKeyAt(local) : null;
+    const occupied = this.cellKeyAt(local);
     for (const cell of this.crumbles) {
-      if (this.crumbleGone.has(cell)) continue;
-      if (cell === id && standing) {
-        const time = (this.crumbleTime.get(cell) ?? 0) + STEP;
-        this.crumbleTime.set(cell, time);
-        if (time >= CRUMBLE_HOLD) this.breakCrumble(cell);
-      } else {
-        this.crumbleTime.delete(cell);
+      if (this.crumbleGone.has(cell)) {
+        const waited = (this.crumbleTime.get(cell) ?? 0) + STEP;
+        this.crumbleTime.set(cell, waited);
+        if (waited >= CRUMBLE_REGEN && occupied !== cell) this.restoreCrumble(cell);
+        continue;
       }
+      if (!this.crumbleTime.has(cell) && cell !== id) continue;
+      const time = (this.crumbleTime.get(cell) ?? 0) + STEP;
+      this.crumbleTime.set(cell, time);
+      if (time >= CRUMBLE_HOLD) this.breakCrumble(cell);
     }
   }
 
   private breakCrumble(cell: string): void {
     this.crumbleGone.add(cell);
+    this.crumbleTime.set(cell, 0);
     for (const surface of this.surfaces) {
       if (surface.floor === this.active && surface.cell === cell) surface.collider.setSensor(true);
+    }
+  }
+
+  private restoreCrumble(cell: string): void {
+    this.crumbleGone.delete(cell);
+    this.crumbleTime.delete(cell);
+    for (const surface of this.surfaces) {
+      if (surface.floor === this.active && surface.cell === cell) surface.collider.setSensor(false);
     }
   }
 
@@ -523,14 +543,16 @@ export class Simulation {
     }
   }
 
-  private restoreTiles(): void {
+  private restoreTiles(repairCrumble: boolean): void {
     for (const surface of this.surfaces) {
       if (surface.floor !== this.active) continue;
-      if (surface.cell && this.crumbleGone.has(surface.cell)) surface.collider.setSensor(false);
+      if (repairCrumble && surface.cell && this.crumbleGone.has(surface.cell)) surface.collider.setSensor(false);
       if (surface.gate && this.openGates.has(surface.gate)) surface.collider.setSensor(false);
     }
-    this.crumbleTime.clear();
-    this.crumbleGone.clear();
+    if (repairCrumble) {
+      this.crumbleTime.clear();
+      this.crumbleGone.clear();
+    }
     this.openGates.clear();
     this.onIce = false;
     this.ball.setLinearDamping(this.damping);

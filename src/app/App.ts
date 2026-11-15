@@ -7,7 +7,9 @@ import { initPhysics, Simulation } from "../core/simulation.ts";
 import { TiltController } from "../core/tilt.ts";
 import { createRenderer } from "../render/createRenderer.ts";
 import { MazeWorld } from "../render/MazeWorld.ts";
-import { LevelEditor } from "../ui/editor.ts";
+import { resizeMaze } from "../core/maze.ts";
+import { DEFAULT_FLOOR_THEME } from "../core/theme.ts";
+import { LevelEditor, type EditorMode } from "../ui/editor.ts";
 import { Hud } from "../ui/hud.ts";
 import { Overlay } from "../ui/overlay.ts";
 import { SettingsPanel } from "../ui/settingsPanel.ts";
@@ -15,7 +17,8 @@ import type { WebGLRenderer } from "three";
 
 const FIRST_SEED = 11;
 const TILT_KEYS = ["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d"];
-const GLANCE_KEYS = new Set(["q", "e", "z", "c"]);
+const CAMERA_KEYS = new Set(["q", "e", "z", "c", "-", "_", "=", "+"]);
+const ZOOM_SPEED = 0.45;
 
 type Phase = "play" | "falling" | "escaping" | "won" | "lost";
 type Mode = "free" | "campaign";
@@ -76,6 +79,7 @@ export class App {
       this.sim?.apply(this.settings);
       this.view?.applyCamera();
       this.view?.applyPicture();
+      this.panel.refresh();
       this.resize();
     });
     this.editor = new LevelEditor(editor, {
@@ -90,7 +94,8 @@ export class App {
       onCampaign: () => this.startCampaign(),
       onMotion: () => this.toggleMotion(),
       onSettings: () => this.toggleSettings(),
-      onEdit: () => this.openEditor(),
+      onEdit: () => this.openEditor("share"),
+      onAuthor: () => this.openEditor("campaign"),
       onShare: () => {
         if (!this.authored) return;
         void this.publish(this.authored).then((result) => this.noteShare(result));
@@ -342,7 +347,7 @@ export class App {
     this.fallTimer = window.setTimeout(() => {
       this.fallTimer = 0;
       if (this.phase !== "falling") return;
-      this.sim?.resetBall();
+      this.sim?.resetBall(false);
       this.phase = "play";
       this.hud.setNote("");
     }, 460);
@@ -421,27 +426,34 @@ export class App {
     this.recallCamera = true;
   }
 
-  private openEditor(): void {
-    if (!this.authored || this.editor.isOpen()) return;
+  private openEditor(mode: EditorMode): void {
+    if (this.editor.isOpen()) return;
+    if (mode === "share" && !this.authored) return;
     this.closeSettings();
     this.dragging = false;
     this.dragPointer = null;
     this.keys.clear();
     this.hud.setHeld(this.keys);
     this.view?.restCamera();
-    this.editor.open(this.authored);
-    this.hud.setEditSelected(true);
+    const tower = mode === "campaign"
+      ? (this.authored ? cloneTower(this.authored) : blankAuthorTower())
+      : cloneTower(this.authored!);
+    this.editor.open(tower, mode);
+    this.hud.setEditSelected(mode === "share");
+    this.hud.setAuthorSelected(mode === "campaign");
     this.hud.hideHint();
   }
 
   private playEdited(tower: Tower): void {
+    const mode = this.editor.modeOf();
     this.finishEditing();
-    this.mountTower(tower, true);
+    this.mountTower(tower, mode === "share");
     this.resize();
   }
 
   private finishEditing(): void {
     this.hud.setEditSelected(false);
+    this.hud.setAuthorSelected(false);
     if (!this.running && this.phase === "play") this.hud.showHint();
   }
 
@@ -581,7 +593,7 @@ export class App {
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
     if (event.key.startsWith("Arrow") || event.key === " ") event.preventDefault();
     const chord = event.metaKey || event.ctrlKey || event.altKey;
-    if (!(chord && GLANCE_KEYS.has(key))) this.keys.add(key);
+    if (!(chord && CAMERA_KEYS.has(key))) this.keys.add(key);
     this.hud.setHeld(this.keys);
     if (event.repeat) return;
     if (key === "r") this.resetBall();
@@ -621,6 +633,10 @@ export class App {
       if (this.keys.has("c")) dOrbit += 80 * dt;
       if (dAngle !== 0 || dOrbit !== 0) view.nudgeCamera(dAngle, dOrbit);
     }
+    let dZoom = 0;
+    if (this.keys.has("=") || this.keys.has("+")) dZoom += ZOOM_SPEED * dt;
+    if (this.keys.has("-") || this.keys.has("_")) dZoom -= ZOOM_SPEED * dt;
+    if (dZoom !== 0) this.settings.set("zoom", this.settings.values.zoom + dZoom);
     view.stepCamera(dt);
   };
 
@@ -650,5 +666,27 @@ export class App {
       this.recallCamera = true;
     }
     this.noteActivity();
+  };
+}
+
+function blankAuthorTower(): Tower {
+  return {
+    floors: [
+      resizeMaze(
+        {
+          cols: 1,
+          rows: 1,
+          walls: [[0]],
+          holes: [],
+          tiles: [],
+          start: { c: 0, r: 0 },
+          goal: { c: 0, r: 0 },
+          hatch: null,
+          theme: DEFAULT_FLOOR_THEME,
+        },
+        7,
+        7,
+      ),
+    ],
   };
 }

@@ -11,6 +11,7 @@ export interface HudCallbacks {
   onMotion: () => void;
   onSettings: () => void;
   onEdit: () => void;
+  onAuthor: () => void;
   onShare: () => void;
 }
 
@@ -25,6 +26,7 @@ export class Hud {
   private readonly motionBtn: HTMLButtonElement;
   private readonly settingsBtn: HTMLButtonElement;
   private readonly editBtn: HTMLButtonElement;
+  private readonly authorBtn: HTMLButtonElement;
   private readonly shareBtn: HTMLButtonElement;
   private readonly campaignBtn: HTMLButtonElement;
   private readonly livesEl: HTMLElement;
@@ -54,7 +56,8 @@ export class Hud {
           <button type="button" class="glass-btn" data-motion hidden aria-label="Use device tilt">${iconSvg("motion")}</button>
           <button type="button" class="glass-btn" data-level aria-label="Level the maze" title="Level">${iconSvg("level")}</button>
           <button type="button" class="glass-btn" data-reset aria-label="Reset the ball" title="Reset">${iconSvg("reset")}</button>
-          <button type="button" class="glass-btn" data-edit aria-label="Edit level" title="Edit level">${iconSvg("edit")}</button>
+          <button type="button" class="glass-btn" data-edit aria-label="Edit level" title="Edit & share">${iconSvg("edit")}</button>
+          <button type="button" class="glass-btn" data-author aria-label="Author campaign" title="Author campaign">${iconSvg("author")}</button>
           <button type="button" class="glass-btn" data-share aria-label="Copy level link" title="Copy link">${iconSvg("share")}</button>
           <button type="button" class="glass-btn" data-new aria-label="New maze" title="New maze">${iconSvg("new")}</button>
           <button type="button" class="glass-btn" data-campaign aria-label="Campaign" title="Campaign" aria-pressed="false">${iconSvg("campaign")}</button>
@@ -89,6 +92,13 @@ export class Hud {
             <kbd class="${styles.key} ${styles.orbit}" data-key="c">${iconSvg("orbitRight", 14)}<span>C</span></kbd>
           </div>
         </div>
+        <div class="${styles.cluster}">
+          <p class="${styles.controlLabel}">zoom</p>
+          <div class="${styles.orbitRow}">
+            <kbd class="${styles.key} ${styles.orbit}" data-key="-">${iconSvg("minus", 14)}<span>-</span></kbd>
+            <kbd class="${styles.key} ${styles.orbit}" data-key="=">${iconSvg("plus", 14)}<span>+</span></kbd>
+          </div>
+        </div>
       </div>
     `;
     this.timeEl = this.require("[data-time]");
@@ -99,6 +109,7 @@ export class Hud {
     this.motionBtn = this.require("[data-motion]");
     this.settingsBtn = this.require("[data-settings]");
     this.editBtn = this.require("[data-edit]");
+    this.authorBtn = this.require("[data-author]");
     this.shareBtn = this.require("[data-share]");
     this.campaignBtn = this.require("[data-campaign]");
     this.livesEl = this.require("[data-lives]");
@@ -110,6 +121,7 @@ export class Hud {
     this.motionBtn.addEventListener("click", () => this.callbacks.onMotion());
     this.settingsBtn.addEventListener("click", () => this.callbacks.onSettings());
     this.editBtn.addEventListener("click", () => this.callbacks.onEdit());
+    this.authorBtn.addEventListener("click", () => this.callbacks.onAuthor());
     this.shareBtn.addEventListener("click", () => this.callbacks.onShare());
     this.campaignBtn.addEventListener("click", () => this.callbacks.onCampaign());
     this.keycaps = [...this.root.querySelectorAll<HTMLElement>(`.${styles.controls} [data-key]`)];
@@ -128,6 +140,7 @@ export class Hud {
     this.campaignBtn.classList.toggle("selected", active);
     this.campaignBtn.setAttribute("aria-pressed", active ? "true" : "false");
     this.editBtn.hidden = active;
+    this.authorBtn.hidden = active;
     this.shareBtn.hidden = active;
     if (active) return;
     this.livesEl.hidden = true;
@@ -176,6 +189,8 @@ export class Hud {
     if (keys.has("e")) held.add("e");
     if (keys.has("z")) held.add("z");
     if (keys.has("c")) held.add("c");
+    if (keys.has("-") || keys.has("_")) held.add("-");
+    if (keys.has("=") || keys.has("+")) held.add("=");
     for (const key of this.keycaps) {
       key.classList.toggle(styles.down, held.has(key.dataset.key ?? ""));
     }
@@ -216,7 +231,12 @@ export class Hud {
 
   setEditSelected(selected: boolean): void {
     this.editBtn.classList.toggle("selected", selected);
-    this.editBtn.setAttribute("aria-label", selected ? "Close editor" : "Edit level");
+    this.editBtn.setAttribute("aria-label", selected ? "Close editor" : "Edit & share");
+  }
+
+  setAuthorSelected(selected: boolean): void {
+    this.authorBtn.classList.toggle("selected", selected);
+    this.authorBtn.setAttribute("aria-label", selected ? "Close campaign author" : "Author campaign");
   }
 
   private require<T extends Element>(selector: string): T {

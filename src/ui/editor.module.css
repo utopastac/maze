@@ -22,6 +22,14 @@
       transform: translate3d(0, 0, 0);
     }
   }
+
+  &[data-mode="share"] :is([data-campaign-only]) {
+    display: none;
+  }
+
+  &[data-mode="campaign"] :is([data-share-only]) {
+    display: none;
+  }
 }
 
 .scrim {
@@ -33,7 +41,7 @@
 .card {
   position: relative;
   z-index: 1;
-  width: min(760px, 100%);
+  width: min(1120px, 100%);
   max-height: 100%;
   display: flex;
   flex-direction: column;
@@ -56,6 +64,26 @@
   &::-webkit-scrollbar {
     display: none;
   }
+}
+
+.body {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: stretch;
+  min-height: 0;
+  flex: 1;
+
+  @media (max-width: 760px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
 }
 
 .head {
@@ -150,7 +178,6 @@ button.step {
 
 button.clear {
   height: 36px;
-  margin-left: auto;
   padding: 0 14px;
   font-size: 14px;
 }
@@ -174,6 +201,32 @@ button.tool {
   gap: 8px;
 }
 
+.themeField {
+  display: grid;
+  gap: 6px;
+}
+
+.themeSelect {
+  appearance: none;
+  height: 40px;
+  padding: 0 36px 0 14px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--control-radius);
+  background:
+    linear-gradient(45deg, transparent 50%, var(--ink-faint) 50%) calc(100% - 14px) calc(50% - 2px) / 6px 6px no-repeat,
+    linear-gradient(135deg, var(--ink-faint) 50%, transparent 50%) calc(100% - 10px) calc(50% - 2px) / 6px 6px no-repeat,
+    var(--glass);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+
+  &:focus {
+    outline: 1px solid var(--seam);
+    outline-offset: 1px;
+  }
+}
+
 .dirLabel {
   margin-right: 4px;
   color: var(--ink-faint);
@@ -189,8 +242,8 @@ button.dir {
 .stage {
   container-type: size;
   width: 100%;
-  height: min(46dvh, 480px);
-  min-height: 220px;
+  min-height: min(70dvh, 640px);
+  height: 100%;
   display: grid;
   place-items: center;
 }
@@ -202,6 +255,48 @@ button.dir {
   position: relative;
   display: grid;
   grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+
+  &[data-theme="futuristic"] {
+    --maze-floor: var(--theme-futuristic-floor);
+    --maze-wall: var(--theme-futuristic-wall);
+    --maze-grout: var(--theme-futuristic-grout);
+    --maze-frame: var(--theme-futuristic-frame);
+  }
+
+  &[data-theme="desert"] {
+    --maze-floor: var(--theme-desert-floor);
+    --maze-wall: var(--theme-desert-wall);
+    --maze-grout: var(--theme-desert-grout);
+    --maze-frame: var(--theme-desert-frame);
+  }
+
+  &[data-theme="castle"] {
+    --maze-floor: var(--theme-castle-floor);
+    --maze-wall: var(--theme-castle-wall);
+    --maze-grout: var(--theme-castle-grout);
+    --maze-frame: var(--theme-castle-frame);
+  }
+
+  &[data-theme="tomb"] {
+    --maze-floor: var(--theme-tomb-floor);
+    --maze-wall: var(--theme-tomb-wall);
+    --maze-grout: var(--theme-tomb-grout);
+    --maze-frame: var(--theme-tomb-frame);
+  }
+
+  &[data-theme="office"] {
+    --maze-floor: var(--theme-office-floor);
+    --maze-wall: var(--theme-office-wall);
+    --maze-grout: var(--theme-office-grout);
+    --maze-frame: var(--theme-office-frame);
+  }
+
+  &[data-theme="suburbia"] {
+    --maze-floor: var(--theme-suburbia-floor);
+    --maze-wall: var(--theme-suburbia-wall);
+    --maze-grout: var(--theme-suburbia-grout);
+    --maze-frame: var(--theme-suburbia-frame);
+  }
   grid-template-rows: repeat(var(--rows), minmax(0, 1fr));
   width: min(100cqw, calc(100cqh * var(--cols) / var(--rows)));
   aspect-ratio: var(--cols) / var(--rows);
@@ -228,6 +323,15 @@ button.dir {
     cursor: pointer;
   }
 
+  & .cell:not([data-kind="floor"]) {
+    cursor: grab;
+  }
+
+  &.dragging,
+  &.dragging .cell {
+    cursor: grabbing;
+  }
+
   &[data-tool="switch"] .wall {
     pointer-events: auto;
     cursor: pointer;
@@ -239,6 +343,11 @@ button.dir {
   }
 
   @media (hover: hover) and (pointer: fine) {
+    &[data-tool="wall"] .wall:hover,
+    &[data-tool="switch"] .wall:hover {
+      z-index: 6;
+    }
+
     &[data-tool="wall"] .wall:hover::before {
       opacity: 1;
       background: var(--seam);
@@ -392,7 +501,14 @@ button.dir {
   }
 
   &[data-kind="crumble"] {
-    background: var(--maze-crumble);
+    background:
+      linear-gradient(118deg, transparent 47%, color-mix(in srgb, var(--maze-crumble) 35%, #000) 47%, color-mix(in srgb, var(--maze-crumble) 35%, #000) 53%, transparent 53%),
+      linear-gradient(28deg, transparent 46%, color-mix(in srgb, var(--maze-crumble) 25%, #000) 46%, color-mix(in srgb, var(--maze-crumble) 25%, #000) 52%, transparent 52%),
+      linear-gradient(-42deg, transparent 48%, color-mix(in srgb, var(--maze-crumble) 30%, #000) 48%, color-mix(in srgb, var(--maze-crumble) 30%, #000) 51%, transparent 51%),
+      radial-gradient(circle at 28% 34%, color-mix(in srgb, var(--maze-crumble-mark) 28%, var(--maze-crumble)) 0 1.5px, transparent 2px),
+      radial-gradient(circle at 72% 62%, color-mix(in srgb, var(--maze-crumble-mark) 22%, var(--maze-crumble)) 0 1.5px, transparent 2px),
+      radial-gradient(circle at 54% 18%, color-mix(in srgb, #000 35%, var(--maze-crumble)) 0 1px, transparent 1.5px),
+      var(--maze-crumble);
 
     &::before,
     &::after {
@@ -400,18 +516,19 @@ button.dir {
       position: absolute;
       left: 50%;
       top: 50%;
-      width: 62%;
+      width: 70%;
       height: 2px;
-      background: var(--maze-crumble-mark);
+      background: color-mix(in srgb, var(--maze-crumble) 20%, #000);
+      box-shadow: 0 0 0 1px color-mix(in srgb, var(--maze-crumble-mark) 35%, transparent);
     }
 
     &::before {
-      transform: translate(-50%, -50%) rotate(32deg);
+      transform: translate(-50%, -50%) rotate(34deg);
     }
 
     &::after {
-      width: 42%;
-      transform: translate(-50%, -50%) rotate(-48deg);
+      width: 48%;
+      transform: translate(-42%, -20%) rotate(-52deg);
     }
   }
 
@@ -534,13 +651,15 @@ button.dir {
   min-height: 2.6em;
   color: var(--ink-faint);
   font-size: 13px;
-  text-align: center;
+  text-align: left;
 }
 
 .footer {
   display: flex;
-  justify-content: flex-end;
+  flex-wrap: wrap;
+  justify-content: flex-start;
   gap: 8px;
+  margin-top: auto;
 }
 
 .play {

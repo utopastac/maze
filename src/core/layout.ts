@@ -1,4 +1,5 @@
 import { Wall, tileAt, wallKey, type Direction, type FloorTile, type GridPoint, type Maze } from "./maze.ts";
+import { parseFloorTheme, type FloorThemeId } from "./theme.ts";
 import type { Tower } from "./tower.ts";
 
 export const CELL = 1.2;
@@ -113,6 +114,7 @@ export interface MazeLayout {
   minZ: number;
   maxZ: number;
   finale: boolean;
+  theme: FloorThemeId;
 }
 
 export interface FloorPlan {
@@ -301,6 +303,7 @@ export function layoutMaze(maze: Maze, showGoal = true, hearts: GridPoint[] = []
     minZ: originZ,
     maxZ: originZ + depth,
     finale: showGoal,
+    theme: parseFloorTheme(maze.theme),
   };
 }
 

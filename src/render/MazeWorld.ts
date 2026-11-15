@@ -38,6 +38,8 @@ import { clamp } from "../core/math.ts";
 import { DIRECTION_VECTOR, SWITCH_COLOR_COUNT, WARP_COLOR_COUNT } from "../core/maze.ts";
 import { SETTING_SPECS, type PlaySettings } from "../core/playSettings.ts";
 import type { Pose } from "../core/simulation.ts";
+import { DEFAULT_FLOOR_THEME, type FloorThemeId } from "../core/theme.ts";
+import { makeThemeSurfaces, type ThemeSurfaces } from "./themeMaterials.ts";
 
 const SHELL_ALPHA = 0.18;
 const ANGLE_SPEC = SETTING_SPECS.find((spec) => spec.key === "angle");
@@ -52,6 +54,7 @@ export class MazeWorld {
   private readonly key: DirectionalLight;
   private readonly goalLight: PointLight;
   private readonly materials: Record<PieceKind, MeshToonMaterial>;
+  private readonly themeSurfaces: Map<FloorThemeId, ThemeSurfaces>;
   private readonly goalRingMat: MeshToonMaterial;
   private readonly startRingMat: MeshToonMaterial;
   private readonly groundMats: Record<string, MeshToonMaterial>;
@@ -75,7 +78,6 @@ export class MazeWorld {
   private readonly boostMarkMat: MeshToonMaterial;
   private readonly warpMats: MeshToonMaterial[];
   private readonly iceMarkMat: MeshToonMaterial;
-  private readonly crumbleMarkMat: MeshToonMaterial;
   private readonly switchMats: MeshToonMaterial[];
   private readonly gateMeshes: Mesh[] = [];
   private readonly crumbleMeshes: Mesh[] = [];
@@ -87,7 +89,6 @@ export class MazeWorld {
   private readonly debris: Debris[] = [];
   private readonly floorGroups: (Group | null)[] = [];
   private readonly frames: (Mesh | null)[] = [];
-  private readonly glassFrame: MeshToonMaterial;
   private goalRing: Mesh | null = null;
   private goalAnchor: { x: number; z: number; group: Group } | null = null;
   private meadow: Group | null = null;
@@ -123,7 +124,7 @@ export class MazeWorld {
       boost: toon(token("--maze-boost"), token("--maze-boost"), 0.16),
       warp: toon(token("--maze-warp"), token("--maze-warp"), 0.14),
       ice: toon(token("--maze-ice"), token("--maze-ice-mark"), 0.1),
-      crumble: toon(token("--maze-crumble"), token("--maze-crumble-mark"), 0.08),
+      crumble: makeCrumbleMat(),
       switch: toon(token("--maze-switch"), token("--maze-switch-0"), 0.12),
       start: toon(token("--maze-start")),
       goal: toon(token("--maze-goal-floor"), token("--maze-goal"), 0.24),
@@ -139,10 +140,7 @@ export class MazeWorld {
     this.materials.lip.toneMapped = false;
     this.materials.hatch.toneMapped = false;
     this.materials.exit.toneMapped = false;
-    this.glassFrame = this.materials.frame.clone();
-    this.glassFrame.transparent = true;
-    this.glassFrame.opacity = SHELL_ALPHA;
-    this.glassFrame.depthWrite = false;
+    this.themeSurfaces = makeThemeSurfaces(ramp);
 
     this.goalRingMat = glow(token("--maze-goal"));
     this.goalRingMat.emissiveIntensity = 0.85;
@@ -326,7 +324,6 @@ export class MazeWorld {
     this.boostMarkMat = glow(token("--maze-boost-mark"));
     this.warpMats = Array.from({ length: WARP_COLOR_COUNT }, (_, index) => glow(token(`--maze-warp-${index}`)));
     this.iceMarkMat = glow(token("--maze-ice-mark"));
-    this.crumbleMarkMat = glow(token("--maze-crumble-mark"));
     this.switchMats = Array.from({ length: SWITCH_COLOR_COUNT }, (_, index) => glow(token(`--maze-switch-${index}`)));
     this.arrowGeometry = arrowGeometry();
     this.heartGeometry = heartGeometry();
@@ -379,7 +376,7 @@ export class MazeWorld {
     this.goalAnchor = null;
     layout.floors.forEach((floor, index) => {
       const group = this.makeFloor(floor, -index * layout.story);
-      this.frames[index] = this.addPieces(group, floor.pieces);
+      this.frames[index] = this.addPieces(group, floor.pieces, floor.theme);
       this.addMarkers(group, floor, floor.finale);
       this.addTileMarks(group, floor);
       this.addHearts(group, floor);
@@ -444,7 +441,7 @@ export class MazeWorld {
     if (!tower) return;
     const index = this.floorGroups.length;
     const group = this.makeFloor(layout, -index * this.story + this.raised);
-    this.frames[index] = this.addPieces(group, layout.pieces);
+    this.frames[index] = this.addPieces(group, layout.pieces, layout.theme);
     this.addMarkers(group, layout, layout.finale);
     this.addTileMarks(group, layout);
     this.addHearts(group, layout);
@@ -721,11 +718,12 @@ export class MazeWorld {
     }
   }
 
-  private addPieces(parent: Group, pieces: Piece[]): Mesh | null {
+  private addPieces(parent: Group, pieces: Piece[], theme: FloorThemeId): Mesh | null {
+    const surfaces = this.themeSurfaces.get(theme);
     const groups = new Map<PieceKind, BufferGeometry[]>();
     for (const piece of pieces) {
       if (piece.gate || piece.kind === "crumble") {
-        this.addLoose(parent, piece);
+        this.addLoose(parent, piece, theme);
         continue;
       }
       const geo = new BoxGeometry(piece.hx * 2, piece.hy * 2, piece.hz * 2);
@@ -741,7 +739,7 @@ export class MazeWorld {
       if (geos.length > 1) {
         for (const geo of geos) geo.dispose();
       }
-      const mesh = new Mesh(merged, this.materials[kind]);
+      const mesh = new Mesh(merged, this.surfaceMaterial(kind, surfaces));
       mesh.castShadow = kind === "wall" || kind === "frame";
       mesh.receiveShadow =
         kind === "floor" ||
@@ -753,23 +751,55 @@ export class MazeWorld {
         kind === "crumble" ||
         kind === "switch" ||
         kind === "grout";
-      if (kind === "frame") frame = mesh;
+      if (kind === "frame") {
+        frame = mesh;
+        mesh.userData.theme = theme;
+      }
       parent.add(mesh);
     }
     return frame;
   }
 
-  private syncShell(dt: number, snap: boolean): void {
-    const mesh = this.frames[this.currentFloor()] ?? null;
-    if (mesh && mesh.material !== this.glassFrame) {
-      mesh.material = this.glassFrame;
-      mesh.castShadow = false;
-      mesh.renderOrder = 2;
-      this.glassFrame.opacity = snap ? SHELL_ALPHA : 1;
+  private surfaceMaterial(kind: PieceKind, surfaces: ThemeSurfaces | undefined): MeshToonMaterial {
+    if (surfaces) {
+      if (kind === "floor") return surfaces.floor;
+      if (kind === "start") return surfaces.start;
+      if (kind === "wall") return surfaces.wall;
+      if (kind === "grout") return surfaces.grout;
+      if (kind === "frame") return surfaces.frame;
     }
+    return this.materials[kind];
+  }
+
+  private syncShell(dt: number, snap: boolean): void {
+    const current = this.currentFloor();
+    let glass: MeshToonMaterial | null = null;
+    for (let index = 0; index < this.frames.length; index += 1) {
+      const mesh = this.frames[index];
+      if (!mesh) continue;
+      const theme = (mesh.userData.theme as FloorThemeId | undefined) ?? DEFAULT_FLOOR_THEME;
+      const surfaces = this.themeSurfaces.get(theme);
+      if (!surfaces) continue;
+      if (index === current) {
+        if (mesh.material !== surfaces.glass) {
+          mesh.material = surfaces.glass;
+          mesh.castShadow = false;
+          mesh.renderOrder = 2;
+          surfaces.glass.opacity = snap ? SHELL_ALPHA : 1;
+        }
+        glass = surfaces.glass;
+        continue;
+      }
+      if (mesh.material !== surfaces.frame) {
+        mesh.material = surfaces.frame;
+        mesh.castShadow = true;
+        mesh.renderOrder = 0;
+      }
+    }
+    if (!glass) return;
     const blend = snap ? 1 : 1 - Math.exp(-8 * dt);
-    this.glassFrame.opacity += (SHELL_ALPHA - this.glassFrame.opacity) * blend;
-    this.glassFrame.depthWrite = this.glassFrame.opacity > 0.85;
+    glass.opacity += (SHELL_ALPHA - glass.opacity) * blend;
+    glass.depthWrite = glass.opacity > 0.85;
   }
 
   private currentFloor(): number {
@@ -1883,26 +1913,32 @@ export class MazeWorld {
     }
   }
 
-  private addLoose(parent: Group, piece: Piece): void {
+  private addLoose(parent: Group, piece: Piece, theme: FloorThemeId = DEFAULT_FLOOR_THEME): void {
     const geo = new BoxGeometry(piece.hx * 2, piece.hy * 2, piece.hz * 2);
-    const shared = this.materials[piece.kind];
+    const surfaces = this.themeSurfaces.get(theme);
+    const shared = this.surfaceMaterial(piece.kind, surfaces);
     const material = piece.kind === "crumble" ? shared.clone() : shared;
     const mesh = new Mesh(geo, material);
     mesh.position.set(piece.x, piece.y, piece.z);
     mesh.castShadow = piece.kind === "wall";
-    mesh.receiveShadow = piece.kind === "crumble";
+    mesh.receiveShadow = false;
     mesh.userData.restX = piece.x;
     mesh.userData.restY = piece.y;
     if (piece.kind === "crumble") {
       mesh.userData.owned = true;
       mesh.userData.cell = piece.cell ?? "";
-      const crackA = new Mesh(new BoxGeometry(0.46, 0.02, 0.05), this.crumbleMarkMat);
-      crackA.position.y = piece.hy + 0.008;
-      crackA.rotation.y = 0.7;
-      const crackB = new Mesh(new BoxGeometry(0.32, 0.02, 0.05), this.crumbleMarkMat);
-      crackB.position.y = piece.hy + 0.01;
-      crackB.rotation.y = -0.85;
-      mesh.add(crackA, crackB);
+      material.transparent = true;
+      material.opacity = 0;
+      material.depthWrite = false;
+      const chunkMat = shared.clone();
+      mesh.userData.chunkMat = chunkMat;
+      const slab = new Mesh(new BoxGeometry(piece.hx * 2, piece.hy * 2, piece.hz * 2), chunkMat);
+      slab.castShadow = true;
+      slab.receiveShadow = true;
+      mesh.add(slab);
+      mesh.userData.slab = slab;
+      mesh.userData.chunks = crumbleChunks(mesh, piece, chunkMat);
+      mesh.userData.apart = 0;
       this.crumbleMeshes.push(mesh);
     }
     if (piece.gate) {
@@ -1941,21 +1977,42 @@ export class MazeWorld {
         continue;
       }
       const info = crumble.get(mesh.userData.cell as string);
-      const restX = mesh.userData.restX as number;
-      const restY = mesh.userData.restY as number;
-      const mat = mesh.material instanceof MeshToonMaterial ? mesh.material : null;
-      if (!info?.gone) {
-        mesh.visible = true;
-        const progress = info?.progress ?? 0;
-        mesh.position.y += (restY - mesh.position.y) * 0.4;
-        mesh.position.x = restX + (this.reduceMotion ? 0 : Math.sin(time * 28) * 0.012 * progress);
-        if (mat) mat.emissiveIntensity = 0.08 + progress * 0.85;
-      } else {
-        mesh.position.x = restX;
-        const target = restY - 0.62;
-        mesh.position.y += (target - mesh.position.y) * (this.reduceMotion ? 1 : 0.16);
-        if (mat) mat.emissiveIntensity = 0.04;
-        if (mesh.position.y < restY - 0.45) mesh.visible = false;
+      mesh.position.x = mesh.userData.restX as number;
+      mesh.position.y = mesh.userData.restY as number;
+      mesh.visible = true;
+      const progress = info?.progress ?? 0;
+      const gone = info?.gone === true;
+      const apart = mesh.userData.apart as number;
+      const target = gone ? 1 : 0;
+      const next = this.reduceMotion ? target : apart + (target - apart) * 0.16;
+      mesh.userData.apart = next;
+      const crack = gone ? 1 : progress;
+      const chunkMat = mesh.userData.chunkMat;
+      if (chunkMat instanceof MeshToonMaterial) chunkMat.emissiveIntensity = 0.04 + crack * 0.9 * (1 - next);
+      const slab = mesh.userData.slab as Mesh | undefined;
+      const breaking = crack > 0.12 || gone;
+      if (slab) {
+        slab.visible = !breaking;
+        if (!breaking) {
+          slab.position.y = this.reduceMotion ? 0 : Math.sin(time * 22) * 0.006 * crack;
+          slab.rotation.y = this.reduceMotion ? 0 : Math.sin(time * 17) * 0.01 * crack;
+        }
+      }
+      const chunks = mesh.userData.chunks as Mesh[];
+      for (const chunk of chunks) {
+        const dx = chunk.userData.dirX as number;
+        const dz = chunk.userData.dirZ as number;
+        const tilt = chunk.userData.tilt as number;
+        const spread = crack * 0.034 + next * 0.2;
+        const sink = crack * crack * 0.07 + next * 1.05;
+        chunk.position.x = (chunk.userData.restX as number) + dx * spread;
+        chunk.position.z = (chunk.userData.restZ as number) + dz * spread;
+        chunk.position.y = -sink;
+        const spin = this.reduceMotion ? 0 : (crack * 0.45 + next * 1.8) * tilt;
+        chunk.rotation.x = dz * spin * 0.4;
+        chunk.rotation.z = -dx * spin * 0.4;
+        chunk.rotation.y = this.reduceMotion ? 0 : Math.sin(time * 2.4 + tilt) * next * 0.6;
+        chunk.visible = breaking && next < 0.94;
       }
     }
   }
@@ -1964,6 +2021,7 @@ export class MazeWorld {
     if (!(child instanceof Mesh)) return;
     const shared = child.geometry === this.arrowGeometry || child.geometry === this.heartGeometry;
     if (!shared) child.geometry.dispose();
+    if (child.userData.chunkMat instanceof MeshToonMaterial) child.userData.chunkMat.dispose();
     if (child.userData.owned === true && child.material instanceof MeshToonMaterial) child.material.dispose();
   }
 
@@ -3364,6 +3422,157 @@ function quantize(t: number, bands: number): number {
 function bandValue(t: number, bands: number): number {
   const span = bands - 1;
   return Math.round(t * span) / span;
+}
+
+function makeCrumbleMat(): MeshToonMaterial {
+  return new MeshToonMaterial({
+    color: "#ffffff",
+    map: makeCrumbleTexture(),
+    emissive: token("--maze-crumble-mark"),
+    emissiveIntensity: 0.03,
+    gradientMap: ramp,
+  });
+}
+
+function makeCrumbleTexture(): Texture {
+  const size = 32;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Crumble texture canvas unavailable");
+  paintCrumble(ctx, size);
+  const tex = new CanvasTexture(canvas);
+  tex.colorSpace = SRGBColorSpace;
+  tex.magFilter = NearestFilter;
+  tex.minFilter = NearestFilter;
+  tex.wrapS = ClampToEdgeWrapping;
+  tex.wrapT = ClampToEdgeWrapping;
+  tex.generateMipmaps = false;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+function paintCrumble(ctx: CanvasRenderingContext2D, size: number): void {
+  const base = token("--maze-crumble");
+  const shade = mixHex(base, "#000000", 0.22);
+  const deep = mixHex(base, "#000000", 0.55);
+  const seam = token("--maze-crumble-crack");
+  const lit = mixHex(base, "#ffffff", 0.18);
+  const grit = mixHex(base, token("--maze-crumble-mark"), 0.14);
+  const edge = mixHex(base, "#000000", 0.35);
+  const hash = (x: number, y: number): number => {
+    const n = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+    return n - Math.floor(n);
+  };
+  const px = (hex: string, x: number, y: number): void => {
+    if (x < 0 || y < 0 || x >= size || y >= size) return;
+    ctx.fillStyle = hex;
+    ctx.fillRect(x, y, 1, 1);
+  };
+  ctx.fillStyle = base;
+  ctx.fillRect(0, 0, size, size);
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const n = hash(x, y);
+      if (n > 0.82) px(shade, x, y);
+      else if (n > 0.68) px(lit, x, y);
+      else if (n > 0.58) px(grit, x, y);
+    }
+  }
+  const stroke = (x0: number, y0: number, x1: number, y1: number, color: string, width = 1): void => {
+    const steps = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0), 1) * 2;
+    for (let i = 0; i <= steps; i += 1) {
+      const t = i / steps;
+      const x = Math.round(x0 + (x1 - x0) * t);
+      const y = Math.round(y0 + (y1 - y0) * t);
+      for (let oy = -width; oy <= width; oy += 1) {
+        for (let ox = -width; ox <= width; ox += 1) {
+          if (Math.abs(ox) + Math.abs(oy) > width) continue;
+          px(color, x + ox, y + oy);
+        }
+      }
+    }
+  };
+  // Irregular piece seams so the intact slab already reads as fractured stone.
+  stroke(10, 0, 12, 14, seam, 1);
+  stroke(11, 14, 9, 31, seam, 1);
+  stroke(21, 0, 19, 16, seam, 1);
+  stroke(20, 16, 22, 31, seam, 1);
+  stroke(0, 10, 14, 12, seam, 1);
+  stroke(14, 11, 31, 9, seam, 1);
+  stroke(0, 21, 16, 19, seam, 1);
+  stroke(16, 20, 31, 22, seam, 1);
+  // Branching cracks through the tiles.
+  stroke(3, 2, 10, 7, deep, 1);
+  stroke(10, 7, 6, 12, deep, 0);
+  stroke(12, 14, 17, 10, deep, 1);
+  stroke(17, 10, 15, 5, deep, 0);
+  stroke(20, 4, 28, 8, deep, 1);
+  stroke(22, 16, 28, 13, deep, 0);
+  stroke(21, 18, 26, 25, deep, 1);
+  stroke(4, 18, 9, 24, deep, 1);
+  stroke(9, 24, 14, 22, deep, 0);
+  stroke(16, 22, 20, 28, deep, 1);
+  stroke(1, 27, 7, 29, shade, 0);
+  stroke(24, 1, 29, 5, shade, 0);
+  stroke(27, 27, 30, 30, shade, 0);
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const chip = hash(x + 3, y + 9);
+      if (chip > 0.955) px(deep, x, y);
+      if (chip > 0.985) px(seam, x, y);
+      if (x === 0 || y === 0 || x === size - 1 || y === size - 1) px(edge, x, y);
+    }
+  }
+}
+
+function crumbleChunks(parent: Mesh, piece: Piece, material: MeshToonMaterial): Mesh[] {
+  const cols = 3;
+  const rows = 3;
+  const gap = 0.028;
+  const sizeX = (piece.hx * 2 - gap * (cols - 1)) / cols;
+  const sizeZ = (piece.hz * 2 - gap * (rows - 1)) / rows;
+  const sizeY = piece.hy * 2;
+  const chunks: Mesh[] = [];
+  for (let iz = 0; iz < rows; iz += 1) {
+    for (let ix = 0; ix < cols; ix += 1) {
+      const geo = new BoxGeometry(sizeX, sizeY, sizeZ);
+      setCrumbleChunkUVs(geo, ix, iz, cols, rows);
+      const chunk = new Mesh(geo, material);
+      const restX = (ix - (cols - 1) / 2) * (sizeX + gap);
+      const restZ = (iz - (rows - 1) / 2) * (sizeZ + gap);
+      chunk.position.set(restX, 0, restZ);
+      chunk.castShadow = true;
+      chunk.receiveShadow = true;
+      chunk.userData.restX = restX;
+      chunk.userData.restZ = restZ;
+      chunk.userData.dirX = ix - (cols - 1) / 2;
+      chunk.userData.dirZ = iz - (rows - 1) / 2;
+      chunk.userData.tilt = ((ix * 5 + iz * 3) % 5) - 2;
+      parent.add(chunk);
+      chunks.push(chunk);
+    }
+  }
+  return chunks;
+}
+
+function setCrumbleChunkUVs(geo: BoxGeometry, ix: number, iz: number, cols: number, rows: number): void {
+  const uv = geo.getAttribute("uv");
+  if (!uv) return;
+  const u0 = ix / cols;
+  const u1 = (ix + 1) / cols;
+  const v0 = 1 - (iz + 1) / rows;
+  const v1 = 1 - iz / rows;
+  // BoxGeometry face order: +x, -x, +y, -y, +z, -z. Remap every face so pieces share one tile atlas.
+  for (let face = 0; face < 6; face += 1) {
+    const i = face * 4;
+    uv.setXY(i, u0, v1);
+    uv.setXY(i + 1, u1, v1);
+    uv.setXY(i + 2, u0, v0);
+    uv.setXY(i + 3, u1, v0);
+  }
+  uv.needsUpdate = true;
 }
 
 function toon(color: string, emissive = "#000000", emissiveIntensity = 0): MeshToonMaterial {

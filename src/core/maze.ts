@@ -1,3 +1,5 @@
+import { DEFAULT_FLOOR_THEME, parseFloorTheme, type FloorThemeId } from "./theme.ts";
+
 export const Wall = {
   north: 1,
   east: 2,
@@ -49,6 +51,7 @@ export interface Maze {
   start: GridPoint;
   goal: GridPoint;
   hatch: GridPoint | null;
+  theme: FloorThemeId;
 }
 
 export type WallAxis = "v" | "h";
@@ -120,7 +123,17 @@ export function carveFloor(
   const onPath = shortestPath(walls, cols, rows, originCell, goal);
   const holes = pickHoles(walls, cols, rows, originCell, goal, onPath, rand, options?.holes ?? 2);
 
-  return { cols, rows, walls, holes, tiles: [], start: originCell, goal, hatch: null };
+  return {
+    cols,
+    rows,
+    walls,
+    holes,
+    tiles: [],
+    start: originCell,
+    goal,
+    hatch: null,
+    theme: DEFAULT_FLOOR_THEME,
+  };
 }
 
 export function cloneMaze(maze: Maze): Maze {
@@ -133,6 +146,7 @@ export function cloneMaze(maze: Maze): Maze {
     start: { ...maze.start },
     goal: { ...maze.goal },
     hatch: maze.hatch ? { ...maze.hatch } : null,
+    theme: parseFloorTheme(maze.theme),
   };
 }
 
@@ -154,6 +168,7 @@ export function resizeMaze(maze: Maze, cols: number, rows: number): Maze {
     start: clampCell(maze.start, nextCols, nextRows),
     goal: clampCell(maze.goal, nextCols, nextRows),
     hatch: maze.hatch ? clampCell(maze.hatch, nextCols, nextRows) : null,
+    theme: parseFloorTheme(maze.theme),
   };
 
   for (let r = 0; r < nextRows; r += 1) {
@@ -310,6 +325,81 @@ export function paintWarp(maze: Maze, cell: GridPoint): void {
 
 export function tileAt(maze: Maze, c: number, r: number): FloorTile | undefined {
   return maze.tiles.find((tile) => tile.c === c && tile.r === r);
+}
+
+export type LiftedTile =
+  | { kind: "start" }
+  | { kind: "goal" }
+  | { kind: "hatch" }
+  | { kind: "pit" }
+  | { kind: "boost"; dir: Direction }
+  | { kind: "warp"; pair: number }
+  | { kind: "ice" }
+  | { kind: "crumble" }
+  | { kind: "switch"; tone: number; wall: WallRef | null };
+
+export function liftAt(
+  maze: Maze,
+  cell: GridPoint,
+  opts: { start: boolean; goal: boolean; hatch: boolean },
+): LiftedTile | null {
+  if (!contains(maze, cell)) return null;
+  if (opts.start && same(cell, maze.start)) return { kind: "start" };
+  if (opts.hatch && maze.hatch && same(cell, maze.hatch)) return { kind: "hatch" };
+  if (opts.goal && same(cell, maze.goal)) return { kind: "goal" };
+  if (maze.holes.some((hole) => same(hole, cell))) return { kind: "pit" };
+  const tile = tileAt(maze, cell.c, cell.r);
+  if (!tile) return null;
+  if (tile.kind === "boost") return { kind: "boost", dir: tile.dir };
+  if (tile.kind === "warp") return { kind: "warp", pair: tile.pair };
+  if (tile.kind === "ice") return { kind: "ice" };
+  if (tile.kind === "crumble") return { kind: "crumble" };
+  return { kind: "switch", tone: tile.tone, wall: tile.wall ? { ...tile.wall } : null };
+}
+
+/** Move a lifted tile from one cell to another. Hatch is handled by the caller. */
+export function moveLifted(maze: Maze, from: GridPoint, to: GridPoint, lift: LiftedTile): boolean {
+  if (lift.kind === "hatch") return false;
+  if (!contains(maze, to) || same(from, to)) return same(from, to);
+  if (!liftStillAt(maze, from, lift)) return false;
+
+  if (lift.kind === "start") {
+    if (same(to, maze.goal) || (maze.hatch && same(to, maze.hatch))) return false;
+    placeStart(maze, to);
+    return true;
+  }
+  if (lift.kind === "goal") {
+    if (same(to, maze.start) || (maze.hatch && same(to, maze.hatch))) return false;
+    placeGoal(maze, to);
+    return true;
+  }
+
+  if (same(to, maze.start) || same(to, maze.goal) || (maze.hatch && same(to, maze.hatch))) return false;
+
+  stripCell(maze, from);
+  stripCell(maze, to);
+  if (lift.kind === "pit") maze.holes.push({ c: to.c, r: to.r });
+  else if (lift.kind === "boost") maze.tiles.push({ kind: "boost", c: to.c, r: to.r, dir: lift.dir });
+  else if (lift.kind === "warp") maze.tiles.push({ kind: "warp", c: to.c, r: to.r, pair: lift.pair });
+  else if (lift.kind === "ice") maze.tiles.push({ kind: "ice", c: to.c, r: to.r });
+  else if (lift.kind === "crumble") maze.tiles.push({ kind: "crumble", c: to.c, r: to.r });
+  else maze.tiles.push({ kind: "switch", c: to.c, r: to.r, tone: lift.tone, wall: lift.wall });
+  return true;
+}
+
+function liftStillAt(maze: Maze, cell: GridPoint, lift: LiftedTile): boolean {
+  if (lift.kind === "start") return same(cell, maze.start);
+  if (lift.kind === "goal") return same(cell, maze.goal);
+  if (lift.kind === "hatch") return !!maze.hatch && same(cell, maze.hatch);
+  if (lift.kind === "pit") return maze.holes.some((hole) => same(hole, cell));
+  const tile = tileAt(maze, cell.c, cell.r);
+  if (!tile || tile.kind !== lift.kind) return false;
+  if (lift.kind === "boost") return tile.kind === "boost" && tile.dir === lift.dir;
+  if (lift.kind === "warp") return tile.kind === "warp" && tile.pair === lift.pair;
+  if (lift.kind === "switch") {
+    return tile.kind === "switch" && tile.tone === lift.tone;
+  }
+  return true;
 }
 
 export function loneWarpPair(maze: Maze): number | null {

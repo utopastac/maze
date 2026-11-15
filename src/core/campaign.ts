@@ -1,6 +1,8 @@
+import { AUTHORED_FLOORS } from "./authoredFloors.ts";
 import {
   Wall,
   carveFloor,
+  cloneMaze,
   mulberry32,
   setBoost,
   setCrumble,
@@ -9,6 +11,8 @@ import {
   type GridPoint,
   type Maze,
 } from "./maze.ts";
+import { decodeLevel } from "./share.ts";
+import { themeForFloor } from "./theme.ts";
 
 export const CAMPAIGN_FLOORS = 100;
 export const CAMPAIGN_LIVES = 3;
@@ -49,10 +53,73 @@ export function generateCampaign(seed: number): Campaign {
       maze.hatch = { ...maze.goal };
       separateHatch(maze);
     }
+    maze.theme = themeForFloor(index);
     floors.push({ maze, hearts: furnish(maze, seed + index * 131, t, index) });
     landing = { ...(maze.hatch ?? maze.start) };
   }
-  return { seed, floors };
+  return applyAuthoredFloors({ seed, floors });
+}
+
+/** Overlay pasted editor models onto the procedural campaign, then re-chain drops. */
+export function applyAuthoredFloors(campaign: Campaign): Campaign {
+  const floors = campaign.floors.map((floor, index) => {
+    const code = AUTHORED_FLOORS[index];
+    if (!code) return { maze: cloneMaze(floor.maze), hearts: floor.hearts.map((cell) => ({ ...cell })) };
+    const tower = decodeLevel(code);
+    const maze = tower?.floors[0];
+    if (!maze) return { maze: cloneMaze(floor.maze), hearts: floor.hearts.map((cell) => ({ ...cell })) };
+    return { maze: cloneMaze(maze), hearts: [] };
+  });
+  chainCampaignFloors(floors);
+  return { seed: campaign.seed, floors };
+}
+
+function chainCampaignFloors(floors: CampaignFloor[]): void {
+  for (let index = 0; index < floors.length; index += 1) {
+    const maze = floors[index]?.maze;
+    if (!maze) continue;
+    const last = index === floors.length - 1;
+    if (last) maze.hatch = null;
+    else {
+      const drop = maze.hatch && insideMaze(maze, maze.hatch) ? maze.hatch : { ...maze.goal };
+      maze.hatch = same(drop, maze.start) ? spareDrop(maze, maze.start) : drop;
+      maze.holes = maze.holes.filter((hole) => !same(hole, maze.hatch as GridPoint));
+      maze.tiles = maze.tiles.filter((tile) => !same(tile, maze.hatch as GridPoint));
+    }
+    if (index > 0) {
+      const hatch = floors[index - 1]?.maze.hatch;
+      if (hatch && insideMaze(maze, hatch)) maze.start = { c: hatch.c, r: hatch.r };
+    }
+    maze.holes = maze.holes.filter((hole) => !same(hole, maze.start) && !same(hole, maze.goal));
+    maze.tiles = maze.tiles.filter((tile) => !same(tile, maze.start) && !same(tile, maze.goal));
+    if (maze.hatch) {
+      maze.holes = maze.holes.filter((hole) => !same(hole, maze.hatch as GridPoint));
+      maze.tiles = maze.tiles.filter((tile) => !same(tile, maze.hatch as GridPoint));
+    }
+  }
+}
+
+function spareDrop(maze: Maze, start: GridPoint): GridPoint {
+  const corners = [
+    { c: maze.cols - 1, r: maze.rows - 1 },
+    { c: 0, r: maze.rows - 1 },
+    { c: maze.cols - 1, r: 0 },
+    { c: 0, r: 0 },
+  ];
+  for (const cell of corners) {
+    if (!same(cell, start)) return cell;
+  }
+  for (let r = 0; r < maze.rows; r += 1) {
+    for (let c = 0; c < maze.cols; c += 1) {
+      const cell = { c, r };
+      if (!same(cell, start)) return cell;
+    }
+  }
+  return { c: Math.min(1, maze.cols - 1), r: 0 };
+}
+
+function insideMaze(maze: Maze, cell: GridPoint): boolean {
+  return cell.c >= 0 && cell.r >= 0 && cell.c < maze.cols && cell.r < maze.rows;
 }
 
 export function campaignSizes(campaign: Campaign): number[] {

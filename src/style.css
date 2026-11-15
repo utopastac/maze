@@ -1,7 +1,7 @@
 @font-face {
-  font-family: "Pixelify Sans";
-  src: url("./assets/fonts/PixelifySans.ttf") format("truetype");
-  font-weight: 400 700;
+  font-family: "Geist Pixel";
+  src: url("./assets/fonts/GeistPixel-Square.woff2") format("woff2");
+  font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
@@ -32,7 +32,7 @@
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-left: env(safe-area-inset-left, 0px);
   --safe-right: env(safe-area-inset-right, 0px);
-  --font: "Pixelify Sans", ui-monospace, monospace;
+  --font: "Geist Pixel", ui-monospace, monospace;
   --maze-void: #000000;
   --maze-floor: #2c333b;
   --maze-grout: #514c47;
@@ -40,6 +40,72 @@
   --maze-start-mark: #d5dde6;
   --maze-wall: #6a7582;
   --maze-frame: #d49214;
+
+  --theme-futuristic-floor: #2a3340;
+  --theme-futuristic-floor-lit: #3d4d5e;
+  --theme-futuristic-floor-shade: #1a222c;
+  --theme-futuristic-floor-line: #5fd0ff;
+  --theme-futuristic-wall: #6e7f92;
+  --theme-futuristic-wall-lit: #9aadc2;
+  --theme-futuristic-wall-shade: #4a5766;
+  --theme-futuristic-wall-line: #7de0ff;
+  --theme-futuristic-grout: #1c2430;
+  --theme-futuristic-frame: #5fd0ff;
+
+  --theme-desert-floor: #d2b48a;
+  --theme-desert-floor-lit: #e6cfa8;
+  --theme-desert-floor-shade: #b89464;
+  --theme-desert-floor-line: #8a6a3e;
+  --theme-desert-wall: #c4a574;
+  --theme-desert-wall-lit: #dfc496;
+  --theme-desert-wall-shade: #9e7d4f;
+  --theme-desert-wall-line: #7a5c35;
+  --theme-desert-grout: #8b6914;
+  --theme-desert-frame: #c45c26;
+
+  --theme-castle-floor: #6d6a63;
+  --theme-castle-floor-lit: #858178;
+  --theme-castle-floor-shade: #4f4c46;
+  --theme-castle-floor-line: #3a3833;
+  --theme-castle-wall: #8b5a2b;
+  --theme-castle-wall-lit: #a8723a;
+  --theme-castle-wall-shade: #6b4320;
+  --theme-castle-wall-line: #3d2410;
+  --theme-castle-grout: #2a2824;
+  --theme-castle-frame: #8b5a2b;
+
+  --theme-tomb-floor: #8b7355;
+  --theme-tomb-floor-lit: #a8906c;
+  --theme-tomb-floor-shade: #6a563d;
+  --theme-tomb-floor-line: #3f6b3a;
+  --theme-tomb-wall: #9a8060;
+  --theme-tomb-wall-lit: #b89a72;
+  --theme-tomb-wall-shade: #6f5840;
+  --theme-tomb-wall-line: #c9a227;
+  --theme-tomb-grout: #3a3228;
+  --theme-tomb-frame: #d4a017;
+
+  --theme-office-floor: #5a6570;
+  --theme-office-floor-lit: #6e7a86;
+  --theme-office-floor-shade: #454f58;
+  --theme-office-floor-line: #2f3840;
+  --theme-office-wall: #c8ced4;
+  --theme-office-wall-lit: #dde2e7;
+  --theme-office-wall-shade: #a8b0b8;
+  --theme-office-wall-line: #7a8794;
+  --theme-office-grout: #2a3138;
+  --theme-office-frame: #3d5a80;
+
+  --theme-suburbia-floor: #5a8f4d;
+  --theme-suburbia-floor-lit: #6fa85f;
+  --theme-suburbia-floor-shade: #45753a;
+  --theme-suburbia-floor-line: #2f5a28;
+  --theme-suburbia-wall: #e8d9a8;
+  --theme-suburbia-wall-lit: #f2e6c0;
+  --theme-suburbia-wall-shade: #cfc08a;
+  --theme-suburbia-wall-line: #8fa8c4;
+  --theme-suburbia-grout: #9aa3ab;
+  --theme-suburbia-frame: #6b8cae;
   --maze-pit: #050506;
   --maze-lip: #c75c29;
   --maze-hatch: #6aafdf;
@@ -54,7 +120,8 @@
   --maze-warp-5: #f4f1ea;
   --maze-ice: #8eacbc;
   --maze-ice-mark: #e7f4fb;
-  --maze-crumble: #3f3832;
+  --maze-crumble: #8a7862;
+  --maze-crumble-crack: #1a1612;
   --maze-crumble-mark: #e0b15a;
   --maze-switch: #24312b;
   --maze-switch-0: #8fd0b0;

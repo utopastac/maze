@@ -33,6 +33,17 @@ export function resizeTower(tower: Tower, cols: number, rows: number): Tower {
   return next;
 }
 
+/** Resize a single floor; other floors keep their own size. */
+export function resizeFloor(tower: Tower, index: number, cols: number, rows: number): Tower {
+  if (index < 0 || index >= tower.floors.length) return cloneTower(tower);
+  const next = cloneTower(tower);
+  const floor = next.floors[index];
+  if (!floor) return next;
+  next.floors[index] = resizeMaze(floor, cols, rows);
+  repairTower(next);
+  return next;
+}
+
 export function addFloor(tower: Tower): Tower {
   if (tower.floors.length >= FLOOR_MAX) return cloneTower(tower);
   const next = cloneTower(tower);
@@ -76,12 +87,16 @@ export function repairTower(tower: Tower): void {
     const floor = tower.floors[i];
     if (!floor) continue;
     if (i > 0) {
-      const hatch = tower.floors[i - 1]?.hatch;
-      if (hatch && inside(floor, hatch)) floor.start = { c: hatch.c, r: hatch.r };
+      const above = tower.floors[i - 1];
+      if (above?.hatch) floor.start = cellUnder(above, above.hatch, floor);
     }
     if (i === last) floor.hatch = null;
     else if (!floor.hatch || !inside(floor, floor.hatch) || same(floor.hatch, floor.start)) {
-      floor.hatch = spareCell(floor, [floor.start]);
+      const below = tower.floors[i + 1];
+      floor.hatch = below
+        ? cellOver(below, spareCell(below, [below.start]), floor)
+        : spareCell(floor, [floor.start]);
+      if (same(floor.hatch, floor.start)) floor.hatch = spareCell(floor, [floor.start]);
     }
     if (same(floor.goal, floor.start)) {
       floor.goal = spareCell(floor, [floor.start, floor.hatch].filter(isPoint));
@@ -93,6 +108,20 @@ export function repairTower(tower: Tower): void {
     floor.holes = floor.holes.filter((hole) => !same(hole, floor.start) && !same(hole, floor.goal));
     floor.tiles = floor.tiles.filter((tile) => !same(tile, floor.start) && !same(tile, floor.goal));
   }
+}
+
+/** Map a cell on `from` to the overlapping cell on centered `onto`. */
+function cellUnder(from: Maze, cell: GridPoint, onto: Maze): GridPoint {
+  const wx = cell.c + 0.5 - from.cols / 2;
+  const wz = cell.r + 0.5 - from.rows / 2;
+  const c = Math.min(onto.cols - 1, Math.max(0, Math.floor(wx + onto.cols / 2)));
+  const r = Math.min(onto.rows - 1, Math.max(0, Math.floor(wz + onto.rows / 2)));
+  return { c, r };
+}
+
+/** Map a cell on `onto` back to the overlapping cell on centered `from`. */
+function cellOver(onto: Maze, cell: GridPoint, from: Maze): GridPoint {
+  return cellUnder(onto, cell, from);
 }
 
 function spareCell(maze: Maze, avoid: GridPoint[]): GridPoint {

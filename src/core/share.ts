@@ -10,9 +10,11 @@ import {
   type WallAxis,
   type WallRef,
 } from "./maze.ts";
+import { DEFAULT_FLOOR_THEME, themeFromIndex, themeIndex } from "./theme.ts";
 import { FLOOR_MAX, FLOOR_MIN, cloneTower, repairTower, type Tower } from "./tower.ts";
 
-const VERSION = 1;
+const VERSION = 2;
+const LEGACY_VERSION = 1;
 const LEVEL_PREFIX = "#m.";
 /** Longest base64url payload we will put in a hash. A full 16×16 tower stays under this. */
 const MAX_LEVEL_CODE = 12_000;
@@ -65,10 +67,16 @@ export function decodeLevel(code: string): Tower | null {
   const reader = new BitReader(bytes);
   const version = reader.read(8);
   const floors = reader.read(3);
-  if (version !== VERSION || floors === null || floors < FLOOR_MIN || floors > FLOOR_MAX) return null;
+  if (
+    version === null
+    || (version !== VERSION && version !== LEGACY_VERSION)
+    || floors === null
+    || floors < FLOOR_MIN
+    || floors > FLOOR_MAX
+  ) return null;
   const tower: Tower = { floors: [] };
   for (let i = 0; i < floors; i += 1) {
-    const floor = readFloor(reader);
+    const floor = readFloor(reader, version);
     if (!floor) return null;
     tower.floors.push(floor);
   }
@@ -110,6 +118,35 @@ export function copyText(text: string): Promise<boolean> {
   return clipboard ?? Promise.resolve(false);
 }
 
+export async function readText(): Promise<string | null> {
+  try {
+    const text = await navigator.clipboard?.readText();
+    return text ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Turns a tower into a one-line paste for authoredFloors.ts. */
+export function formatAuthoredFloorLine(tower: Tower): string | null {
+  const code = encodeLevel(tower);
+  if (!code) return null;
+  return `  "${code}",`;
+}
+
+/** Accepts a bare code, #m. hash, share URL, or an authoredFloors.ts line. */
+export function parseLevelInput(raw: string): Tower | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const fromHash = trimmed.match(/#m\.([A-Za-z0-9_-]+)/);
+  if (fromHash?.[1]) return decodeLevel(fromHash[1]);
+  const fromLine = trimmed.match(/["']([A-Za-z0-9_-]{8,})["']/);
+  if (fromLine?.[1]) return decodeLevel(fromLine[1]);
+  const bare = trimmed.match(/^[A-Za-z0-9_-]+/);
+  if (bare?.[0]) return decodeLevel(bare[0]);
+  return null;
+}
+
 function copyWithSelection(text: string): boolean {
   const area = document.createElement("textarea");
   area.value = text;
@@ -132,6 +169,7 @@ function copyWithSelection(text: string): boolean {
 }
 
 function writeFloor(writer: BitWriter, maze: Maze): void {
+  writer.write(themeIndex(maze.theme ?? DEFAULT_FLOOR_THEME), 3);
   writer.write(maze.cols, COORD_BITS);
   writer.write(maze.rows, COORD_BITS);
   writer.write(maze.start.c, COORD_BITS);
@@ -241,7 +279,13 @@ function linkedWall(maze: Maze, wall: WallRef | null): WallRef | null {
   return { axis: wall.axis, c: wall.c, r: wall.r };
 }
 
-function readFloor(reader: BitReader): Maze | null {
+function readFloor(reader: BitReader, version: number): Maze | null {
+  let theme = DEFAULT_FLOOR_THEME;
+  if (version >= VERSION) {
+    const themeBits = reader.read(3);
+    if (themeBits === null) return null;
+    theme = themeFromIndex(themeBits);
+  }
   const cols = reader.read(COORD_BITS);
   const rows = reader.read(COORD_BITS);
   const startC = reader.read(COORD_BITS);
@@ -273,6 +317,7 @@ function readFloor(reader: BitReader): Maze | null {
     start: { c: startC, r: startR },
     goal: { c: goalC, r: goalR },
     hatch,
+    theme,
   };
   for (let r = 0; r < rows; r += 1) {
     for (let c = 0; c < cols - 1; c += 1) {

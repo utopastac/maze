@@ -9,7 +9,10 @@ import {
   ChevronDown,
   ChevronUp,
   Circle,
+  ClipboardCopy,
+  ClipboardPaste,
   Compass,
+  Download,
   Eraser,
   FastForward,
   Flag,
@@ -19,6 +22,7 @@ import {
   Snowflake,
   MapPin,
   Minus,
+  NotebookPen,
   Pencil,
   Plus,
   RotateCcw,
@@ -45,6 +49,7 @@ export type IconName =
   | "motion"
   | "settings"
   | "edit"
+  | "author"
   | "wall"
   | "pit"
   | "start"
@@ -64,6 +69,9 @@ export type IconName =
   | "minus"
   | "plus"
   | "share"
+  | "copy"
+  | "paste"
+  | "load"
   | "angleDown"
   | "angleUp"
   | "orbitLeft"
@@ -78,6 +86,7 @@ const NODES: Record<IconName, IconNode> = {
   motion: Smartphone,
   settings: SlidersHorizontal,
   edit: Pencil,
+  author: NotebookPen,
   wall: BrickWall,
   pit: Circle,
   start: MapPin,
@@ -97,6 +106,9 @@ const NODES: Record<IconName, IconNode> = {
   minus: Minus,
   plus: Plus,
   share: Link,
+  copy: ClipboardCopy,
+  paste: ClipboardPaste,
+  load: Download,
   angleDown: ChevronDown,
   angleUp: ChevronUp,
   orbitLeft: RotateCcw,
