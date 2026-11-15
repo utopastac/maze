@@ -95,6 +95,7 @@ export class MazeWorld {
   private meadowAnimals: AnimalBit[] = [];
   private meadowFlames: Mesh[] = [];
   private meadowDisco: { mesh: Mesh; phase: number; row: number; col: number }[] = [];
+  private meadowDiscoBall: Group | null = null;
   private readonly discoMats: MeshToonMaterial[];
   private meadowLight: PointLight | null = null;
   private escaped = false;
@@ -603,12 +604,16 @@ export class MazeWorld {
           tile.mesh.position.y = 0.03 + pulse * 0.04;
         }
         if (this.meadowLight) {
-          const glow = this.discoMats[beat % this.discoMats.length];
-          if (glow) {
-            this.meadowLight.color.set(glow.emissive);
+          const glowMat = this.discoMats[beat % this.discoMats.length];
+          if (glowMat) {
+            this.meadowLight.color.set(glowMat.emissive);
             this.meadowLight.intensity = 3.2 + Math.sin(time * 14) * 1.2;
           }
         }
+      }
+      if (this.meadowDiscoBall) {
+        this.meadowDiscoBall.rotation.y = time * 1.8;
+        this.meadowDiscoBall.position.y = 2.1 + Math.sin(time * 2.2) * 0.08;
       }
     }
     this.boostMarkMat.emissiveIntensity = 0.55 + Math.sin(time * 4.5) * 0.28;
@@ -1305,6 +1310,60 @@ export class MazeWorld {
     parent.add(bed, water);
   }
 
+  private addDiscoFloor(parent: Group, span: number): void {
+    const cols = 10;
+    const rows = 10;
+    const tile = span / cols;
+    const origin = -span * 0.5 + tile * 0.5;
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols; col += 1) {
+        const mat = this.discoMats[(row + col) % this.discoMats.length]!;
+        const cell = new Mesh(new BoxGeometry(tile * 0.92, 0.08, tile * 0.92), mat);
+        cell.position.set(origin + col * tile, 0.05, origin + row * tile);
+        parent.add(cell);
+        this.meadowDisco.push({
+          mesh: cell,
+          phase: row * 0.55 + col * 0.35,
+          row,
+          col,
+        });
+      }
+    }
+
+    const ball = new Group();
+    ball.position.set(0, 2.1, 0);
+    voxel(ball, this.groundMats.buildingLit, 0.18, 0.18, 0.18, 0, 0, 0);
+    for (let i = 0; i < 8; i += 1) {
+      const a = i * (Math.PI / 4);
+      voxel(
+        ball,
+        this.discoMats[i % this.discoMats.length]!,
+        0.05,
+        0.05,
+        0.05,
+        Math.cos(a) * 0.22,
+        Math.sin(a * 2) * 0.08,
+        Math.sin(a) * 0.22,
+      );
+    }
+    parent.add(ball);
+    this.meadowDiscoBall = ball;
+
+    for (const [x, z] of [[-0.7, -0.7], [0.7, -0.7], [-0.7, 0.7], [0.7, 0.7]] as const) {
+      const speaker = new Group();
+      speaker.position.set(x * span * 0.28, 0, z * span * 0.28);
+      voxel(speaker, this.groundMats.spaceDark, 0.18, 0.28, 0.12, 0, 0.3, 0);
+      voxel(speaker, this.groundMats.discoFloor, 0.1, 0.1, 0.04, 0, 0.34, 0.12);
+      voxel(speaker, this.discoMats[1]!, 0.06, 0.06, 0.02, 0, 0.34, 0.16);
+      parent.add(speaker);
+    }
+
+    const light = new PointLight(token("--maze-disco-0"), 3.4, 14, 2);
+    light.position.set(0, 2.4, 0);
+    parent.add(light);
+    this.meadowLight = light;
+  }
+
   private addAuroraSpace(parent: Group, span: number): void {
     const auroraMats = [
       this.groundMats.auroraGreen,
@@ -1718,6 +1777,7 @@ export class MazeWorld {
     this.meadowAnimals.length = 0;
     this.meadowFlames.length = 0;
     this.meadowDisco.length = 0;
+    this.meadowDiscoBall = null;
     this.meadowLight = null;
   }
 
@@ -1918,6 +1978,8 @@ export class MazeWorld {
     this.meadowFlowers.length = 0;
     this.meadowAnimals.length = 0;
     this.meadowFlames.length = 0;
+    this.meadowDisco.length = 0;
+    this.meadowDiscoBall = null;
     this.meadowLight = null;
     this.hearts.length = 0;
     this.warpSpins.length = 0;
@@ -2109,7 +2171,8 @@ type WinSceneKind =
   | "venus"
   | "forest"
   | "rainforest"
-  | "aurora";
+  | "aurora"
+  | "disco";
 
 const WIN_SCENES: WinSceneKind[] = [
   "pasture",
@@ -2127,6 +2190,7 @@ const WIN_SCENES: WinSceneKind[] = [
   "forest",
   "rainforest",
   "aurora",
+  "disco",
 ];
 
 const WIN_SKY: Record<WinSceneKind, string> = {
@@ -2145,6 +2209,7 @@ const WIN_SKY: Record<WinSceneKind, string> = {
   forest: "--maze-forest-sky",
   rainforest: "--maze-rainforest-sky",
   aurora: "--maze-aurora-sky",
+  disco: "--maze-disco-sky",
 };
 
 const SCENE_ANIMALS: Record<WinSceneKind, AnimalKind[]> = {
@@ -2163,6 +2228,7 @@ const SCENE_ANIMALS: Record<WinSceneKind, AnimalKind[]> = {
   forest: ["deer", "rabbit", "fox", "owl"],
   rainforest: ["parrot", "frog", "toucan", "monkey"],
   aurora: ["jelly", "owl", "fox", "hare"],
+  disco: ["parrot", "cat", "dog", "pigeon"],
 };
 
 interface AnimalBit {
@@ -2322,6 +2388,24 @@ function paintFloor(ctx: CanvasRenderingContext2D, size: number, kind: WinSceneK
         if (n > 0.97) px(green, x, y);
         if (hash(x + 5, y + 2) > 0.975) px(violet, x, y);
         if (hash(x + 9, y + 4) > 0.98) px(pink, x, y);
+      }
+    }
+    return;
+  }
+
+  if (kind === "disco") {
+    const base = token("--maze-disco-floor");
+    const shade = soft(base, token("--maze-disco-floor-dark"), 0.4);
+    const colors = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => soft(base, token(`--maze-disco-${i}`), 0.35));
+    ctx.fillStyle = base;
+    ctx.fillRect(0, 0, size, size);
+    for (let y = 0; y < size; y += 1) {
+      for (let x = 0; x < size; x += 1) {
+        if (x % 4 === 0 || y % 4 === 0) px(shade, x, y);
+        else {
+          const c = colors[((x >> 2) + (y >> 2)) % colors.length];
+          if (c) px(c, x, y);
+        }
       }
     }
     return;
