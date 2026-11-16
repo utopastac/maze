@@ -1,7 +1,13 @@
 import { CAMPAIGN_LIVES, campaignSizes, generateCampaign, type Campaign } from "../core/campaign.ts";
 import { STORY, layoutMaze, layoutPlans, layoutTower, type TowerLayout } from "../core/layout.ts";
 import { copyText, forgetLevel, hasLevelHash, levelFromHash, rememberLevel } from "../core/share.ts";
-import { cloneTower, generateTower, type Tower } from "../core/tower.ts";
+import {
+  cloneTower,
+  coinTotal,
+  generateTower,
+  maxHeartsOf,
+  type Tower,
+} from "../core/tower.ts";
 import { PlaySettings, snapPixels } from "../core/playSettings.ts";
 import { initPhysics, Simulation } from "../core/simulation.ts";
 import { TiltController } from "../core/tilt.ts";
@@ -22,7 +28,7 @@ const TILT_KEYS = ["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", 
 const CAMERA_KEYS = new Set(["q", "e", "z", "c", "-", "_", "=", "+"]);
 const ZOOM_SPEED = 0.45;
 
-type Phase = "play" | "falling" | "escaping" | "won" | "lost";
+type Phase = "play" | "falling" | "escaping" | "failing" | "won" | "lost";
 type Mode = "free" | "campaign";
 
 export class App {
@@ -41,6 +47,9 @@ export class App {
   private campaign: Campaign | null = null;
   private pickerCampaign: Campaign | null = null;
   private lives = CAMPAIGN_LIVES;
+  private livesEnabled = false;
+  private coinsGot = 0;
+  private coinsMax = 0;
   private shareNote = false;
   private shareTimer = 0;
   private floorAt = 1;
@@ -176,7 +185,6 @@ export class App {
     const count = Math.min(3, campaign.floors.length);
     const plans = campaign.floors.slice(0, count).map((floor, index) => ({
       maze: floor.maze,
-      hearts: floor.hearts,
       goal: index === campaign.floors.length - 1,
     }));
     this.tower = { floors: plans.map((plan) => plan.maze) };
@@ -194,6 +202,15 @@ export class App {
     this.sim?.dispose();
     this.floorAt = floorAt;
     this.floorCount = floorCount;
+    this.coinsGot = 0;
+    if (this.mode === "campaign") {
+      this.livesEnabled = true;
+    } else {
+      const max = maxHeartsOf(this.tower ?? { floors: [] });
+      this.livesEnabled = max > 0;
+      this.lives = max;
+    }
+    this.coinsMax = this.tower ? coinTotal(this.tower) : layout.floors.reduce((n, f) => n + f.coins.length, 0);
     this.sim = new Simulation(layout, this.settings);
     view.setTower(layout);
     this.phase = "play";
@@ -210,6 +227,7 @@ export class App {
     this.hud.setNote("");
     this.hud.setStats(0, 0);
     this.hud.setFloor(this.floorAt, this.floorCount);
+    this.syncCollectHud();
     view.update(0, this.sim.pose());
   }
 
@@ -352,8 +370,13 @@ export class App {
     }
 
     let tilting = false;
-    if (this.phase === "play" || this.phase === "falling" || this.phase === "escaping") {
-      if (this.phase !== "escaping") {
+    if (
+      this.phase === "play"
+      || this.phase === "falling"
+      || this.phase === "escaping"
+      || this.phase === "failing"
+    ) {
+      if (this.phase !== "escaping" && this.phase !== "failing") {
         const beforePitch = this.tilt.targetPitch;
         const beforeRoll = this.tilt.targetRoll;
         this.tilt.applyKeys(dt, this.keys);
@@ -370,11 +393,14 @@ export class App {
     const pitch = this.phase === "won" || this.phase === "lost" ? 0 : this.tilt.pitch;
     const roll = this.phase === "won" || this.phase === "lost" ? 0 : this.tilt.roll;
     const event = sim.update(dt, pitch, roll);
-    const picked = sim.takeHearts();
-    if (this.phase === "play" && picked.length > 0) this.gainLives(picked);
+    const pickedHearts = sim.takeHearts();
+    const pickedCoins = sim.takeCoins();
+    if (this.phase === "play" && pickedHearts.length > 0) this.pickHearts(pickedHearts);
+    if (this.phase === "play" && pickedCoins.length > 0) this.pickCoins(pickedCoins);
     if (this.phase === "play" && event === "fell") this.drop();
     else if (this.phase === "play" && event === "escape") this.beginEscape();
     else if ((this.phase === "play" || this.phase === "escaping") && event === "goal") this.win();
+    else if (this.phase === "failing" && event === "fail") this.finishLose();
     else if (this.phase === "play" && event === "descend") this.beginDescend();
 
     if (this.running && this.phase !== "won" && this.phase !== "lost") this.seconds += dt;
@@ -423,6 +449,7 @@ export class App {
     this.dragging = false;
     this.dragPointer = null;
     view.crumbleTop();
+    view.shatterRoof();
     sim.dropTop();
     sim.shift(STORY);
     view.rebase(STORY);
@@ -458,27 +485,42 @@ export class App {
     const index = this.floorAt + 1;
     const floor = campaign.floors[index];
     if (floor) {
-      const layout = layoutMaze(floor.maze, index === campaign.floors.length - 1, floor.hearts);
+      const layout = layoutMaze(floor.maze, index === campaign.floors.length - 1, true);
       sim.appendFloor(layout);
       view.appendFloor(layout);
+      this.coinsMax += floor.maze.coins.length;
+      this.syncCollectHud();
     }
     this.hud.setTowerFloor(this.floorAt);
   }
 
-  private gainLives(cells: string[]): void {
-    if (this.mode !== "campaign") return;
-    this.lives += cells.length;
+  private pickHearts(cells: string[]): void {
     for (const cell of cells) this.view?.collectHeart(cell);
+    if (!this.livesEnabled) return;
+    this.lives += cells.length;
     this.hud.setLives(this.lives, true);
+  }
+
+  private pickCoins(cells: string[]): void {
+    this.coinsGot += cells.length;
+    for (const cell of cells) this.view?.collectCoin(cell);
+    this.syncCollectHud(true);
+  }
+
+  private syncCollectHud(pulse = false): void {
+    this.hud.setHearts(0, 0);
+    if (this.livesEnabled) this.hud.setLives(this.lives);
+    else this.hud.clearLives();
+    this.hud.setCoins(this.coinsGot, this.coinsMax, pulse && this.coinsMax > 0);
   }
 
   private drop(): void {
     this.drops += 1;
-    if (this.mode === "campaign") {
+    if (this.livesEnabled) {
       this.lives -= 1;
       this.hud.setLives(this.lives);
       if (this.lives <= 0) {
-        this.lose();
+        this.beginFail();
         return;
       }
     }
@@ -494,6 +536,24 @@ export class App {
       this.phase = "play";
       this.hud.setNote("");
     }, 460);
+  }
+
+  private beginFail(): void {
+    const sim = this.sim;
+    const view = this.view;
+    if (!sim || !view) return;
+    this.phase = "failing";
+    this.tilt.level();
+    this.tilt.snap();
+    this.dragging = false;
+    this.dragPointer = null;
+    view.shatterFail();
+    sim.beginFail();
+    this.clearShareNote();
+    this.hud.setNote("");
+    this.hud.hideHint();
+    this.hud.setCelebrate(true);
+    this.closeSettings();
   }
 
   private win(): void {
@@ -517,21 +577,28 @@ export class App {
     }, 1100);
   }
 
-  private lose(): void {
+  private finishLose(): void {
     this.phase = "lost";
     this.clearShareNote();
     this.running = false;
     this.dragging = false;
     this.dragPointer = null;
+    this.tilt.level();
+    this.tilt.snap();
     this.sim?.hold();
-    this.clearFall();
-    this.overlay.showCampaignLoss(this.floorAt, this.floorCount, this.seconds);
     this.hud.hideHint();
+    this.hud.setCelebrate(true);
     this.closeSettings();
+    this.clearFall();
+    this.fallTimer = window.setTimeout(() => {
+      this.fallTimer = 0;
+      if (this.phase !== "lost") return;
+      this.overlay.showLoss(this.floorAt, this.floorCount, this.seconds, this.mode === "campaign");
+    }, 1100);
   }
 
   private resetBall(): void {
-    if (this.phase === "lost") return;
+    if (this.phase === "lost" || this.phase === "failing") return;
     if (this.browsingWins) {
       this.closeWinGallery();
       return;
@@ -711,8 +778,8 @@ export class App {
       this.editor.isOpen()
       || this.picker.isOpen()
       || event.button !== 0
-      || this.phase === "lost"
       || this.phase === "escaping"
+      || this.phase === "failing"
     ) return;
     this.dragPointer = event.pointerId;
     this.lastX = event.clientX;
@@ -728,7 +795,7 @@ export class App {
     this.lastX = event.clientX;
     this.lastY = event.clientY;
     if (dx === 0 && dy === 0) return;
-    if (this.phase === "won") {
+    if (this.phase === "won" || this.phase === "lost") {
       this.view?.nudgeCamera(-dy * 0.16, -dx * 0.28);
       return;
     }
@@ -787,7 +854,7 @@ export class App {
   private driveCamera(dt: number, tilting: boolean): void {
     const view = this.view;
     if (!view) return;
-    if (this.phase === "won") {
+    if (this.phase === "won" || this.phase === "lost") {
       let dAngle = 0;
       let dOrbit = 0;
       if (this.keys.has("q") || this.keys.has("arrowdown") || this.keys.has("s")) dAngle -= 28 * dt;
@@ -820,7 +887,9 @@ export class App {
       || !this.motion
       || this.dragging
       || this.phase === "won"
+      || this.phase === "lost"
       || this.phase === "escaping"
+      || this.phase === "failing"
     ) return;
     if (event.beta === null || event.gamma === null) return;
     if (this.calibrateMotion || !this.motionOrigin) {
@@ -853,6 +922,8 @@ function blankAuthorTower(): Tower {
           walls: [[0]],
           holes: [],
           tiles: [],
+          hearts: [],
+          coins: [],
           start: { c: 0, r: 0 },
           goal: { c: 0, r: 0 },
           hatch: null,

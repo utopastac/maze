@@ -7,6 +7,8 @@ import {
   cancelPendingPair,
   clearFloor,
   clearInterior,
+  hasCoin,
+  hasHeart,
   interiorClosed,
   liftAt,
   loneWarpPair,
@@ -22,6 +24,8 @@ import {
   setInteriorWall,
   setPit,
   tileAt,
+  toggleCoin,
+  toggleHeart,
   type Direction,
   type LiftedTile,
   type Maze,
@@ -49,14 +53,18 @@ import {
   cloneTower,
   deleteFloorColumn,
   deleteFloorRow,
+  DEFAULT_MAX_HEARTS,
+  MAX_HEARTS_CAP,
   insertFloorColumn,
   insertFloorRow,
   levelNameOf,
+  maxHeartsOf,
   moveFloorColumn,
   moveFloorRow,
   removeFloor,
   setHatch,
   setLevelName,
+  setMaxHearts,
   type Tower,
 } from "../core/tower.ts";
 import { iconSvg, type IconName } from "./icons.ts";
@@ -70,7 +78,7 @@ export interface EditorCallbacks {
   onShare: (tower: Tower) => Promise<boolean | null>;
 }
 
-type PaletteKind = "pit" | "boost" | "warp" | "ice" | "crumble" | "block" | "switch";
+type PaletteKind = "pit" | "boost" | "warp" | "ice" | "crumble" | "block" | "switch" | "heart" | "coin";
 type EditorTool = "move" | "erase" | "wall" | PaletteKind;
 
 const HINT_TITLE: Record<EditorTool | "warp-pair" | "switch-pair", string> = {
@@ -84,11 +92,13 @@ const HINT_TITLE: Record<EditorTool | "warp-pair" | "switch-pair", string> = {
   crumble: "Crumble",
   block: "Block",
   switch: "Switch",
+  heart: "Heart",
+  coin: "Coin",
   "warp-pair": "Warp",
   "switch-pair": "Switch",
 };
 type Stroke = "open" | "close";
-type CellKind = "start" | "goal" | "pit" | "floor" | "boost" | "warp" | "ice" | "crumble" | "block" | "switch" | "hatch";
+type CellKind = "start" | "goal" | "pit" | "floor" | "boost" | "warp" | "ice" | "crumble" | "block" | "switch" | "hatch" | "heart" | "coin";
 type WallDrag = {
   axis: WallAxis;
   anchor: number;
@@ -119,6 +129,8 @@ const PALETTE: readonly { id: PaletteKind; label: string; icon: IconName }[] = [
   { id: "ice", label: "Ice", icon: "ice" },
   { id: "crumble", label: "Crumble", icon: "crumble" },
   { id: "switch", label: "Switch", icon: "switch" },
+  { id: "heart", label: "Heart", icon: "heart" },
+  { id: "coin", label: "Coin", icon: "coin" },
 ];
 
 const TOOLS: readonly { id: EditorTool; label: string; icon: IconName }[] = [
@@ -139,6 +151,8 @@ const HINT_BRUSH: Record<EditorTool, string> = {
   crumble: "Paint floors that crumble when the ball touches them.",
   block: "Fill a cell with an impassable cube.",
   switch: "Click a cell, then a wall. Stop on the plate to open that wall.",
+  heart: "Place hearts that add a life when collected.",
+  coin: "Place coins to collect while playing.",
 };
 
 const DIR_WORD: Record<Direction, string> = {
@@ -199,6 +213,8 @@ export class LevelEditor {
           walls: [[0]],
           holes: [],
           tiles: [],
+          hearts: [],
+          coins: [],
           start: { c: 0, r: 0 },
           goal: { c: 0, r: 0 },
           hatch: null,
@@ -208,7 +224,9 @@ export class LevelEditor {
         MAZE_MIN,
       ),
     ],
+    maxHearts: DEFAULT_MAX_HEARTS,
   };
+  private readonly heartNeedReadout: HTMLElement;
   private floorIndex = 0;
   private mode: EditorMode = "share";
   private brush: EditorTool = "move";
@@ -246,6 +264,14 @@ export class LevelEditor {
                 aria-label="Level name"
                 value="${DEFAULT_LEVEL_NAME}"
               />
+              <div class="${styles.heartsField}" data-share-only title="Hearts to complete the level">
+                <span class="${styles.heartsIcon}" aria-hidden="true">${iconSvg("heart", 16)}</span>
+                <div class="${styles.stepper} ${styles.heartsStepper}">
+                  <button type="button" class="glass-btn ${styles.step}" data-hearts-delta="-1" aria-label="Fewer hearts">${iconSvg("minus")}</button>
+                  <span class="${styles.count}" data-heart-need>${DEFAULT_MAX_HEARTS}</span>
+                  <button type="button" class="glass-btn ${styles.step}" data-hearts-delta="1" aria-label="More hearts">${iconSvg("plus")}</button>
+                </div>
+              </div>
             </div>
             <div class="${styles.sideCols}">
               <section class="${styles.panel} ${styles.floorsPanel}" data-share-only>
@@ -329,6 +355,7 @@ export class LevelEditor {
     this.nameInput = this.require("[data-level-name]");
     this.colReadout = this.require("[data-cols]");
     this.rowReadout = this.require("[data-rows]");
+    this.heartNeedReadout = this.require("[data-heart-need]");
     this.sheet = this.require("[data-sheet]");
     this.playFrame = this.require("[data-play-frame]");
     this.chrome = this.require("[data-chrome]");
@@ -396,6 +423,11 @@ export class LevelEditor {
       const axis = button.dataset.axis === "rows" ? "rows" : "cols";
       this.changeSize(axis, Number(button.dataset.delta));
     });
+    this.root.querySelector(`.${styles.heartsField}`)?.addEventListener("click", (event) => {
+      const heartsBtn = (event.target as Element | null)?.closest<HTMLButtonElement>("[data-hearts-delta]");
+      if (!heartsBtn || heartsBtn.disabled) return;
+      this.changeMaxHearts(Number(heartsBtn.dataset.heartsDelta));
+    });
     this.edgeSouth.addEventListener("click", () => this.insertAt("row", this.draft.rows));
     this.edgeEast.addEventListener("click", () => this.insertAt("col", this.draft.cols));
     this.gapBtn.addEventListener("click", () => {
@@ -460,10 +492,15 @@ export class LevelEditor {
     this.mode = mode;
     this.root.dataset.mode = mode;
     this.tower = cloneTower(tower);
+    if (mode === "share" && maxHeartsOf(this.tower) <= 0) {
+      setMaxHearts(this.tower, DEFAULT_MAX_HEARTS);
+    }
     if (mode === "campaign") {
       const name = this.tower.name;
+      const lives = this.tower.maxHearts;
       if (this.tower.floors.length > 1) this.tower = { floors: [cloneTower(this.tower).floors[0]!] };
       if (name !== undefined) this.tower.name = name;
+      if (lives !== undefined) this.tower.maxHearts = lives;
       const floor = this.tower.floors[0];
       if (floor?.hatch) {
         floor.goal = { ...floor.hatch };
@@ -1310,7 +1347,23 @@ export class LevelEditor {
       const delta = Number(button.dataset.delta);
       button.disabled = delta < 0 ? value <= MAZE_MIN : value >= MAZE_MAX;
     }
+    this.syncHeartNeed();
     this.syncChrome();
+  }
+
+  private syncHeartNeed(): void {
+    const lives = maxHeartsOf(this.tower);
+    this.heartNeedReadout.textContent = String(lives);
+    for (const button of this.root.querySelectorAll<HTMLButtonElement>("[data-hearts-delta]")) {
+      const delta = Number(button.dataset.heartsDelta);
+      button.disabled = delta < 0 ? lives <= 0 : lives >= MAX_HEARTS_CAP;
+    }
+  }
+
+  private changeMaxHearts(delta: number): void {
+    if (!Number.isFinite(delta) || delta === 0) return;
+    setMaxHearts(this.tower, maxHeartsOf(this.tower) + delta);
+    this.syncHeartNeed();
   }
 
   private renderBoard(): void {
@@ -1335,6 +1388,10 @@ export class LevelEditor {
         cell.dataset.r = String(r);
         cell.style.setProperty("--c", String(c));
         cell.style.setProperty("--r", String(r));
+        const pickup = document.createElement("span");
+        pickup.className = styles.pickup;
+        pickup.setAttribute("aria-hidden", "true");
+        cell.append(pickup);
         this.cells.set(`${c},${r}`, cell);
         this.board.append(cell);
       }
@@ -1426,6 +1483,18 @@ export class LevelEditor {
       else delete cell.dataset.pair;
       if (paint.open) cell.dataset.open = "true";
       else delete cell.dataset.open;
+      const showHeart = paint.kind === "heart" || (hasHeart(this.draft, { c, r }) && paint.kind !== "coin");
+      const showCoin = paint.kind === "coin" || (hasCoin(this.draft, { c, r }) && paint.kind !== "heart");
+      if (isOver && drag.lift.kind === "heart") {
+        if (this.canDropAt(drag.over, drag.lift)) cell.dataset.heart = "true";
+        else delete cell.dataset.heart;
+      } else if (showHeart) cell.dataset.heart = "true";
+      else delete cell.dataset.heart;
+      if (isOver && drag.lift.kind === "coin") {
+        if (this.canDropAt(drag.over, drag.lift)) cell.dataset.coin = "true";
+        else delete cell.dataset.coin;
+      } else if (showCoin) cell.dataset.coin = "true";
+      else delete cell.dataset.coin;
       if (isSource || isPairSource) cell.dataset.dragging = "true";
       else delete cell.dataset.dragging;
       if (isOver) cell.dataset.drop = this.canDropAt(drag.over, drag.lift) ? "ok" : "no";
@@ -1628,6 +1697,18 @@ export class LevelEditor {
         ok: this.canBrushAt(point, { kind: "block" }),
       };
     }
+    if (brush === "heart") {
+      return {
+        paint: { kind: "heart", label: `Place heart, ${where}` },
+        ok: this.canBrushAt(point, { kind: "heart" }),
+      };
+    }
+    if (brush === "coin") {
+      return {
+        paint: { kind: "coin", label: `Place coin, ${where}` },
+        ok: this.canBrushAt(point, { kind: "coin" }),
+      };
+    }
     if (brush === "warp") {
       const pair = loneWarpPair(this.draft) ?? previewWarpPair(this.draft);
       const color = pair % WARP_COLOR_COUNT;
@@ -1719,6 +1800,7 @@ export class LevelEditor {
       clearFloor(this.draft, point);
       this.syncCells();
       this.syncWalls();
+      this.syncHeartNeed();
       return;
     }
 
@@ -1768,7 +1850,13 @@ export class LevelEditor {
     else if (brush === "ice") setIce(this.draft, point);
     else if (brush === "crumble") setCrumble(this.draft, point);
     else if (brush === "block") setBlock(this.draft, point);
-    else if (brush === "switch") {
+    else if (brush === "heart") {
+      if (this.stroke === null) toggleHeart(this.draft, point);
+      this.stroke = "close";
+    } else if (brush === "coin") {
+      if (this.stroke === null) toggleCoin(this.draft, point);
+      this.stroke = "close";
+    } else if (brush === "switch") {
       paintSwitch(this.draft, point);
       if (pendingSwitch(this.draft)) this.enterPairing("switch");
     } else if (brush === "warp") {
@@ -1779,6 +1867,7 @@ export class LevelEditor {
     this.syncPalette();
     this.syncCells();
     this.syncWalls();
+    this.syncHeartNeed();
     if (brush === "warp" || brush === "switch") this.refreshHint();
   }
 
@@ -2030,6 +2119,8 @@ function describeCell(
       label: open ? `Open warp, ${where}` : `Warp ${color + 1}, ${where}`,
     };
   }
+  if (hasHeart(maze, { c, r })) return { kind: "heart", label: `Heart, ${where}` };
+  if (hasCoin(maze, { c, r })) return { kind: "coin", label: `Coin, ${where}` };
   return { kind: "floor", label: `Floor, ${where}` };
 }
 
@@ -2039,6 +2130,8 @@ function describeLift(lift: LiftedTile, c: number, r: number, landing: boolean):
   if (lift.kind === "goal") return { kind: "goal", label: `Exit, ${where}` };
   if (lift.kind === "hatch") return { kind: "hatch", label: `Hatch, ${where}` };
   if (lift.kind === "pit") return { kind: "pit", label: `Pit, ${where}` };
+  if (lift.kind === "heart") return { kind: "heart", label: `Heart, ${where}` };
+  if (lift.kind === "coin") return { kind: "coin", label: `Coin, ${where}` };
   if (lift.kind === "boost") return { kind: "boost", dir: lift.dir, label: `Boost ${DIR_WORD[lift.dir]}, ${where}` };
   if (lift.kind === "ice") return { kind: "ice", label: `Ice, ${where}` };
   if (lift.kind === "crumble") return { kind: "crumble", label: `Crumble, ${where}` };

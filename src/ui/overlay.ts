@@ -61,12 +61,14 @@ export class Overlay {
     this.open("win");
   }
 
-  showCampaignLoss(floor: number, total: number, seconds: number): void {
-    this.kicker.textContent = "Out of lives.";
+  showLoss(floor: number, total: number, seconds: number, campaign = true): void {
+    this.kicker.textContent = "Out of hearts.";
     this.againBtn.textContent = "Retry";
-    this.leaveBtn.hidden = false;
+    this.leaveBtn.hidden = !campaign;
     this.timeEl.textContent = String(floor);
-    this.detailEl.textContent = `Floor ${floor} of ${total} · ${formatTime(seconds)}`;
+    this.detailEl.textContent = total > 1
+      ? `Floor ${floor} of ${total} · ${formatTime(seconds)}`
+      : formatTime(seconds);
     this.open("loss");
   }
 

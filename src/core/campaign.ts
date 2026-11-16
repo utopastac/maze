@@ -22,7 +22,6 @@ const SIZE_SPAN = 11;
 
 export interface CampaignFloor {
   maze: Maze;
-  hearts: GridPoint[];
 }
 
 export interface Campaign {
@@ -54,7 +53,9 @@ export function generateCampaign(seed: number): Campaign {
       separateHatch(maze);
     }
     maze.theme = themeForFloor(index);
-    floors.push({ maze, hearts: furnish(maze, seed + index * 131, t, index) });
+    maze.hearts = furnish(maze, seed + index * 131, t, index);
+    maze.coins = [];
+    floors.push({ maze });
     landing = { ...(maze.hatch ?? maze.start) };
   }
   return applyAuthoredFloors({ seed, floors });
@@ -64,11 +65,11 @@ export function generateCampaign(seed: number): Campaign {
 export function applyAuthoredFloors(campaign: Campaign): Campaign {
   const floors = campaign.floors.map((floor, index) => {
     const code = AUTHORED_FLOORS[index];
-    if (!code) return { maze: cloneMaze(floor.maze), hearts: floor.hearts.map((cell) => ({ ...cell })) };
+    if (!code) return { maze: cloneMaze(floor.maze) };
     const tower = decodeLevel(code);
     const maze = tower?.floors[0];
-    if (!maze) return { maze: cloneMaze(floor.maze), hearts: floor.hearts.map((cell) => ({ ...cell })) };
-    return { maze: cloneMaze(maze), hearts: [] };
+    if (!maze) return { maze: cloneMaze(floor.maze) };
+    return { maze: cloneMaze(maze) };
   });
   chainCampaignFloors(floors);
   return { seed: campaign.seed, floors };
@@ -96,6 +97,19 @@ function chainCampaignFloors(floors: CampaignFloor[]): void {
       maze.holes = maze.holes.filter((hole) => !same(hole, maze.hatch as GridPoint));
       maze.tiles = maze.tiles.filter((tile) => !same(tile, maze.hatch as GridPoint));
     }
+    maze.hearts = maze.hearts.filter(
+      (heart) => !same(heart, maze.start) && !same(heart, maze.goal)
+        && !(maze.hatch && same(heart, maze.hatch))
+        && !maze.holes.some((hole) => same(hole, heart))
+        && maze.tiles.every((tile) => tile.kind !== "block" || !same(tile, heart)),
+    );
+    maze.coins = maze.coins.filter(
+      (coin) => !same(coin, maze.start) && !same(coin, maze.goal)
+        && !(maze.hatch && same(coin, maze.hatch))
+        && !maze.holes.some((hole) => same(hole, coin))
+        && maze.tiles.every((tile) => tile.kind !== "block" || !same(tile, coin))
+        && !maze.hearts.some((heart) => same(heart, coin)),
+    );
   }
 }
 
@@ -166,7 +180,7 @@ function furnish(maze: Maze, seed: number, t: number, index: number): GridPoint[
     used.add(key(cell));
   }
 
-  const hearts = take(
+  return take(
     [
       ...beside.filter((cell) => !used.has(key(cell))),
       ...shuffle(route.filter((cell) => !used.has(key(cell))), rand),
@@ -174,7 +188,6 @@ function furnish(maze: Maze, seed: number, t: number, index: number): GridPoint[
     heartCount(index),
     spaced,
   );
-  return hearts;
 }
 
 function separateHatch(maze: Maze): void {

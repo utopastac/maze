@@ -21,17 +21,20 @@ import {
   MeshStandardMaterial,
   MeshToonMaterial,
   NearestFilter,
+  Object3D,
   OrthographicCamera,
   PerspectiveCamera,
   PlaneGeometry,
   PointLight,
   RepeatWrapping,
   Scene,
+  ShaderMaterial,
   Shape,
   SphereGeometry,
   SRGBColorSpace,
   TorusGeometry,
   TubeGeometry,
+  Vector2,
   Vector3,
   type Material,
   type Quaternion,
@@ -64,6 +67,9 @@ const WARP_GATE_ALPHA = 0.38;
 const ANGLE_SPEC = SETTING_SPECS.find((spec) => spec.key === "angle");
 const ANGLE_MIN = ANGLE_SPEC?.min ?? 22;
 const ANGLE_MAX = ANGLE_SPEC?.max ?? 80;
+const MEADOW_CAM_SECS = 1.25;
+const MEADOW_GLANCE_PITCH_MIN = -28;
+const MEADOW_GLANCE_PITCH_MAX = 55;
 
 export class MazeWorld {
   readonly scene = new Scene();
@@ -108,9 +114,12 @@ export class MazeWorld {
   private readonly crumbleMeshes: Mesh[] = [];
   private readonly arrowGeometry: BufferGeometry;
   private readonly heartGeometry: BufferGeometry;
+  private readonly coinGeometry: BufferGeometry;
   private readonly warpGateGeometry: BufferGeometry;
   private readonly heartMat: MeshToonMaterial;
-  private readonly hearts: HeartBit[] = [];
+  private readonly coinMat: MeshStandardMaterial;
+  private readonly hearts: PickupBit[] = [];
+  private readonly coins: PickupBit[] = [];
   private readonly warpSpins: Group[] = [];
   private readonly debris: Debris[] = [];
   private readonly floorGroups: (Group | null)[] = [];
@@ -127,6 +136,8 @@ export class MazeWorld {
   private meadowLight: PointLight | null = null;
   private meadowWinLetters: Group | null = null;
   private escaped = false;
+  private failed = false;
+  private failFloorMat: MeshToonMaterial;
   private winSceneIndex = 0;
   private tower: TowerLayout | null = null;
   private settings: PlaySettings | null = null;
@@ -138,14 +149,25 @@ export class MazeWorld {
   private glanceDAngle = 0;
   private glanceDOrbit = 0;
   private glanceReturn = false;
+  private meadowCamT = 0;
+  private meadowCamLive = false;
+  private readonly meadowCamFromPos = new Vector3();
+  private readonly meadowCamFromLook = new Vector3();
+  private readonly meadowCamEye = new Vector3();
+  private readonly meadowCamLook = new Vector3();
+  private readonly meadowCamLookBlend = new Vector3();
   private readonly reduceMotion: boolean;
   private readonly voidSky = new VoidSky();
+  private readonly voidStarMat: ShaderMaterial;
+  private readonly voidCamDir = new Vector3();
+  private readonly voidResolution = new Vector2(1, 1);
 
   constructor() {
     this.reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     this.camera = new PerspectiveCamera(30, 1, 0.1, 140);
     this.scene.background = this.voidSky.texture;
     this.scene.add(this.board);
+    this.voidStarMat = makeVoidStarMat(this.voidResolution, this.voidCamDir);
 
     this.materials = {
       floor: toon(token("--maze-floor")),
@@ -161,9 +183,11 @@ export class MazeWorld {
       grout: toon(token("--maze-grout")),
       frame: toon(token("--maze-frame")),
       pit: toon(token("--maze-pit")),
+      void: toon(token("--maze-pit")),
       lip: toon(token("--maze-lip"), token("--maze-lip"), 0.9),
       hatch: toon(token("--maze-hatch"), token("--maze-hatch"), 0.85),
       exit: toon(token("--maze-goal"), token("--maze-goal"), 0.9),
+      roof: toon(token("--maze-roof")),
     };
     this.materials.pit.side = DoubleSide;
     this.materials.lip.toneMapped = false;
@@ -240,7 +264,12 @@ export class MazeWorld {
       discoFloor: toon(token("--maze-disco-floor")),
       discoFloorDark: toon(token("--maze-disco-floor-dark")),
       winNeon: toon(token("--maze-win-neon"), token("--maze-win-neon"), 0.35),
+      failNeon: toon(token("--maze-fail-neon"), token("--maze-fail-neon"), 0.28),
+      failGround: toon(token("--maze-fail-ground")),
+      failGroundDark: toon(token("--maze-fail-ground-dark")),
+      failCrack: toon(token("--maze-fail-crack")),
     };
+    this.failFloorMat = makeFailFloorMat();
     this.discoMats = Array.from({ length: 8 }, (_, index) => glow(token(`--maze-disco-${index}`)));
     for (const mat of this.discoMats) mat.emissiveIntensity = 0.95;
     this.groundMats.window.emissiveIntensity = 0.7;
@@ -354,9 +383,17 @@ export class MazeWorld {
     this.switchMats = Array.from({ length: SWITCH_COLOR_COUNT }, (_, index) => glow(token(`--maze-switch-${index}`)));
     this.arrowGeometry = arrowGeometry();
     this.heartGeometry = heartGeometry();
+    this.coinGeometry = facet(new CylinderGeometry(0.28, 0.28, 0.06, 24));
     this.warpGateGeometry = facet(new CylinderGeometry(WARP_GATE_R, WARP_GATE_R, WARP_GATE_H, 8, 1, true));
     this.heartMat = glow(token("--maze-heart"));
     this.heartMat.emissiveIntensity = 0.8;
+    this.coinMat = new MeshStandardMaterial({
+      color: token("--maze-coin"),
+      emissive: token("--maze-coin-shine"),
+      emissiveIntensity: 0.28,
+      metalness: 0.95,
+      roughness: 0.22,
+    });
 
     const hemi = new HemisphereLight(token("--maze-sky"), token("--maze-floor"), 0.7);
     const ambient = new AmbientLight("#ffffff", 0.28);
@@ -407,6 +444,9 @@ export class MazeWorld {
     this.story = layout.story;
     this.raised = 0;
     this.escaped = false;
+    this.failed = false;
+    this.meadowCamLive = false;
+    this.meadowCamT = 0;
     this.ball.visible = true;
     this.scene.background = this.voidSky.texture;
     this.board.add(this.goalLight);
@@ -422,7 +462,7 @@ export class MazeWorld {
       this.frames[index] = this.addPieces(group, floor.pieces, floor.theme);
       this.addMarkers(group, floor, floor.finale);
       this.addTileMarks(group, floor);
-      this.addHearts(group, floor);
+      this.addPickups(group, floor);
       this.board.add(group);
       this.floorGroups.push(group);
       if (floor.finale) this.goalAnchor = { x: floor.goal.x, z: floor.goal.z, group };
@@ -436,6 +476,11 @@ export class MazeWorld {
     this.shatterFloor(this.topFloorIndex(), null);
   }
 
+  /** Blow the ceiling off the stage we just landed on (hole was already open at start). */
+  shatterRoof(): void {
+    this.shatterRoofAt(this.topFloorIndex());
+  }
+
   shatterEscape(): void {
     const index = this.topFloorIndex();
     const group = index >= 0 ? this.floorGroups[index] : null;
@@ -445,11 +490,34 @@ export class MazeWorld {
       : null;
     this.shatterFloor(index, blast);
     this.escaped = true;
+    this.failed = false;
     this.goalAnchor = null;
     this.goalRing = null;
     this.goalLight.visible = false;
     this.winSceneIndex = Math.floor(Math.random() * WIN_SCENES.length);
     this.applyWinScene(this.winSceneIndex);
+    this.beginMeadowCamera();
+  }
+
+  shatterFail(): void {
+    const index = this.topFloorIndex();
+    this.shatterFloor(index, { x: 0, z: 0 });
+    for (let i = 0; i < this.floorGroups.length; i += 1) {
+      if (i === index) continue;
+      const group = this.floorGroups[i];
+      if (group) group.visible = false;
+      const frame = this.frames[i];
+      if (frame) frame.visible = false;
+    }
+    this.escaped = true;
+    this.failed = true;
+    this.goalAnchor = null;
+    this.goalRing = null;
+    this.goalLight.visible = false;
+    this.buildFailScene();
+    this.scene.background = this.voidSky.texture;
+    this.syncVoidSky(this.lastTime);
+    this.beginMeadowCamera();
   }
 
   cycleWinScene(step = 1): boolean {
@@ -462,6 +530,7 @@ export class MazeWorld {
 
   enterWinGallery(): void {
     this.escaped = true;
+    this.failed = false;
     this.goalAnchor = null;
     this.goalRing = null;
     this.goalLight.visible = false;
@@ -474,7 +543,7 @@ export class MazeWorld {
     }
     this.winSceneIndex = 0;
     this.applyWinScene(0);
-    this.restCamera();
+    this.beginMeadowCamera();
     this.placeCamera();
   }
 
@@ -516,7 +585,7 @@ export class MazeWorld {
     this.frames[index] = this.addPieces(group, layout.pieces, layout.theme);
     this.addMarkers(group, layout, layout.finale);
     this.addTileMarks(group, layout);
-    this.addHearts(group, layout);
+    this.addPickups(group, layout);
     this.board.add(group);
     this.floorGroups.push(group);
     if (layout.finale) this.goalAnchor = { x: layout.goal.x, z: layout.goal.z, group };
@@ -527,30 +596,19 @@ export class MazeWorld {
   }
 
   collectHeart(cell: string): void {
-    const group = this.floorGroups[this.currentFloor()];
-    for (let i = this.hearts.length - 1; i >= 0; i -= 1) {
-      const heart = this.hearts[i];
-      if (!heart || heart.taken || heart.cell !== cell || heart.group !== group) continue;
-      if (this.reduceMotion) {
-        this.dropHeart(heart);
-        this.hearts.splice(i, 1);
-        continue;
-      }
-      heart.taken = true;
-      heart.age = 0;
-      if (heart.mesh.material instanceof MeshToonMaterial) {
-        const mat = heart.mesh.material.clone();
-        mat.transparent = true;
-        heart.mesh.material = mat;
-        heart.mesh.userData.owned = true;
-      }
-    }
+    this.collectPickup(this.hearts, cell);
+  }
+
+  collectCoin(cell: string): void {
+    this.collectPickup(this.coins, cell);
   }
 
   resize(width: number, height: number): void {
     this.aspect = width / Math.max(height, 1);
     this.camera.aspect = this.aspect;
     this.camera.updateProjectionMatrix();
+    this.voidResolution.set(Math.max(1, width), Math.max(1, height));
+    this.voidStarMat.uniforms.uResolution.value = this.voidResolution;
     this.fit();
   }
 
@@ -573,7 +631,8 @@ export class MazeWorld {
     this.applyBallLook(normal);
     organicProps = normal;
     this.syncVoidSky(this.lastTime);
-    if (lookChanged && this.escaped) this.applyWinScene(this.winSceneIndex);
+    if (lookChanged && this.escaped && !this.failed) this.applyWinScene(this.winSceneIndex);
+    else if (lookChanged && this.failed) this.buildFailScene();
     if (!lookChanged && Math.abs(steps - paintedSteps) < 0.001) return;
     paintRamp(ramp, steps, normal);
     this.setTextureFiltering(normal);
@@ -633,6 +692,7 @@ export class MazeWorld {
     for (const mat of Object.values(this.materials)) take(mat);
     for (const mat of Object.values(this.groundMats)) take(mat);
     for (const mat of Object.values(this.floorMats)) take(mat);
+    take(this.failFloorMat);
     for (const surfaces of this.themeSurfaces.values()) {
       take(surfaces.floor);
       take(surfaces.wall);
@@ -645,9 +705,11 @@ export class MazeWorld {
   private syncVoidSky(time: number): void {
     const chunk = this.settings?.values.skyPixels ?? 4;
     const steps = this.settings?.values.skyShade ?? 6;
-    const themeId = this.escaped
-      ? "rainbow"
-      : skyThemeAt(this.settings?.values.skyTheme ?? 0).id;
+    const themeId = this.failed
+      ? "sad"
+      : this.escaped
+        ? "rainbow"
+        : skyThemeAt(this.settings?.values.skyTheme ?? 0).id;
     const changed = this.voidSky.configure(chunk, steps, themeId);
     if (this.reduceMotion) {
       if (changed) this.voidSky.paint(0, true);
@@ -668,6 +730,17 @@ export class MazeWorld {
 
   nudgeCamera(dAngle: number, dOrbit: number): void {
     if (dAngle === 0 && dOrbit === 0) return;
+    if (this.escaped) {
+      this.glanceDAngle = clamp(
+        this.glanceDAngle + dAngle,
+        MEADOW_GLANCE_PITCH_MIN,
+        MEADOW_GLANCE_PITCH_MAX,
+      );
+      this.glanceDOrbit = wrapDegrees(this.glanceDOrbit + dOrbit);
+      this.glanceReturn = false;
+      if (Math.abs(this.glanceDAngle) < 0.05 && Math.abs(this.glanceDOrbit) < 0.05) this.restCamera();
+      return;
+    }
     const playAngle = this.playAngle();
     const nextAngle = clamp(playAngle + this.glanceDAngle + dAngle, ANGLE_MIN, ANGLE_MAX);
     this.glanceDAngle = nextAngle - playAngle;
@@ -710,11 +783,14 @@ export class MazeWorld {
     this.lastTime = time;
     this.tickDebris(dt);
     this.tickAim(dt);
+    this.tickMeadowCamera(dt);
     this.syncShell(dt, this.reduceMotion);
     this.placeGoalLight();
     this.placeCamera();
+    this.syncVoidStars(time);
     this.syncTiles(pose, time);
-    this.tickHearts(time, dt);
+    this.tickPickups(this.hearts, time, dt, 1.7, 2.4);
+    this.tickPickups(this.coins, time, dt, 3.6, 2.8);
     this.syncVoidSky(time);
     if (this.reduceMotion) return;
     if (this.goalRing) {
@@ -789,8 +865,15 @@ export class MazeWorld {
         for (const letter of this.meadowWinLetters.children) {
           const phase = typeof letter.userData.phase === "number" ? letter.userData.phase : 0;
           const baseY = typeof letter.userData.baseY === "number" ? letter.userData.baseY : 0;
-          letter.position.y = baseY + Math.sin(time * 2.4 + phase) * 0.12;
-          letter.rotation.y = Math.sin(time * 1.1 + phase) * 0.08;
+          if (this.failed) {
+            letter.position.y = baseY + Math.sin(time * 1.1 + phase) * 0.05;
+            letter.rotation.y = Math.sin(time * 0.55 + phase) * 0.04;
+            letter.rotation.z = -0.04 + Math.sin(time * 0.7 + phase) * 0.03;
+          } else {
+            letter.position.y = baseY + Math.sin(time * 2.4 + phase) * 0.12;
+            letter.rotation.y = Math.sin(time * 1.1 + phase) * 0.08;
+            letter.rotation.z = 0;
+          }
         }
       }
     }
@@ -811,6 +894,7 @@ export class MazeWorld {
     group.userData.generated = true;
     group.userData.pieces = layout.pieces;
     group.userData.hatch = layout.hatch;
+    group.userData.start = layout.start;
     group.userData.exit = layout.finale ? layout.goal : null;
     return group;
   }
@@ -838,7 +922,15 @@ export class MazeWorld {
       this.board.updateWorldMatrix(true, true);
       if (pieces) {
         for (const piece of pieces) {
-          if (piece.kind === "pit" || piece.kind === "lip" || piece.kind === "grout") continue;
+          if (
+            piece.kind === "pit" ||
+            piece.kind === "void" ||
+            piece.kind === "lip" ||
+            piece.kind === "grout" ||
+            piece.kind === "roof"
+          ) {
+            continue;
+          }
           this.spawnDebris(piece, group.position.y, this.board.quaternion, hatch);
         }
       }
@@ -850,7 +942,30 @@ export class MazeWorld {
     this.pruneSpins();
   }
 
-  private addHearts(parent: Group, layout: MazeLayout): void {
+  private shatterRoofAt(index: number): void {
+    const group = index >= 0 ? this.floorGroups[index] : null;
+    if (!group) return;
+    const pieces = group.userData.pieces as Piece[] | undefined;
+    if (!pieces?.some((piece) => piece.kind === "roof")) return;
+    const blast =
+      (group.userData.start as { x: number; z: number } | null) ??
+      (group.userData.hatch as { x: number; z: number } | null);
+    if (!this.reduceMotion) {
+      this.board.updateWorldMatrix(true, true);
+      for (const piece of pieces) {
+        if (piece.kind !== "roof") continue;
+        this.spawnDebris(piece, group.position.y, this.board.quaternion, blast);
+      }
+    }
+    for (const child of [...group.children]) {
+      if (child.userData.pieceKind !== "roof") continue;
+      group.remove(child);
+      this.disposeGenerated(child);
+    }
+    group.userData.pieces = pieces.filter((piece) => piece.kind !== "roof");
+  }
+
+  private addPickups(parent: Group, layout: MazeLayout): void {
     for (const heart of layout.hearts) {
       const mesh = new Mesh(this.heartGeometry, this.heartMat);
       mesh.position.set(heart.x, 0.38, heart.z);
@@ -858,47 +973,95 @@ export class MazeWorld {
       mesh.renderOrder = 2;
       parent.add(mesh);
       this.hearts.push({
-        mesh,
+        root: mesh,
+        visual: mesh,
         cell: `${heart.c},${heart.r}`,
         group: parent,
         taken: false,
         age: 0,
         baseY: 0.38,
+        kind: "heart",
+      });
+    }
+    for (const coin of layout.coins) {
+      const root = new Group();
+      root.position.set(coin.x, 0.42, coin.z);
+      const visual = new Mesh(this.coinGeometry, this.coinMat);
+      // Stand the disc on edge; the parent group spins around world Y.
+      visual.rotation.x = Math.PI / 2;
+      visual.castShadow = true;
+      visual.renderOrder = 2;
+      root.add(visual);
+      parent.add(root);
+      this.coins.push({
+        root,
+        visual,
+        cell: `${coin.c},${coin.r}`,
+        group: parent,
+        taken: false,
+        age: 0,
+        baseY: 0.42,
+        kind: "coin",
       });
     }
   }
 
-  private tickHearts(time: number, dt: number): void {
-    for (let i = this.hearts.length - 1; i >= 0; i -= 1) {
-      const heart = this.hearts[i];
-      if (!heart) continue;
-      if (!heart.mesh.parent) {
-        this.hearts.splice(i, 1);
+  private collectPickup(list: PickupBit[], cell: string): void {
+    const group = this.floorGroups[this.currentFloor()];
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      const bit = list[i];
+      if (!bit || bit.taken || bit.cell !== cell || bit.group !== group) continue;
+      if (this.reduceMotion) {
+        this.dropPickup(bit);
+        list.splice(i, 1);
         continue;
       }
-      if (!heart.taken) {
-        if (this.reduceMotion) continue;
-        heart.mesh.rotation.y = time * 1.7;
-        heart.mesh.position.y = heart.baseY + Math.sin(time * 2.4 + heart.mesh.position.x) * 0.03;
-        continue;
+      bit.taken = true;
+      bit.age = 0;
+      const source = bit.visual.material;
+      if (source instanceof MeshToonMaterial || source instanceof MeshStandardMaterial) {
+        const mat = source.clone();
+        mat.transparent = true;
+        bit.visual.material = mat;
+        bit.visual.userData.owned = true;
       }
-      heart.age += dt;
-      const rise = Math.min(1, heart.age / 0.28);
-      heart.mesh.position.y = heart.baseY + rise * 0.42;
-      heart.mesh.scale.setScalar(1 + rise * 0.35);
-      heart.mesh.rotation.y += dt * 4;
-      const mat = heart.mesh.material;
-      if (mat instanceof MeshToonMaterial) mat.opacity = 1 - rise;
-      if (rise < 1) continue;
-      this.dropHeart(heart);
-      this.hearts.splice(i, 1);
     }
   }
 
-  private dropHeart(heart: HeartBit): void {
-    heart.group.remove(heart.mesh);
-    if (heart.mesh.userData.owned === true && heart.mesh.material instanceof MeshToonMaterial) {
-      heart.mesh.material.dispose();
+  private tickPickups(list: PickupBit[], time: number, dt: number, spin: number, bob: number): void {
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      const bit = list[i];
+      if (!bit) continue;
+      if (!bit.root.parent) {
+        list.splice(i, 1);
+        continue;
+      }
+      if (!bit.taken) {
+        if (this.reduceMotion) continue;
+        bit.root.rotation.y = time * spin;
+        bit.root.position.y = bit.baseY + Math.sin(time * bob + bit.root.position.x) * 0.04;
+        continue;
+      }
+      bit.age += dt;
+      const rise = Math.min(1, bit.age / 0.28);
+      bit.root.position.y = bit.baseY + rise * 0.42;
+      bit.root.scale.setScalar(1 + rise * 0.35);
+      bit.root.rotation.y += dt * 6;
+      const mat = bit.visual.material;
+      if (mat instanceof MeshToonMaterial || mat instanceof MeshStandardMaterial) mat.opacity = 1 - rise;
+      if (rise < 1) continue;
+      this.dropPickup(bit);
+      list.splice(i, 1);
+    }
+  }
+
+  private dropPickup(bit: PickupBit): void {
+    bit.group.remove(bit.root);
+    if (
+      bit.visual.userData.owned === true
+      && (bit.visual.material instanceof MeshToonMaterial || bit.visual.material instanceof MeshStandardMaterial)
+    ) {
+      bit.visual.material.dispose();
     }
   }
 
@@ -906,6 +1069,10 @@ export class MazeWorld {
     const surfaces = this.themeSurfaces.get(theme);
     const groups = new Map<PieceKind, BufferGeometry[]>();
     for (const piece of pieces) {
+      if (piece.kind === "void") {
+        this.addVoidFloor(parent, piece);
+        continue;
+      }
       if (piece.gate || piece.kind === "crumble") {
         this.addLoose(parent, piece, theme);
         continue;
@@ -924,7 +1091,8 @@ export class MazeWorld {
         for (const geo of geos) geo.dispose();
       }
       const mesh = new Mesh(merged, this.surfaceMaterial(kind, surfaces));
-      mesh.castShadow = kind === "wall" || kind === "frame" || kind === "block";
+      mesh.userData.pieceKind = kind;
+      mesh.castShadow = kind === "wall" || kind === "frame" || kind === "block" || kind === "roof";
       mesh.receiveShadow =
         kind === "floor" ||
         kind === "start" ||
@@ -935,7 +1103,8 @@ export class MazeWorld {
         kind === "crumble" ||
         kind === "block" ||
         kind === "switch" ||
-        kind === "grout";
+        kind === "grout" ||
+        kind === "roof";
       if (kind === "frame") {
         frame = mesh;
         mesh.userData.theme = theme;
@@ -952,6 +1121,7 @@ export class MazeWorld {
       if (kind === "wall" || kind === "block") return surfaces.wall;
       if (kind === "grout") return surfaces.grout;
       if (kind === "frame") return surfaces.frame;
+      if (kind === "roof") return surfaces.wall;
     }
     return this.materials[kind];
   }
@@ -1099,6 +1269,89 @@ export class MazeWorld {
       letter.position.x = cursor + width * cell * 0.5;
       letter.userData.baseY = 0;
       letter.userData.phase = index * 0.9;
+      for (let r = 0; r < glyph.length; r += 1) {
+        const line = glyph[r] ?? "";
+        for (let c = 0; c < line.length; c += 1) {
+          if (line[c] !== "#") continue;
+          const x = (c + 0.5 - width * 0.5) * cell;
+          const y = letterH - (r + 0.5) * cell;
+          voxel(letter, mat, cell * 0.46, cell * 0.46, depth * 0.5, x, y, 0);
+        }
+      }
+      letters.add(letter);
+      cursor += (width + 1) * cell;
+    }
+
+    parent.add(letters);
+    this.meadowWinLetters = letters;
+  }
+
+  private buildFailScene(): void {
+    this.clearMeadow();
+    const tower = this.tower;
+    if (!tower) return;
+    const span = Math.max(tower.width, tower.depth) * 2.8;
+    const group = new Group();
+    group.position.y = -MEADOW_DROP;
+    group.visible = true;
+    group.userData.generated = true;
+
+    const pad = new Mesh(new BoxGeometry(span, 0.22, span), this.groundMats.failGroundDark);
+    pad.position.y = -0.11;
+    pad.receiveShadow = organicProps;
+    group.add(pad);
+
+    const tiles = Math.max(4, Math.round(span / 2.4));
+    if (this.failFloorMat.map) {
+      this.failFloorMat.map.repeat.set(tiles, tiles);
+      this.failFloorMat.map.needsUpdate = true;
+    }
+    const carpet = new Mesh(new PlaneGeometry(span, span), this.failFloorMat);
+    carpet.rotation.x = -Math.PI / 2;
+    carpet.position.y = 0.01;
+    carpet.receiveShadow = organicProps;
+    group.add(carpet);
+
+    const rim = span * 0.34;
+    for (let i = 0; i < 7; i += 1) {
+      const a = i * 1.85 + 0.4;
+      const rock = new Mesh(
+        new BoxGeometry(0.14 + (i % 3) * 0.05, 0.08 + (i % 2) * 0.04, 0.12 + (i % 4) * 0.03),
+        i % 2 === 0 ? this.groundMats.failCrack : this.groundMats.failGround,
+      );
+      rock.position.set(Math.cos(a) * rim * 0.85, 0.06, Math.sin(a) * rim * 0.7);
+      rock.rotation.y = a * 0.4;
+      group.add(rock);
+    }
+
+    this.addFailSign(group, span);
+    this.board.add(group);
+    this.meadow = group;
+  }
+
+  private addFailSign(parent: Group, span: number): void {
+    const glyphs = [FAIL_GLYPH_F, FAIL_GLYPH_A, FAIL_GLYPH_I, FAIL_GLYPH_L, FAIL_GLYPH_BANG];
+    const rows = FAIL_GLYPH_F.length;
+    let cols = 0;
+    for (const glyph of glyphs) cols += glyph[0]?.length ?? 0;
+    cols += glyphs.length - 1;
+
+    const targetW = span * 0.68;
+    const cell = targetW / cols;
+    const depth = cell * 0.9;
+    const letterH = cell * rows;
+    const mat = this.groundMats.failNeon;
+
+    const letters = new Group();
+    letters.position.set(0, cell * 0.2, -span * 0.42);
+
+    let cursor = -targetW * 0.5;
+    for (const [index, glyph] of glyphs.entries()) {
+      const width = glyph[0]?.length ?? 0;
+      const letter = new Group();
+      letter.position.x = cursor + width * cell * 0.5;
+      letter.userData.baseY = 0;
+      letter.userData.phase = index * 0.85;
       for (let r = 0; r < glyph.length; r += 1) {
         const line = glyph[r] ?? "";
         for (let c = 0; c < line.length; c += 1) {
@@ -1973,8 +2226,29 @@ export class MazeWorld {
     this.placeCamera();
   }
 
+  private beginMeadowCamera(): void {
+    this.meadowCamFromPos.copy(this.camera.position);
+    this.meadowCamFromLook.set(0, this.focusY, 0).applyQuaternion(this.board.quaternion);
+    this.meadowCamLive = true;
+    this.meadowCamT = this.reduceMotion ? 1 : 0;
+    this.restCamera();
+  }
+
+  private tickMeadowCamera(dt: number): void {
+    if (!this.meadowCamLive || this.meadowCamT >= 1) return;
+    if (this.reduceMotion) {
+      this.meadowCamT = 1;
+      return;
+    }
+    this.meadowCamT = Math.min(1, this.meadowCamT + dt / MEADOW_CAM_SECS);
+  }
+
   private placeCamera(): void {
     if (!this.tower) return;
+    if (this.escaped && this.meadowCamLive) {
+      this.placeMeadowCamera();
+      return;
+    }
     const low = this.escaped ? 0 : this.lowest();
     const span = Math.max(this.tower.width, this.tower.depth) + Math.abs(low) * 0.28;
     const zoom = this.settings?.values.zoom ?? 1;
@@ -2007,6 +2281,42 @@ export class MazeWorld {
     shadow.bottom = -range;
     shadow.updateProjectionMatrix();
     this.key.target.position.copy(look);
+  }
+
+  private placeMeadowCamera(): void {
+    const tower = this.tower;
+    if (!tower) return;
+    const meadowY = this.meadow?.position.y ?? -MEADOW_DROP;
+    const span = Math.max(tower.width, tower.depth) * 2.8;
+    const orbit = (this.glanceDOrbit * Math.PI) / 180;
+    const pitch = (this.glanceDAngle * Math.PI) / 180;
+    const eyeRadius = span * (0.34 - Math.sin(Math.max(0, pitch)) * 0.06);
+    const eyeHeight = 0.62 + Math.sin(pitch) * span * 0.28;
+    const lookHeight = span * 0.11 + Math.sin(pitch) * span * 0.06;
+    const lookZ = -span * 0.4;
+
+    this.meadowCamEye.set(
+      Math.sin(orbit) * eyeRadius,
+      meadowY + eyeHeight,
+      Math.cos(orbit) * eyeRadius,
+    );
+    this.meadowCamLook.set(0, meadowY + lookHeight, lookZ);
+    this.meadowCamEye.applyQuaternion(this.board.quaternion);
+    this.meadowCamLook.applyQuaternion(this.board.quaternion);
+
+    const t = easeOutCubic(this.meadowCamT);
+    this.camera.position.lerpVectors(this.meadowCamFromPos, this.meadowCamEye, t);
+    this.meadowCamLookBlend.lerpVectors(this.meadowCamFromLook, this.meadowCamLook, t);
+    this.camera.lookAt(this.meadowCamLookBlend);
+
+    const range = span * 0.85;
+    const shadow = this.key.shadow.camera as OrthographicCamera;
+    shadow.left = -range;
+    shadow.right = range;
+    shadow.top = range;
+    shadow.bottom = -range;
+    shadow.updateProjectionMatrix();
+    this.key.target.position.copy(this.meadowCamLookBlend);
   }
 
   private addTileMarks(parent: Group, layout: MazeLayout): void {
@@ -2076,6 +2386,20 @@ export class MazeWorld {
     }
   }
 
+  private addVoidFloor(parent: Group, piece: Piece): void {
+    const mesh = new Mesh(new BoxGeometry(piece.hx * 2, piece.hy * 2, piece.hz * 2), this.voidStarMat);
+    mesh.position.set(piece.x, piece.y, piece.z);
+    mesh.userData.pieceKind = "void";
+    mesh.renderOrder = -1;
+    parent.add(mesh);
+  }
+
+  private syncVoidStars(time: number): void {
+    this.camera.getWorldDirection(this.voidCamDir);
+    this.voidStarMat.uniforms.uCamDir.value.copy(this.voidCamDir);
+    this.voidStarMat.uniforms.uTime.value = this.reduceMotion ? 0 : time;
+  }
+
   private addLoose(parent: Group, piece: Piece, theme: FloorThemeId = DEFAULT_FLOOR_THEME): void {
     const geo = new BoxGeometry(piece.hx * 2, piece.hy * 2, piece.hz * 2);
     const surfaces = this.themeSurfaces.get(theme);
@@ -2102,7 +2426,7 @@ export class MazeWorld {
       mesh.userData.slab = slab;
       mesh.userData.chunks = crumbleChunks(mesh, piece, chunkMat);
       mesh.userData.apart = 0;
-      const well = makeCrumbleWell(piece, this.materials.pit, this.materials.lip);
+      const well = makeCrumbleWell(piece, this.materials.pit, this.materials.lip, this.voidStarMat);
       well.visible = false;
       mesh.add(well);
       mesh.userData.well = well;
@@ -2191,6 +2515,7 @@ export class MazeWorld {
     const shared =
       child.geometry === this.arrowGeometry
       || child.geometry === this.heartGeometry
+      || child.geometry === this.coinGeometry
       || child.geometry === this.warpGateGeometry;
     if (!shared) child.geometry.dispose();
     if (child.userData.chunkMat instanceof MeshToonMaterial) child.userData.chunkMat.dispose();
@@ -2213,6 +2538,7 @@ export class MazeWorld {
     this.meadowLight = null;
     this.meadowWinLetters = null;
     this.hearts.length = 0;
+    this.coins.length = 0;
     this.warpSpins.length = 0;
     this.gateMeshes.length = 0;
     this.crumbleMeshes.length = 0;
@@ -2330,13 +2656,20 @@ function wrapDegrees(value: number): number {
   return wrapped === -180 ? 180 : wrapped;
 }
 
-interface HeartBit {
-  mesh: Mesh;
+function easeOutCubic(t: number): number {
+  const u = 1 - Math.min(1, Math.max(0, t));
+  return 1 - u * u * u;
+}
+
+interface PickupBit {
+  root: Object3D;
+  visual: Mesh;
   cell: string;
   group: Group;
   taken: boolean;
   age: number;
   baseY: number;
+  kind: "heart" | "coin";
 }
 
 interface Debris {
@@ -2454,6 +2787,46 @@ const WIN_GLYPH_BANG = [
   ".#.",
 ];
 
+const FAIL_GLYPH_F = [
+  "#####",
+  "#....",
+  "####.",
+  "#....",
+  "#....",
+];
+
+const FAIL_GLYPH_A = [
+  ".###.",
+  "#...#",
+  "#####",
+  "#...#",
+  "#...#",
+];
+
+const FAIL_GLYPH_I = [
+  ".#.",
+  "...",
+  ".#.",
+  ".#.",
+  ".#.",
+];
+
+const FAIL_GLYPH_L = [
+  "#....",
+  "#....",
+  "#....",
+  "#....",
+  "#####",
+];
+
+const FAIL_GLYPH_BANG = [
+  ".#.",
+  ".#.",
+  ".#.",
+  "...",
+  ".#.",
+];
+
 const SCENE_ANIMALS: Record<WinSceneKind, AnimalKind[]> = {
   pasture: ["cow", "sheep", "dog", "horse"],
   beach: ["crab", "seagull", "turtle", "seal"],
@@ -2522,6 +2895,50 @@ function makeFloorMats(): Record<WinSceneKind, MeshToonMaterial> {
     });
   }
   return mats;
+}
+
+function makeFailFloorMat(): MeshToonMaterial {
+  const size = 32;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Fail floor texture canvas unavailable");
+  const base = token("--maze-fail-ground");
+  const shade = token("--maze-fail-ground-dark");
+  const crack = token("--maze-fail-crack");
+  const hash = (x: number, y: number): number => {
+    const n = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+    return n - Math.floor(n);
+  };
+  ctx.fillStyle = base;
+  ctx.fillRect(0, 0, size, size);
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const n = hash(x, y);
+      if (n > 0.78) {
+        ctx.fillStyle = shade;
+        ctx.fillRect(x, y, 1, 1);
+      }
+      if (n > 0.93 || (x + y * 3) % 11 === 0) {
+        ctx.fillStyle = crack;
+        ctx.fillRect(x, y, 1, 1);
+      }
+    }
+  }
+  const tex = new CanvasTexture(canvas);
+  tex.colorSpace = SRGBColorSpace;
+  tex.magFilter = NearestFilter;
+  tex.minFilter = NearestFilter;
+  tex.wrapS = RepeatWrapping;
+  tex.wrapT = RepeatWrapping;
+  tex.generateMipmaps = false;
+  tex.needsUpdate = true;
+  return new MeshToonMaterial({
+    color: "#ffffff",
+    map: tex,
+    gradientMap: ramp,
+  });
 }
 
 function makeFloorTexture(kind: WinSceneKind): Texture {
@@ -3845,33 +4262,42 @@ function paintCrumble(ctx: CanvasRenderingContext2D, size: number): void {
   }
 }
 
-function makeCrumbleWell(piece: Piece, pitMat: MeshToonMaterial, lipMat: MeshToonMaterial): Group {
+function makeCrumbleWell(
+  piece: Piece,
+  pitMat: MeshToonMaterial,
+  lipMat: MeshToonMaterial,
+  voidMat: ShaderMaterial,
+): Group {
   const well = new Group();
-  const gap = (CELL - WALL) / 2 - 0.012;
   const thickness = 0.05;
   const top = -0.008;
   const floor = -PIT_WELL;
   const mid = (top + floor) / 2;
   const hy = (top - floor) / 2;
-  const inset = gap - thickness / 2;
-  const sink = BALL_R * 2 + 0.06;
+  const half = CELL / 2;
+  const wallAlong = half - 0.01;
+  const wallInset = half - thickness / 2;
+  const voidHalf = half + 0.02;
   const originY = piece.y;
   const sides: Array<[number, number, number, number, number, number]> = [
-    [0, mid - originY, -inset, gap, hy, thickness / 2],
-    [0, mid - originY, inset, gap, hy, thickness / 2],
-    [-inset, mid - originY, 0, thickness / 2, hy, inset],
-    [inset, mid - originY, 0, thickness / 2, hy, inset],
-    [0, floor - sink / 2 - originY, 0, gap - thickness, sink / 2, gap - thickness],
+    [0, mid - originY, -wallInset, wallAlong, hy, thickness / 2],
+    [0, mid - originY, wallInset, wallAlong, hy, thickness / 2],
+    [-wallInset, mid - originY, 0, thickness / 2, hy, wallAlong],
+    [wallInset, mid - originY, 0, thickness / 2, hy, wallAlong],
   ];
   for (const [x, y, z, hx, halfY, hz] of sides) {
     const wall = new Mesh(new BoxGeometry(hx * 2, halfY * 2, hz * 2), pitMat);
     wall.position.set(x, y, z);
     well.add(wall);
   }
+  const voidFloor = new Mesh(new BoxGeometry(voidHalf * 2, 0.06, voidHalf * 2), voidMat);
+  voidFloor.position.set(0, floor - 0.03 - originY, 0);
+  voidFloor.renderOrder = -1;
+  well.add(voidFloor);
   const lipT = 0.03;
   const lipY = 0.014 - originY;
-  const lipAlong = gap;
-  const lipInset = gap - lipT / 2;
+  const lipAlong = half - 0.01;
+  const lipInset = half - lipT / 2;
   const lips: Array<[number, number, number, number, number, number]> = [
     [0, lipY, -lipInset, lipAlong, 0.012, lipT / 2],
     [0, lipY, lipInset, lipAlong, 0.012, lipT / 2],
@@ -3884,6 +4310,96 @@ function makeCrumbleWell(piece: Piece, pitMat: MeshToonMaterial, lipMat: MeshToo
     well.add(lip);
   }
   return well;
+}
+
+function makeVoidStarMat(resolution: Vector2, camDir: Vector3): ShaderMaterial {
+  const deep = token("--maze-pit");
+  const star = token("--maze-void-star");
+  const dim = token("--maze-void-star-dim");
+  const glow = token("--maze-void-glow");
+  return new ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uResolution: { value: resolution },
+      uCamDir: { value: camDir },
+      uDeep: { value: hexToVec3(deep) },
+      uStar: { value: hexToVec3(star) },
+      uDim: { value: hexToVec3(dim) },
+      uGlow: { value: hexToVec3(glow) },
+    },
+    vertexShader: `
+      varying vec4 vClip;
+      void main() {
+        vClip = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        gl_Position = vClip;
+      }
+    `,
+    fragmentShader: `
+      uniform float uTime;
+      uniform vec2 uResolution;
+      uniform vec3 uCamDir;
+      uniform vec3 uDeep;
+      uniform vec3 uStar;
+      uniform vec3 uDim;
+      uniform vec3 uGlow;
+      varying vec4 vClip;
+
+      float hash21(vec2 p) {
+        p = fract(p * vec2(123.34, 456.21));
+        p += dot(p, p + 45.32);
+        return fract(p.x * p.y);
+      }
+
+      void main() {
+        vec2 screen = (vClip.xy / max(vClip.w, 0.0001)) * 0.5 + 0.5;
+        float aspect = max(uResolution.x, 1.0) / max(uResolution.y, 1.0);
+        // Chunk to screen pixels so the field feels like the rest of the game.
+        float px = 140.0;
+        screen = floor(screen * vec2(px * aspect, px)) / vec2(px * aspect, px);
+        // Screen-space field so stars drift differently from pit geometry when the board tilts.
+        vec2 base = screen;
+        base.x *= aspect;
+        base += uCamDir.xz * vec2(0.22, 0.16);
+        base -= uCamDir.y * 0.08;
+
+        vec2 farUv = base * 42.0 + vec2(uTime * 0.03, -uTime * 0.02);
+        vec2 nearUv = base * 78.0 + uCamDir.xz * 4.5 + vec2(-uTime * 0.05, uTime * 0.04);
+
+        vec2 farCell = floor(farUv);
+        vec2 nearCell = floor(nearUv);
+        float farN = hash21(farCell);
+        float nearN = hash21(nearCell + 17.0);
+        float twinkle = 0.65 + 0.35 * sin(uTime * (2.4 + farN * 3.1) + farN * 6.28);
+
+        float farStar = step(0.955, farN) * twinkle;
+        float nearStar = step(0.978, nearN) * (0.7 + 0.3 * sin(uTime * 3.2 + nearN * 8.0));
+        float dust = step(0.82, hash21(floor(base * 28.0 + uCamDir.zx * 3.0))) * 0.045;
+
+        vec3 color = uDeep;
+        color += uGlow * dust;
+        color = mix(color, uDim, farStar * 0.85);
+        color = mix(color, uStar, nearStar);
+
+        gl_FragColor = vec4(color, 1.0);
+      }
+    `,
+    depthWrite: true,
+    depthTest: true,
+  });
+}
+
+function hexToVec3(hex: string): Vector3 {
+  const raw = hex.trim().replace("#", "");
+  const full = raw.length === 3
+    ? raw.split("").map((ch) => ch + ch).join("")
+    : raw.padStart(6, "0").slice(0, 6);
+  const value = Number.parseInt(full, 16);
+  if (!Number.isFinite(value)) return new Vector3(0, 0, 0);
+  return new Vector3(
+    ((value >> 16) & 255) / 255,
+    ((value >> 8) & 255) / 255,
+    (value & 255) / 255,
+  );
 }
 
 function crumbleChunks(parent: Mesh, piece: Piece, material: MeshToonMaterial): Mesh[] {

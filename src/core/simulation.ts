@@ -54,7 +54,7 @@ export interface Pose {
   gates: string[];
 }
 
-export type SimEvent = "none" | "fell" | "goal" | "descend" | "escape";
+export type SimEvent = "none" | "fell" | "goal" | "descend" | "escape" | "fail";
 
 let ready: Promise<void> | null = null;
 
@@ -73,6 +73,7 @@ export class Simulation {
   private active = 0;
   private fallingThrough = false;
   private escaping = false;
+  private failing = false;
   private sentDescend = false;
   private sentEscape = false;
   private meadowY = -MEADOW_DROP;
@@ -104,7 +105,9 @@ export class Simulation {
   private readonly switches = new Map<string, string>();
   private readonly openGates = new Set<string>();
   private readonly hearts = new Set<string>();
+  private readonly coins = new Set<string>();
   private readonly pickedHearts: string[] = [];
+  private readonly pickedCoins: string[] = [];
   private damping = 0.55;
   private onIce = false;
   private warpGrace = "";
@@ -206,9 +209,16 @@ export class Simulation {
         this.contain();
         if (this.fallingThrough) this.guideToLanding();
         else if (this.escaping && this.sentEscape) this.guideToward(0, 0);
+        else if (this.failing) this.guideToward(0, 0);
         if (this.fallShield > 0) this.fallShield = Math.max(0, this.fallShield - STEP);
         const local = this.localBall();
-        if (!this.escaping && local.y < FALL_Y && this.fallShield <= 0 && this.canFall(local)) {
+        if (
+          !this.escaping
+          && !this.failing
+          && local.y < FALL_Y
+          && this.fallShield <= 0
+          && this.canFall(local)
+        ) {
           if (!this.fallingThrough && this.inPassage(local)) {
             this.fallingThrough = true;
             if (this.inExit(local)) this.escaping = true;
@@ -219,6 +229,7 @@ export class Simulation {
     }
 
     if (this.escaping) return this.trackEscape();
+    if (this.failing) return this.trackFail();
     if (this.fallingThrough) return this.trackDescent();
     if (fell) {
       this.goalTime = 0;
@@ -255,6 +266,13 @@ export class Simulation {
     return got;
   }
 
+  takeCoins(): string[] {
+    if (this.pickedCoins.length === 0) return [];
+    const got = this.pickedCoins.slice();
+    this.pickedCoins.length = 0;
+    return got;
+  }
+
   hold(): void {
     this.ball.setGravityScale(0, true);
     this.ball.setLinvel({ x: 0, y: 0, z: 0 }, true);
@@ -277,6 +295,7 @@ export class Simulation {
     this.boosting = false;
     this.fallingThrough = false;
     this.escaping = false;
+    this.failing = false;
     this.sentDescend = false;
     this.sentEscape = false;
     this.fallShield = 0;
@@ -308,6 +327,7 @@ export class Simulation {
     this.boosting = false;
     this.fallingThrough = false;
     this.escaping = false;
+    this.failing = false;
     this.sentDescend = false;
     this.sentEscape = false;
     this.clearDrop();
@@ -315,10 +335,42 @@ export class Simulation {
   }
 
   beginEscape(): void {
+    this.openMeadow();
+    this.fallingThrough = false;
+    this.failing = false;
+    this.goalTime = 0;
+    this.ballCollider.setSensor(false);
+    this.ball.setGravityScale(1, true);
+    this.ball.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    this.ball.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    this.flatten();
+    this.ball.wakeUp();
+  }
+
+  beginFail(): void {
+    this.clearDrop();
+    this.openMeadow(true);
+    this.fallingThrough = false;
+    this.escaping = false;
+    this.failing = true;
+    this.goalTime = 0;
+    this.ballCollider.setSensor(false);
+    this.ball.setGravityScale(1, true);
+    this.board.rotation(this.boardRot);
+    const up = rotateVec(this.boardRot, { x: 0, y: 1, z: 0 });
+    const fall = 2.4;
+    this.ball.setLinvel({ x: -up.x * fall, y: -up.y * fall, z: -up.z * fall }, true);
+    this.ball.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    this.flatten();
+    this.ball.wakeUp();
+  }
+
+  private openMeadow(clearAll = false): void {
     const gone = this.active;
     for (let i = this.surfaces.length - 1; i >= 0; i -= 1) {
       const surface = this.surfaces[i];
-      if (!surface || surface.floor !== gone) continue;
+      if (!surface) continue;
+      if (!clearAll && surface.floor !== gone) continue;
       this.world.removeCollider(surface.collider, true);
       this.surfaces.splice(i, 1);
     }
@@ -333,14 +385,6 @@ export class Simulation {
       this.board,
     );
     this.surfaces.push({ collider: ground, kind: "floor", floor: this.active });
-    this.fallingThrough = false;
-    this.goalTime = 0;
-    this.ballCollider.setSensor(false);
-    this.ball.setGravityScale(1, true);
-    this.ball.setLinvel({ x: 0, y: 0, z: 0 }, true);
-    this.ball.setAngvel({ x: 0, y: 0, z: 0 }, true);
-    this.flatten();
-    this.ball.wakeUp();
   }
 
   shift(dy: number): void {
@@ -402,6 +446,8 @@ export class Simulation {
     }
     this.hearts.clear();
     for (const heart of layout.hearts) this.hearts.add(`${heart.c},${heart.r}`);
+    this.coins.clear();
+    for (const coin of layout.coins) this.coins.add(`${coin.c},${coin.r}`);
   }
 
   private useLayout(layout: MazeLayout): void {
@@ -455,10 +501,11 @@ export class Simulation {
     this.applyIce(id, local);
     this.applySwitch(id, local);
     this.applyHeart(id, local);
+    this.applyCoin(id, local);
   }
 
   private stick(): void {
-    if (this.fallingThrough || this.escaping || this.ball.gravityScale() === 0) return;
+    if (this.fallingThrough || this.escaping || this.failing || this.ball.gravityScale() === 0) return;
     this.board.rotation(this.boardRot);
     const local = this.localBall();
     if (this.canFall(local)) return;
@@ -536,6 +583,12 @@ export class Simulation {
     if (!this.hearts.has(id) || local.y >= TILE_Y || local.y <= FALL_Y) return;
     this.hearts.delete(id);
     this.pickedHearts.push(id);
+  }
+
+  private applyCoin(id: string, local: Vec3): void {
+    if (!this.coins.has(id) || local.y >= TILE_Y || local.y <= FALL_Y) return;
+    this.coins.delete(id);
+    this.pickedCoins.push(id);
   }
 
   private applySwitch(id: string, local: Vec3): void {
@@ -720,7 +773,7 @@ export class Simulation {
   }
 
   private contain(): void {
-    if (this.fallingThrough || this.escaping) return;
+    if (this.fallingThrough || this.escaping || this.failing) return;
     const local = this.localBall();
     const inset = WALL / 2 + BALL_R - 0.02;
     const minX = this.layout.minX + inset;
@@ -783,6 +836,14 @@ export class Simulation {
       this.sentEscape = true;
       return "escape";
     }
+    return this.trackMeadowLanding("goal");
+  }
+
+  private trackFail(): SimEvent {
+    return this.trackMeadowLanding("fail");
+  }
+
+  private trackMeadowLanding(done: "goal" | "fail"): SimEvent {
     let local = this.localBall();
     const rest = this.meadowY + SPAWN_Y;
     if (local.y < rest - 0.02) {
@@ -795,7 +856,7 @@ export class Simulation {
     const onGrass = local.y <= rest + 0.22 && local.y >= rest - 0.05;
     if (onGrass && speed < 1.4) {
       this.goalTime += STEP;
-      if (this.goalTime > 0.4) return "goal";
+      if (this.goalTime > 0.4) return done;
     } else {
       this.goalTime = 0;
     }

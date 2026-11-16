@@ -116,6 +116,15 @@
   --sky-rainbow-4: #2de2ff;
   --sky-rainbow-5: #4a6dff;
   --sky-rainbow-6: #b44aff;
+
+  --sky-sad-deep: #080a10;
+  --sky-sad-0: #3a4558;
+  --sky-sad-1: #5a6a7a;
+  --sky-sad-2: #2a3548;
+  --sky-sad-3: #7a8898;
+  --sky-sad-4: #4a5568;
+  --sky-sad-5: #6a8090;
+  --sky-sad-6: #121820;
   --maze-floor: #2c333b;
   --maze-grout: #514c47;
   --maze-start: #3a4652;
@@ -189,7 +198,10 @@
   --theme-suburbia-wall-line: #8fa8c4;
   --theme-suburbia-grout: #9aa3ab;
   --theme-suburbia-frame: #6b8cae;
-  --maze-pit: #050506;
+  --maze-pit: #000000;
+  --maze-void-star: #d8e6ff;
+  --maze-void-star-dim: #6a7a9a;
+  --maze-void-glow: #3a4a6a;
   --maze-lip: #c75c29;
   --maze-hatch: #6aafdf;
   --maze-boost: #16384a;
@@ -380,7 +392,13 @@
   --maze-sulfur: #e8c84a;
   --maze-sulfur-glow: #ffe08a;
   --maze-heart: #e2586c;
+  --maze-coin: #f0c43a;
+  --maze-coin-shine: #ffe9a0;
   --maze-win-neon: #ffbc61;
+  --maze-fail-neon: #6a8098;
+  --maze-fail-ground: #3a4048;
+  --maze-fail-ground-dark: #22262c;
+  --maze-fail-crack: #1a1e24;
   --maze-ball: #ffffff;
   --maze-mark: #1a1a1a;
   --maze-sky: #6aafdf;

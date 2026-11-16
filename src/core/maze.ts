@@ -49,6 +49,8 @@ export interface Maze {
   walls: number[][];
   holes: GridPoint[];
   tiles: FloorTile[];
+  hearts: GridPoint[];
+  coins: GridPoint[];
   start: GridPoint;
   goal: GridPoint;
   hatch: GridPoint | null;
@@ -130,6 +132,8 @@ export function carveFloor(
     walls,
     holes,
     tiles: [],
+    hearts: [],
+    coins: [],
     start: originCell,
     goal,
     hatch: null,
@@ -144,6 +148,8 @@ export function cloneMaze(maze: Maze): Maze {
     walls: maze.walls.map((row) => row.slice()),
     holes: maze.holes.map((hole) => ({ c: hole.c, r: hole.r })),
     tiles: maze.tiles.map((tile) => cloneTile(tile)),
+    hearts: maze.hearts.map((heart) => ({ c: heart.c, r: heart.r })),
+    coins: maze.coins.map((coin) => ({ c: coin.c, r: coin.r })),
     start: { ...maze.start },
     goal: { ...maze.goal },
     hatch: maze.hatch ? { ...maze.hatch } : null,
@@ -166,6 +172,12 @@ export function resizeMaze(maze: Maze, cols: number, rows: number): Maze {
     tiles: maze.tiles
       .filter((tile) => tile.c < nextCols && tile.r < nextRows)
       .map((tile) => cloneTile(tile)),
+    hearts: maze.hearts
+      .filter((heart) => heart.c < nextCols && heart.r < nextRows)
+      .map((heart) => ({ c: heart.c, r: heart.r })),
+    coins: maze.coins
+      .filter((coin) => coin.c < nextCols && coin.r < nextRows)
+      .map((coin) => ({ c: coin.c, r: coin.r })),
     start: clampCell(maze.start, nextCols, nextRows),
     goal: clampCell(maze.goal, nextCols, nextRows),
     hatch: maze.hatch ? clampCell(maze.hatch, nextCols, nextRows) : null,
@@ -197,6 +209,7 @@ export function resizeMaze(maze: Maze, cols: number, rows: number): Maze {
   next.tiles = next.tiles.filter(
     (tile) => !same(tile, next.start) && !same(tile, next.goal) && !(next.hatch && same(tile, next.hatch)),
   );
+  scrubCollectibles(next);
   scrubSwitchWalls(next);
   return next;
 }
@@ -217,6 +230,8 @@ export function insertColumn(maze: Maze, at: number): Maze {
   next.hatch = next.hatch ? shiftPointCol(next.hatch, index, 1) : null;
   next.holes = next.holes.map((hole) => shiftPointCol(hole, index, 1));
   next.tiles = next.tiles.map((tile) => shiftTileCol(tile, index, 1));
+  next.hearts = next.hearts.map((heart) => shiftPointCol(heart, index, 1));
+  next.coins = next.coins.map((coin) => shiftPointCol(coin, index, 1));
   openInsertSeamCol(next, index);
   sealBorder(next);
   scrubSwitchWalls(next);
@@ -235,6 +250,8 @@ export function insertRow(maze: Maze, at: number): Maze {
   next.hatch = next.hatch ? shiftPointRow(next.hatch, index, 1) : null;
   next.holes = next.holes.map((hole) => shiftPointRow(hole, index, 1));
   next.tiles = next.tiles.map((tile) => shiftTileRow(tile, index, 1));
+  next.hearts = next.hearts.map((heart) => shiftPointRow(heart, index, 1));
+  next.coins = next.coins.map((coin) => shiftPointRow(coin, index, 1));
   openInsertSeamRow(next, index);
   sealBorder(next);
   scrubSwitchWalls(next);
@@ -258,6 +275,12 @@ export function deleteColumn(maze: Maze, index: number): Maze {
   next.tiles = next.tiles
     .filter((tile) => tile.c !== index)
     .map((tile) => shiftTileCol(tile, index, -1));
+  next.hearts = next.hearts
+    .filter((heart) => heart.c !== index)
+    .map((heart) => shiftPointCol(heart, index, -1));
+  next.coins = next.coins
+    .filter((coin) => coin.c !== index)
+    .map((coin) => shiftPointCol(coin, index, -1));
   if (lostStart) next.start = spareAfterDelete(next, [next.goal, next.hatch]);
   if (lostGoal) next.goal = spareAfterDelete(next, [next.start, next.hatch]);
   next.start = clampCell(next.start, next.cols, next.rows);
@@ -286,6 +309,12 @@ export function deleteRow(maze: Maze, index: number): Maze {
   next.tiles = next.tiles
     .filter((tile) => tile.r !== index)
     .map((tile) => shiftTileRow(tile, index, -1));
+  next.hearts = next.hearts
+    .filter((heart) => heart.r !== index)
+    .map((heart) => shiftPointRow(heart, index, -1));
+  next.coins = next.coins
+    .filter((coin) => coin.r !== index)
+    .map((coin) => shiftPointRow(coin, index, -1));
   if (lostStart) next.start = spareAfterDelete(next, [next.goal, next.hatch]);
   if (lostGoal) next.goal = spareAfterDelete(next, [next.start, next.hatch]);
   next.start = clampCell(next.start, next.cols, next.rows);
@@ -332,6 +361,8 @@ export function moveColumn(maze: Maze, from: number, to: number): Maze {
   next.hatch = maze.hatch ? { c: mapC(maze.hatch.c), r: maze.hatch.r } : null;
   next.holes = maze.holes.map((hole) => ({ c: mapC(hole.c), r: hole.r }));
   next.tiles = maze.tiles.map((tile) => remapTileCol(tile, mapC));
+  next.hearts = maze.hearts.map((heart) => ({ c: mapC(heart.c), r: heart.r }));
+  next.coins = maze.coins.map((coin) => ({ c: mapC(coin.c), r: coin.r }));
   sealBorder(next);
   scrubSwitchWalls(next);
   return next;
@@ -372,6 +403,8 @@ export function moveRow(maze: Maze, from: number, to: number): Maze {
   next.hatch = maze.hatch ? { c: maze.hatch.c, r: mapR(maze.hatch.r) } : null;
   next.holes = maze.holes.map((hole) => ({ c: hole.c, r: mapR(hole.r) }));
   next.tiles = maze.tiles.map((tile) => remapTileRow(tile, mapR));
+  next.hearts = maze.hearts.map((heart) => ({ c: heart.c, r: mapR(heart.r) }));
+  next.coins = maze.coins.map((coin) => ({ c: coin.c, r: mapR(coin.r) }));
   sealBorder(next);
   scrubSwitchWalls(next);
   return next;
@@ -382,6 +415,8 @@ export function clearInterior(maze: Maze): void {
   sealBorder(maze);
   maze.holes = [];
   maze.tiles = [];
+  maze.hearts = [];
+  maze.coins = [];
 }
 
 export function interiorClosed(maze: Maze, axis: WallAxis, c: number, r: number): boolean {
@@ -407,6 +442,7 @@ export function placeStart(maze: Maze, cell: GridPoint): boolean {
   maze.start = { c: cell.c, r: cell.r };
   maze.holes = maze.holes.filter((hole) => !same(hole, cell));
   clearTile(maze, cell);
+  clearCollectibles(maze, cell);
   return true;
 }
 
@@ -415,6 +451,7 @@ export function placeGoal(maze: Maze, cell: GridPoint): boolean {
   maze.goal = { c: cell.c, r: cell.r };
   maze.holes = maze.holes.filter((hole) => !same(hole, cell));
   clearTile(maze, cell);
+  clearCollectibles(maze, cell);
   return true;
 }
 
@@ -424,7 +461,7 @@ export function setPit(maze: Maze, cell: GridPoint, pit: boolean): void {
     maze.holes = maze.holes.filter((hole) => !same(hole, cell));
     return;
   }
-  clearTile(maze, cell);
+  stripCell(maze, cell);
   if (!maze.holes.some((hole) => same(hole, cell))) maze.holes.push({ c: cell.c, r: cell.r });
 }
 
@@ -433,21 +470,64 @@ export function clearFloor(maze: Maze, cell: GridPoint): void {
   stripCell(maze, cell);
 }
 
+export function hasHeart(maze: Maze, cell: GridPoint): boolean {
+  return maze.hearts.some((heart) => same(heart, cell));
+}
+
+export function hasCoin(maze: Maze, cell: GridPoint): boolean {
+  return maze.coins.some((coin) => same(coin, cell));
+}
+
+/** Toggle or set a heart overlay on a walkable cell. */
+export function setHeart(maze: Maze, cell: GridPoint, on = true): void {
+  if (!collectibleOk(maze, cell)) return;
+  maze.coins = maze.coins.filter((coin) => !same(coin, cell));
+  if (!on) {
+    maze.hearts = maze.hearts.filter((heart) => !same(heart, cell));
+    return;
+  }
+  if (!hasHeart(maze, cell)) maze.hearts.push({ c: cell.c, r: cell.r });
+}
+
+/** Toggle or set a coin overlay on a walkable cell. */
+export function setCoin(maze: Maze, cell: GridPoint, on = true): void {
+  if (!collectibleOk(maze, cell)) return;
+  maze.hearts = maze.hearts.filter((heart) => !same(heart, cell));
+  if (!on) {
+    maze.coins = maze.coins.filter((coin) => !same(coin, cell));
+    return;
+  }
+  if (!hasCoin(maze, cell)) maze.coins.push({ c: cell.c, r: cell.r });
+}
+
+export function toggleHeart(maze: Maze, cell: GridPoint): void {
+  if (hasHeart(maze, cell)) setHeart(maze, cell, false);
+  else setHeart(maze, cell, true);
+}
+
+export function toggleCoin(maze: Maze, cell: GridPoint): void {
+  if (hasCoin(maze, cell)) setCoin(maze, cell, false);
+  else setCoin(maze, cell, true);
+}
+
 export function setBoost(maze: Maze, cell: GridPoint, dir: Direction): void {
   if (!paintable(maze, cell)) return;
-  stripCell(maze, cell);
+  clearTile(maze, cell);
+  maze.holes = maze.holes.filter((hole) => !same(hole, cell));
   maze.tiles.push({ kind: "boost", c: cell.c, r: cell.r, dir });
 }
 
 export function setIce(maze: Maze, cell: GridPoint): void {
   if (!paintable(maze, cell)) return;
-  stripCell(maze, cell);
+  clearTile(maze, cell);
+  maze.holes = maze.holes.filter((hole) => !same(hole, cell));
   maze.tiles.push({ kind: "ice", c: cell.c, r: cell.r });
 }
 
 export function setCrumble(maze: Maze, cell: GridPoint): void {
   if (!paintable(maze, cell)) return;
-  stripCell(maze, cell);
+  clearTile(maze, cell);
+  maze.holes = maze.holes.filter((hole) => !same(hole, cell));
   maze.tiles.push({ kind: "crumble", c: cell.c, r: cell.r });
 }
 
@@ -464,7 +544,8 @@ export function paintSwitch(maze: Maze, cell: GridPoint): void {
     clearTile(maze, cell);
     return;
   }
-  stripCell(maze, cell);
+  clearTile(maze, cell);
+  maze.holes = maze.holes.filter((hole) => !same(hole, cell));
   maze.tiles.push({ kind: "switch", c: cell.c, r: cell.r, tone: nextSwitchTone(maze), wall: null });
 }
 
@@ -507,7 +588,8 @@ export function paintWarp(maze: Maze, cell: GridPoint): void {
     clearTile(maze, cell);
     return;
   }
-  stripCell(maze, cell);
+  clearTile(maze, cell);
+  maze.holes = maze.holes.filter((hole) => !same(hole, cell));
   const pair = loneWarpPair(maze) ?? nextWarpPair(maze);
   maze.tiles.push({ kind: "warp", c: cell.c, r: cell.r, pair });
 }
@@ -526,7 +608,9 @@ export type LiftedTile =
   | { kind: "ice" }
   | { kind: "crumble" }
   | { kind: "block" }
-  | { kind: "switch"; tone: number; wall: WallRef | null };
+  | { kind: "switch"; tone: number; wall: WallRef | null }
+  | { kind: "heart" }
+  | { kind: "coin" };
 
 export function liftAt(
   maze: Maze,
@@ -539,12 +623,14 @@ export function liftAt(
   if (opts.goal && same(cell, maze.goal)) return { kind: "goal" };
   if (maze.holes.some((hole) => same(hole, cell))) return { kind: "pit" };
   const tile = tileAt(maze, cell.c, cell.r);
+  if (tile?.kind === "block") return { kind: "block" };
+  if (hasHeart(maze, cell)) return { kind: "heart" };
+  if (hasCoin(maze, cell)) return { kind: "coin" };
   if (!tile) return null;
   if (tile.kind === "boost") return { kind: "boost", dir: tile.dir };
   if (tile.kind === "warp") return { kind: "warp", pair: tile.pair };
   if (tile.kind === "ice") return { kind: "ice" };
   if (tile.kind === "crumble") return { kind: "crumble" };
-  if (tile.kind === "block") return { kind: "block" };
   return { kind: "switch", tone: tile.tone, wall: tile.wall ? { ...tile.wall } : null };
 }
 
@@ -555,6 +641,7 @@ export function canDropLifted(maze: Maze, from: GridPoint, to: GridPoint, lift: 
   if (same(from, to)) return true;
   if (lift.kind === "start") return !same(to, maze.goal) && !(maze.hatch && same(to, maze.hatch));
   if (lift.kind === "goal") return !same(to, maze.start) && !(maze.hatch && same(to, maze.hatch));
+  if (lift.kind === "heart" || lift.kind === "coin") return collectibleOk(maze, to);
   return !same(to, maze.start) && !same(to, maze.goal) && !(maze.hatch && same(to, maze.hatch));
 }
 
@@ -567,6 +654,17 @@ export function moveLifted(maze: Maze, from: GridPoint, to: GridPoint, lift: Lif
 
   if (lift.kind === "start") return placeStart(maze, to);
   if (lift.kind === "goal") return placeGoal(maze, to);
+
+  if (lift.kind === "heart") {
+    clearCollectibles(maze, from);
+    setHeart(maze, to, true);
+    return true;
+  }
+  if (lift.kind === "coin") {
+    clearCollectibles(maze, from);
+    setCoin(maze, to, true);
+    return true;
+  }
 
   stripCell(maze, from);
   stripCell(maze, to);
@@ -585,6 +683,8 @@ function liftStillAt(maze: Maze, cell: GridPoint, lift: LiftedTile): boolean {
   if (lift.kind === "goal") return same(cell, maze.goal);
   if (lift.kind === "hatch") return !!maze.hatch && same(cell, maze.hatch);
   if (lift.kind === "pit") return maze.holes.some((hole) => same(hole, cell));
+  if (lift.kind === "heart") return hasHeart(maze, cell);
+  if (lift.kind === "coin") return hasCoin(maze, cell);
   const tile = tileAt(maze, cell.c, cell.r);
   if (!tile || tile.kind !== lift.kind) return false;
   if (lift.kind === "boost") return tile.kind === "boost" && tile.dir === lift.dir;
@@ -633,10 +733,28 @@ function nextSwitchTone(maze: Maze): number {
 function stripCell(maze: Maze, cell: GridPoint): void {
   clearTile(maze, cell);
   maze.holes = maze.holes.filter((hole) => !same(hole, cell));
+  clearCollectibles(maze, cell);
 }
 
 function clearTile(maze: Maze, cell: GridPoint): void {
   maze.tiles = maze.tiles.filter((tile) => tile.c !== cell.c || tile.r !== cell.r);
+}
+
+function clearCollectibles(maze: Maze, cell: GridPoint): void {
+  maze.hearts = maze.hearts.filter((heart) => !same(heart, cell));
+  maze.coins = maze.coins.filter((coin) => !same(coin, cell));
+}
+
+function collectibleOk(maze: Maze, cell: GridPoint): boolean {
+  if (!paintable(maze, cell)) return false;
+  if (maze.holes.some((hole) => same(hole, cell))) return false;
+  const tile = tileAt(maze, cell.c, cell.r);
+  return tile?.kind !== "block";
+}
+
+function scrubCollectibles(maze: Maze): void {
+  maze.hearts = maze.hearts.filter((heart) => collectibleOk(maze, heart));
+  maze.coins = maze.coins.filter((coin) => collectibleOk(maze, coin) && !hasHeart(maze, coin));
 }
 
 function paintable(maze: Maze, cell: GridPoint): boolean {

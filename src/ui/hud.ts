@@ -35,6 +35,10 @@ export class Hud {
   private readonly levelsBtn: HTMLButtonElement;
   private readonly livesEl: HTMLElement;
   private readonly lifeCount: HTMLElement;
+  private readonly heartsEl: HTMLElement;
+  private readonly heartCount: HTMLElement;
+  private readonly coinsEl: HTMLElement;
+  private readonly coinCount: HTMLElement;
   private readonly tower: TowerMap;
   private readonly keycaps: HTMLElement[];
 
@@ -52,7 +56,9 @@ export class Hud {
           <p class="${styles.status}">
             <span class="${styles.story}" data-floor hidden></span>
             <span data-time>0:00.0</span>
-            <span class="${styles.lives}" data-lives hidden title="Lives">${iconSvg("heart", 14)}<span data-life-count>3</span></span>
+            <span class="${styles.lives}" data-lives hidden title="Hearts">${iconSvg("heart", 14)}<span data-life-count>3</span></span>
+            <span class="${styles.collect}" data-hearts hidden title="Hearts">${iconSvg("heart", 14)}<span data-heart-count>0</span></span>
+            <span class="${styles.collect} ${styles.coins}" data-coins hidden title="Coins">${iconSvg("coin", 14)}<span data-coin-count>0</span></span>
             <span class="${styles.note}" data-note hidden></span>
           </p>
         </div>
@@ -87,22 +93,22 @@ export class Hud {
         <div class="${styles.cluster}">
           <p class="${styles.controlLabel}">rotate</p>
           <div class="${styles.orbitRow}">
-            <kbd class="${styles.key} ${styles.orbit}" data-key="q">${iconSvg("angleDown", 14)}<span>Q</span></kbd>
-            <kbd class="${styles.key} ${styles.orbit}" data-key="e">${iconSvg("angleUp", 14)}<span>E</span></kbd>
+            <kbd class="${styles.key} ${styles.orbit}" data-key="q">${iconSvg("angleDown", 10)}<span>Q</span></kbd>
+            <kbd class="${styles.key} ${styles.orbit}" data-key="e">${iconSvg("angleUp", 10)}<span>E</span></kbd>
           </div>
         </div>
         <div class="${styles.cluster}">
           <p class="${styles.controlLabel}">orbit</p>
           <div class="${styles.orbitRow}">
-            <kbd class="${styles.key} ${styles.orbit}" data-key="z">${iconSvg("orbitLeft", 14)}<span>Z</span></kbd>
-            <kbd class="${styles.key} ${styles.orbit}" data-key="c">${iconSvg("orbitRight", 14)}<span>C</span></kbd>
+            <kbd class="${styles.key} ${styles.orbit}" data-key="z">${iconSvg("orbitLeft", 10)}<span>Z</span></kbd>
+            <kbd class="${styles.key} ${styles.orbit}" data-key="c">${iconSvg("orbitRight", 10)}<span>C</span></kbd>
           </div>
         </div>
         <div class="${styles.cluster}">
           <p class="${styles.controlLabel}">zoom</p>
           <div class="${styles.orbitRow}">
-            <kbd class="${styles.key} ${styles.orbit}" data-key="-">${iconSvg("minus", 14)}<span>-</span></kbd>
-            <kbd class="${styles.key} ${styles.orbit}" data-key="=">${iconSvg("plus", 14)}<span>+</span></kbd>
+            <kbd class="${styles.key} ${styles.orbit}" data-key="-">${iconSvg("minus", 10)}<span>-</span></kbd>
+            <kbd class="${styles.key} ${styles.orbit}" data-key="=">${iconSvg("plus", 10)}<span>+</span></kbd>
           </div>
         </div>
       </div>
@@ -122,6 +128,10 @@ export class Hud {
     this.levelsBtn = this.require("[data-levels]");
     this.livesEl = this.require("[data-lives]");
     this.lifeCount = this.require("[data-life-count]");
+    this.heartsEl = this.require("[data-hearts]");
+    this.heartCount = this.require("[data-heart-count]");
+    this.coinsEl = this.require("[data-coins]");
+    this.coinCount = this.require("[data-coin-count]");
     this.tower = new TowerMap(this.root);
     this.require<HTMLButtonElement>("[data-level]").addEventListener("click", () => this.callbacks.onLevel());
     this.require<HTMLButtonElement>("[data-reset]").addEventListener("click", () => this.callbacks.onReset());
@@ -154,18 +164,41 @@ export class Hud {
     this.shareBtn.hidden = active;
     this.winsBtn.hidden = active;
     if (active) return;
-    this.livesEl.hidden = true;
     this.tower.hide();
   }
 
   setLives(count: number, pulse = false): void {
     this.livesEl.hidden = false;
+    this.heartsEl.hidden = true;
     this.lifeCount.textContent = String(count);
-    this.livesEl.setAttribute("aria-label", `${count} ${count === 1 ? "life" : "lives"}`);
-    if (!pulse) return;
-    this.livesEl.removeAttribute("data-pulse");
-    void this.livesEl.offsetWidth;
-    this.livesEl.dataset.pulse = "in";
+    this.livesEl.setAttribute("aria-label", `${count} ${count === 1 ? "heart" : "hearts"}`);
+    this.pulse(this.livesEl, pulse);
+  }
+
+  clearLives(): void {
+    this.livesEl.hidden = true;
+  }
+
+  setHearts(_got: number, _need: number, _pulse = false): void {
+    this.heartsEl.hidden = true;
+  }
+
+  setCoins(got: number, total: number, pulse = false): void {
+    if (total <= 0) {
+      this.coinsEl.hidden = true;
+      return;
+    }
+    this.coinsEl.hidden = false;
+    this.coinCount.textContent = `${got}/${total}`;
+    this.coinsEl.setAttribute("aria-label", `${got} of ${total} coins`);
+    this.pulse(this.coinsEl, pulse);
+  }
+
+  private pulse(el: HTMLElement, on: boolean): void {
+    if (!on) return;
+    el.removeAttribute("data-pulse");
+    void el.offsetWidth;
+    el.dataset.pulse = "in";
   }
 
   setTower(sizes: number[], current: number): void {

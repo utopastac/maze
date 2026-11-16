@@ -16,22 +16,28 @@ import {
   FLOOR_MAX,
   FLOOR_MIN,
   LEVEL_NAME_MAX,
+  MAX_HEARTS_CAP,
   cloneTower,
   levelNameOf,
+  maxHeartsOf,
   repairTower,
   setLevelName,
+  setMaxHearts,
   type Tower,
 } from "./tower.ts";
 
-const VERSION = 3;
+const VERSION = 4;
 const LEGACY_VERSION = 1;
+const THEME_VERSION = 3;
 const NAMED_VERSION = 3;
+const COLLECTIBLE_VERSION = 4;
 const LEVEL_NAME_BITS = 6;
 const LEVEL_PREFIX = "#m.";
 /** Longest base64url payload we will put in a hash. A full 16×16 tower stays under this. */
 const MAX_LEVEL_CODE = 12_000;
 const COORD_BITS = 5;
 const COUNT_BITS = 9;
+const MAX_HEARTS_BITS = 7;
 
 const PIT = 1;
 const BOOST = 2;
@@ -62,6 +68,7 @@ export function encodeLevel(tower: Tower): string | null {
     const writer = new BitWriter();
     writer.write(VERSION, 8);
     writeLevelName(writer, levelNameOf(clean));
+    writer.write(maxHeartsOf(clean), MAX_HEARTS_BITS);
     writer.write(clean.floors.length, 3);
     for (const floor of clean.floors) writeFloor(writer, floor);
     const checksum = writer.checksum();
@@ -82,12 +89,18 @@ export function decodeLevel(code: string): Tower | null {
   const version = reader.read(8);
   if (
     version === null
-    || (version !== VERSION && version !== LEGACY_VERSION && version !== 2)
+    || (version !== VERSION && version !== LEGACY_VERSION && version !== 2 && version !== 3)
   ) return null;
   let name: string | null = null;
   if (version >= NAMED_VERSION) {
     name = readLevelName(reader);
     if (name === null) return null;
+  }
+  let maxHearts = 0;
+  if (version >= COLLECTIBLE_VERSION) {
+    const lives = reader.read(MAX_HEARTS_BITS);
+    if (lives === null || lives > MAX_HEARTS_CAP) return null;
+    maxHearts = lives;
   }
   const floors = reader.read(3);
   if (floors === null || floors < FLOOR_MIN || floors > FLOOR_MAX) return null;
@@ -101,6 +114,7 @@ export function decodeLevel(code: string): Tower | null {
   const expect = reader.checksum();
   const checksum = reader.read(16);
   if (checksum === null || checksum !== expect || !reader.done()) return null;
+  setMaxHearts(tower, maxHearts);
   repairTower(tower);
   return tower;
 }
@@ -238,6 +252,8 @@ function writeFloor(writer: BitWriter, maze: Maze): void {
   const features = featuresOf(maze);
   writer.write(features.length, COUNT_BITS);
   for (const feature of features) writeFeature(writer, feature);
+  writeCollectibles(writer, maze.hearts, maze);
+  writeCollectibles(writer, maze.coins, maze);
 }
 
 function writeFeature(writer: BitWriter, feature: Feature): void {
@@ -325,7 +341,7 @@ function linkedWall(maze: Maze, wall: WallRef | null): WallRef | null {
 
 function readFloor(reader: BitReader, version: number): Maze | null {
   let theme = DEFAULT_FLOOR_THEME;
-  if (version >= VERSION) {
+  if (version >= THEME_VERSION) {
     const themeBits = reader.read(3);
     if (themeBits === null) return null;
     theme = themeFromIndex(themeBits);
@@ -358,6 +374,8 @@ function readFloor(reader: BitReader, version: number): Maze | null {
     walls,
     holes: [],
     tiles: [],
+    hearts: [],
+    coins: [],
     start: { c: startC, r: startR },
     goal: { c: goalC, r: goalR },
     hatch,
@@ -385,7 +403,48 @@ function readFloor(reader: BitReader, version: number): Maze | null {
     const feature = readFeature(reader, maze, seen);
     if (!feature) return null;
   }
+  if (version >= COLLECTIBLE_VERSION) {
+    const taken = new Set<string>();
+    if (!readCollectibles(reader, maze, maze.hearts, taken)) return null;
+    if (!readCollectibles(reader, maze, maze.coins, taken)) return null;
+  }
   return maze;
+}
+
+function writeCollectibles(
+  writer: BitWriter,
+  points: { c: number; r: number }[],
+  maze: Maze,
+): void {
+  if (points.length >= 2 ** COUNT_BITS) throw new Error("collectibles");
+  writer.write(points.length, COUNT_BITS);
+  for (const point of points) {
+    if (point.c < 0 || point.r < 0 || point.c >= maze.cols || point.r >= maze.rows) {
+      throw new Error("collectible");
+    }
+    writer.write(point.c, COORD_BITS);
+    writer.write(point.r, COORD_BITS);
+  }
+}
+
+function readCollectibles(
+  reader: BitReader,
+  maze: Maze,
+  into: { c: number; r: number }[],
+  taken: Set<string>,
+): boolean {
+  const count = reader.read(COUNT_BITS);
+  if (count === null || count > maze.cols * maze.rows) return false;
+  for (let i = 0; i < count; i += 1) {
+    const c = reader.read(COORD_BITS);
+    const r = reader.read(COORD_BITS);
+    if (c === null || r === null || !inside(maze.cols, maze.rows, c, r)) return false;
+    const id = `${c},${r}`;
+    if (taken.has(id)) return false;
+    taken.add(id);
+    into.push({ c, r });
+  }
+  return true;
 }
 
 function readFeature(reader: BitReader, maze: Maze, seen: Set<string>): boolean {

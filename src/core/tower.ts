@@ -15,10 +15,14 @@ import {
 export interface Tower {
   floors: Maze[];
   name?: string;
+  /** Starting lives for the whole tower (0 = unlimited). Collectable hearts add lives. */
+  maxHearts?: number;
 }
 
 export const FLOOR_MIN = 1;
-export const FLOOR_MAX = 4;
+export const FLOOR_MAX = 5;
+export const MAX_HEARTS_CAP = 99;
+export const DEFAULT_MAX_HEARTS = 3;
 export const TOWER_FLOORS = 3;
 export const DEFAULT_LEVEL_NAME = "Untitled";
 export const LEVEL_NAME_MAX = 40;
@@ -52,7 +56,28 @@ export function generateTower(seed: number, cols = 7, rows = 7, count = TOWER_FL
 export function cloneTower(tower: Tower): Tower {
   const next: Tower = { floors: tower.floors.map((floor) => cloneMaze(floor)) };
   if (tower.name !== undefined) next.name = tower.name;
+  if (tower.maxHearts !== undefined) next.maxHearts = tower.maxHearts;
   return next;
+}
+
+export function heartTotal(tower: Tower): number {
+  return tower.floors.reduce((sum, floor) => sum + floor.hearts.length, 0);
+}
+
+export function coinTotal(tower: Tower): number {
+  return tower.floors.reduce((sum, floor) => sum + floor.coins.length, 0);
+}
+
+export function maxHeartsOf(tower: Tower): number {
+  const value = tower.maxHearts ?? 0;
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.min(MAX_HEARTS_CAP, Math.max(0, Math.round(value)));
+}
+
+export function setMaxHearts(tower: Tower, value: number): void {
+  const next = Math.min(MAX_HEARTS_CAP, Math.max(0, Math.round(value)));
+  if (next <= 0) delete tower.maxHearts;
+  else tower.maxHearts = next;
 }
 
 export function resizeTower(tower: Tower, cols: number, rows: number): Tower {
@@ -119,6 +144,8 @@ export function addFloor(tower: Tower): Tower {
   above.hatch = landing;
   above.holes = above.holes.filter((hole) => !same(hole, landing));
   above.tiles = above.tiles.filter((tile) => !same(tile, landing));
+  above.hearts = above.hearts.filter((heart) => !same(heart, landing));
+  above.coins = above.coins.filter((coin) => !same(coin, landing));
   const seed = Math.floor(Math.random() * 0x7fffffff);
   next.floors.push(carveFloor(seed, above.cols, above.rows, landing));
   repairTower(next);
@@ -143,6 +170,8 @@ export function setHatch(tower: Tower, floorIndex: number, cell: GridPoint): voi
   floor.goal = { c: cell.c, r: cell.r };
   floor.holes = floor.holes.filter((hole) => !same(hole, cell));
   floor.tiles = floor.tiles.filter((tile) => !same(tile, cell));
+  floor.hearts = floor.hearts.filter((heart) => !same(heart, cell));
+  floor.coins = floor.coins.filter((coin) => !same(coin, cell));
   repairTower(tower);
 }
 
@@ -172,7 +201,21 @@ export function repairTower(tower: Tower): void {
     }
     floor.holes = floor.holes.filter((hole) => !same(hole, floor.start) && !same(hole, floor.goal));
     floor.tiles = floor.tiles.filter((tile) => !same(tile, floor.start) && !same(tile, floor.goal));
+    floor.hearts = floor.hearts.filter(
+      (heart) => !same(heart, floor.start) && !same(heart, floor.goal)
+        && !(floor.hatch && same(heart, floor.hatch))
+        && !floor.holes.some((hole) => same(hole, heart))
+        && floor.tiles.every((tile) => tile.kind !== "block" || !same(tile, heart)),
+    );
+    floor.coins = floor.coins.filter(
+      (coin) => !same(coin, floor.start) && !same(coin, floor.goal)
+        && !(floor.hatch && same(coin, floor.hatch))
+        && !floor.holes.some((hole) => same(hole, coin))
+        && floor.tiles.every((tile) => tile.kind !== "block" || !same(tile, coin))
+        && !floor.hearts.some((heart) => same(heart, coin)),
+    );
   }
+  setMaxHearts(tower, tower.maxHearts ?? 0);
 }
 
 /** Map a cell on `from` to the overlapping cell on centered `onto`. */

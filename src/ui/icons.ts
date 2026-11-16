@@ -12,6 +12,7 @@ import {
   Circle,
   ClipboardCopy,
   ClipboardPaste,
+  Coins,
   Compass,
   Download,
   Eraser,
@@ -51,6 +52,7 @@ export type IconName =
   | "campaign"
   | "levels"
   | "heart"
+  | "coin"
   | "motion"
   | "settings"
   | "edit"
@@ -93,6 +95,7 @@ const NODES: Record<IconName, IconNode> = {
   campaign: Castle,
   levels: LayoutGrid,
   heart: Heart,
+  coin: Coins,
   motion: Smartphone,
   settings: SlidersHorizontal,
   edit: Pencil,
