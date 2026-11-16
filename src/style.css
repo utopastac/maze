@@ -34,14 +34,88 @@
   --safe-right: env(safe-area-inset-right, 0px);
   --font: "Geist Pixel", ui-monospace, monospace;
   --maze-void: #000000;
-  --maze-void-deep: #12081f;
-  --maze-void-violet: #9a4dff;
-  --maze-void-magenta: #ff4fb8;
-  --maze-void-coral: #ff6b4a;
-  --maze-void-amber: #ffc14a;
-  --maze-void-cyan: #3af0ff;
-  --maze-void-blue: #5a7fff;
-  --maze-void-indigo: #3a2a8a;
+  --maze-void-deep: var(--sky-neon-deep);
+
+  --sky-neon-deep: #12081f;
+  --sky-neon-0: #9a4dff;
+  --sky-neon-1: #ff4fb8;
+  --sky-neon-2: #3af0ff;
+  --sky-neon-3: #ff6b4a;
+  --sky-neon-4: #5a7fff;
+  --sky-neon-5: #ffc14a;
+  --sky-neon-6: #3a2a8a;
+
+  --sky-sunset-deep: #1a0a08;
+  --sky-sunset-0: #ff5a2a;
+  --sky-sunset-1: #ff9a3c;
+  --sky-sunset-2: #ffd36a;
+  --sky-sunset-3: #ff4f7a;
+  --sky-sunset-4: #c44aff;
+  --sky-sunset-5: #ff7a45;
+  --sky-sunset-6: #5a1830;
+
+  --sky-aurora-deep: #060814;
+  --sky-aurora-0: #5dffb0;
+  --sky-aurora-1: #4ad4c8;
+  --sky-aurora-2: #9a7dff;
+  --sky-aurora-3: #ff7ad9;
+  --sky-aurora-4: #6aafdf;
+  --sky-aurora-5: #3dff8a;
+  --sky-aurora-6: #1a2a5a;
+
+  --sky-ocean-deep: #041018;
+  --sky-ocean-0: #1ec8ff;
+  --sky-ocean-1: #2de2c8;
+  --sky-ocean-2: #4a7dff;
+  --sky-ocean-3: #7ad4ff;
+  --sky-ocean-4: #0a8f9a;
+  --sky-ocean-5: #b8f0ff;
+  --sky-ocean-6: #0a2a48;
+
+  --sky-candy-deep: #1a1020;
+  --sky-candy-0: #ff8ad4;
+  --sky-candy-1: #c9a7ff;
+  --sky-candy-2: #7dffe0;
+  --sky-candy-3: #ffb4a2;
+  --sky-candy-4: #8ec5ff;
+  --sky-candy-5: #ffe08a;
+  --sky-candy-6: #5a3a6a;
+
+  --sky-ember-deep: #120606;
+  --sky-ember-0: #ff3a2a;
+  --sky-ember-1: #ff7a1a;
+  --sky-ember-2: #ffc14a;
+  --sky-ember-3: #ff5a5a;
+  --sky-ember-4: #c42a1a;
+  --sky-ember-5: #ff9a4a;
+  --sky-ember-6: #4a1010;
+
+  --sky-ice-deep: #0a1218;
+  --sky-ice-0: #b8e8ff;
+  --sky-ice-1: #7ad4ff;
+  --sky-ice-2: #d8e8f4;
+  --sky-ice-3: #a0c4e8;
+  --sky-ice-4: #e8f4ff;
+  --sky-ice-5: #c9d4ff;
+  --sky-ice-6: #2a3a55;
+
+  --sky-noir-deep: #0a0a0c;
+  --sky-noir-0: #6a6a72;
+  --sky-noir-1: #9a9aa4;
+  --sky-noir-2: #3a3a42;
+  --sky-noir-3: #c4c4cc;
+  --sky-noir-4: #52525a;
+  --sky-noir-5: #ffbc61;
+  --sky-noir-6: #1a1a1e;
+
+  --sky-rainbow-deep: #10081a;
+  --sky-rainbow-0: #ff3b3b;
+  --sky-rainbow-1: #ff8a1a;
+  --sky-rainbow-2: #ffe14a;
+  --sky-rainbow-3: #3dff8a;
+  --sky-rainbow-4: #2de2ff;
+  --sky-rainbow-5: #4a6dff;
+  --sky-rainbow-6: #b44aff;
   --maze-floor: #2c333b;
   --maze-grout: #514c47;
   --maze-start: #3a4652;

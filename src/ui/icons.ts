@@ -24,6 +24,7 @@ import {
   Snowflake,
   MapPin,
   Minus,
+  MousePointer2,
   NotebookPen,
   Pencil,
   Plus,
@@ -53,6 +54,8 @@ export type IconName =
   | "settings"
   | "edit"
   | "author"
+  | "move"
+  | "erase"
   | "wall"
   | "pit"
   | "start"
@@ -93,6 +96,8 @@ const NODES: Record<IconName, IconNode> = {
   edit: Pencil,
   author: NotebookPen,
   wins: Images,
+  move: MousePointer2,
+  erase: Eraser,
   wall: BrickWall,
   pit: Circle,
   start: MapPin,

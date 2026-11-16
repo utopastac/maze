@@ -70,10 +70,12 @@ export interface EditorCallbacks {
 }
 
 type PaletteKind = "pit" | "boost" | "warp" | "ice" | "crumble" | "switch" | "hatch";
+type EditorTool = "move" | "erase" | "wall" | PaletteKind;
 
-const HINT_TITLE: Record<PaletteKind | "select" | "erase" | "warp-pair" | "switch-pair", string> = {
-  select: "Select",
+const HINT_TITLE: Record<EditorTool | "warp-pair" | "switch-pair", string> = {
+  move: "Move",
   erase: "Erase",
+  wall: "Wall",
   pit: "Pit",
   boost: "Boost",
   warp: "Warp",
@@ -118,9 +120,17 @@ const PALETTE: readonly { id: PaletteKind; label: string; icon: IconName }[] = [
   { id: "hatch", label: "Hatch", icon: "hatch" },
 ];
 
-const HINT_SELECT = "Click a cell for tile options. Drag tiles, walls, or row/column handles to edit.";
-const HINT_ERASE = "Erase is on. Click tiles or walls to clear them.";
-const HINT_BRUSH: Record<PaletteKind, string> = {
+const TOOLS: readonly { id: EditorTool; label: string; icon: IconName }[] = [
+  { id: "move", label: "Move", icon: "move" },
+  { id: "erase", label: "Erase", icon: "erase" },
+  { id: "wall", label: "Wall", icon: "wall" },
+  ...PALETTE,
+];
+
+const HINT_BRUSH: Record<EditorTool, string> = {
+  move: "Click a cell for tile options. Drag tiles or row/column handles to edit.",
+  erase: "Click tiles or walls to clear them.",
+  wall: "Click or drag along edges to draw or clear walls.",
   pit: "Paint pits the ball can fall through.",
   boost: "Pick a direction, then paint boost lanes.",
   warp: "Click two cells to link a warp. Click a warp to remove that end.",
@@ -151,8 +161,7 @@ export class LevelEditor {
   private readonly hint: HTMLElement;
   private readonly hintTitle: HTMLElement;
   private readonly hintBody: HTMLElement;
-  private readonly paletteButtons = new Map<PaletteKind, HTMLButtonElement>();
-  private readonly eraseBtn: HTMLButtonElement;
+  private readonly paletteButtons = new Map<EditorTool, HTMLButtonElement>();
   private readonly cells = new Map<string, HTMLButtonElement>();
   private readonly walls = new Map<string, HTMLElement>();
   private readonly colReadout: HTMLElement;
@@ -194,8 +203,7 @@ export class LevelEditor {
   };
   private floorIndex = 0;
   private mode: EditorMode = "share";
-  private erase = false;
-  private brush: PaletteKind | null = null;
+  private brush: EditorTool = "move";
   private boostDir: Direction = "n";
   private readonly dirs: HTMLElement;
   private readonly themeSelect: HTMLSelectElement;
@@ -241,8 +249,7 @@ export class LevelEditor {
                   <select class="${styles.themeSelect}" data-theme-select aria-label="Floor theme"></select>
                 </label>
                 <h2 class="${styles.panelTitle}">Tools</h2>
-                <button type="button" class="${styles.erase}" data-erase aria-pressed="false">${iconSvg("floor")}Erase</button>
-                <div class="${styles.palette}" role="list" aria-label="Tiles" data-palette></div>
+                <div class="${styles.palette}" role="list" aria-label="Tools" data-palette></div>
                 <div class="${styles.dirs}" data-dirs role="radiogroup" aria-label="Boost direction" hidden>
                   <span class="${styles.dirLabel}">Boost dir</span>
                 </div>
@@ -329,13 +336,11 @@ export class LevelEditor {
     this.edgeEast = this.require("[data-append='col']");
     this.deleteBtn = this.require("[data-delete-line]");
     this.selectBox = this.require("[data-select-box]");
-    this.eraseBtn = this.require("[data-erase]");
     this.tileMenu = this.require("[data-tile-menu]");
     this.mountPalette();
     this.mountTileMenu();
     this.mountDirections();
     this.mountThemes();
-    this.eraseBtn.addEventListener("click", () => this.setErase(!this.erase));
     this.require("[data-scrim]").addEventListener("click", this.requestClose);
     this.require("[data-close]").addEventListener("click", this.requestClose);
     this.require("[data-clear]").addEventListener("click", () => {
@@ -429,7 +434,7 @@ export class LevelEditor {
     this.board.addEventListener("pointerleave", this.onPairHoverLeave);
     this.board.addEventListener("contextmenu", (event) => event.preventDefault());
     window.addEventListener("keydown", this.onKey, true);
-    this.setErase(false);
+    this.syncPalette();
   }
 
   isOpen(): boolean {
@@ -455,8 +460,7 @@ export class LevelEditor {
       }
     }
     this.floorIndex = 0;
-    this.brush = null;
-    this.setErase(false);
+    this.brush = "move";
     this.syncName();
     this.syncSize();
     this.syncFloors();
@@ -493,17 +497,17 @@ export class LevelEditor {
 
   private mountPalette(): void {
     const host = this.require("[data-palette]");
-    for (const tile of PALETTE) {
+    for (const tool of TOOLS) {
       const button = document.createElement("button");
       button.type = "button";
       button.className = styles.swatch;
-      button.dataset.palette = tile.id;
-      button.dataset.kind = tile.id;
+      button.dataset.palette = tool.id;
+      button.dataset.kind = tool.id;
       button.setAttribute("role", "radio");
-      button.title = tile.label;
-      button.innerHTML = `${iconSvg(tile.icon)}<span>${tile.label}</span>`;
-      button.addEventListener("click", () => this.setBrush(tile.id));
-      this.paletteButtons.set(tile.id, button);
+      button.title = tool.label;
+      button.innerHTML = `${iconSvg(tool.icon)}<span>${tool.label}</span>`;
+      button.addEventListener("click", () => this.setBrush(tool.id));
+      this.paletteButtons.set(tool.id, button);
       host.append(button);
     }
   }
@@ -582,10 +586,6 @@ export class LevelEditor {
 
   private enterPairing(kind: "switch" | "warp"): void {
     this.brush = kind;
-    this.erase = false;
-    this.board.dataset.erase = "false";
-    this.eraseBtn.classList.toggle("selected", false);
-    this.eraseBtn.setAttribute("aria-pressed", "false");
     this.dirs.hidden = true;
     this.hideTileMenu();
     this.syncFloors();
@@ -598,7 +598,7 @@ export class LevelEditor {
   private cancelPairing(): boolean {
     if (!this.pairing()) return false;
     cancelPendingPair(this.draft);
-    this.brush = null;
+    this.brush = "move";
     this.stroke = null;
     this.brushHover = null;
     this.syncFloors();
@@ -682,27 +682,10 @@ export class LevelEditor {
     this.themeSelect.value = theme;
   }
 
-  private setErase(on: boolean): void {
-    if (on && this.pairing()) return;
-    this.erase = on;
-    this.board.dataset.erase = String(on);
-    this.eraseBtn.classList.toggle("selected", on);
-    this.eraseBtn.setAttribute("aria-pressed", String(on));
-    if (on) {
-      this.stroke = null;
-      this.brushHover = null;
-    }
-    this.hideTileMenu();
-    this.syncPalette();
-    this.syncCells();
-    this.refreshHint();
-  }
-
-  private setBrush(kind: PaletteKind): void {
+  private setBrush(kind: EditorTool): void {
     if (this.pairing() && kind !== this.pairing()) return;
-    this.brush = this.brush === kind ? null : kind;
+    this.brush = kind;
     if (this.pairing() && this.brush !== this.pairing()) this.brush = this.pairing();
-    this.setErase(false);
     this.dirs.hidden = this.brush !== "boost";
     if (!this.hoverBrush()) this.brushHover = null;
     this.hideTileMenu();
@@ -799,15 +782,7 @@ export class LevelEditor {
       this.setHint(HINT_TITLE["switch-pair"], "Click a wall to link. Esc cancels.");
       return;
     }
-    if (this.erase) {
-      this.setHint(HINT_TITLE.erase, HINT_ERASE);
-      return;
-    }
-    if (this.brush) {
-      this.setHint(HINT_TITLE[this.brush], HINT_BRUSH[this.brush]);
-      return;
-    }
-    this.setHint(HINT_TITLE.select, HINT_SELECT);
+    this.setHint(HINT_TITLE[this.brush], HINT_BRUSH[this.brush]);
   }
 
   private get draft(): Maze {
@@ -1261,19 +1236,18 @@ export class LevelEditor {
     const last = this.tower.floors.length - 1;
     const hatchOk = this.floorIndex !== last;
     const pairing = this.pairing();
-    if (this.brush === "hatch" && !hatchOk) this.brush = null;
+    if (this.brush === "hatch" && !hatchOk) this.brush = "move";
     for (const [id, button] of this.paletteButtons) {
       const hide = id === "hatch" && !hatchOk;
-      const on = !this.erase && this.brush === id;
+      const on = this.brush === id;
       button.hidden = hide;
       button.disabled = hide || pairing !== null;
       button.classList.toggle("selected", on);
       button.setAttribute("aria-checked", String(on));
     }
     this.syncFloorLocks(pairing !== null);
-    this.eraseBtn.disabled = pairing !== null;
-    this.dirs.hidden = this.erase || this.brush !== "boost" || pairing !== null;
-    this.board.dataset.brush = this.erase ? "erase" : (this.brush ?? "");
+    this.dirs.hidden = this.brush !== "boost" || pairing !== null;
+    this.board.dataset.brush = this.brush;
     if (pairing) this.board.dataset.pairing = pairing;
     else delete this.board.dataset.pairing;
     if (pairing === "switch") {
@@ -1502,7 +1476,7 @@ export class LevelEditor {
       if (wall?.dataset.link === "true") {
         this.stroke = "close";
         this.bindSwitch(wall);
-        if (!pendingSwitch(this.draft)) this.brush = null;
+        if (!pendingSwitch(this.draft)) this.brush = "move";
         this.syncPalette();
         this.syncCells();
         this.syncWalls();
@@ -1525,9 +1499,9 @@ export class LevelEditor {
       return;
     }
 
-    if (!this.erase && !this.brush && this.beginTileDrag(event.clientX, event.clientY)) return;
+    if (this.brush === "move" && this.beginTileDrag(event.clientX, event.clientY)) return;
 
-    if (!this.erase) {
+    if (this.brush === "wall") {
       this.beginWallDrag(event.clientX, event.clientY);
       if (this.wallDrag) return;
     }
@@ -1558,13 +1532,14 @@ export class LevelEditor {
   };
 
   private hoverBrush(): PaletteKind | null {
-    if (this.erase || this.pairing() === "switch") return null;
+    if (this.pairing() === "switch") return null;
     if (this.pairing() === "warp") return "warp";
+    if (this.brush === "move" || this.brush === "erase" || this.brush === "wall") return null;
     return this.brush;
   }
 
   private selectHoverActive(): boolean {
-    return !this.erase && !this.brush && !this.pairing() && !this.tileDrag;
+    return this.brush === "move" && !this.pairing() && !this.tileDrag;
   }
 
   private updateBrushHover(x: number, y: number): void {
@@ -1667,7 +1642,7 @@ export class LevelEditor {
     }
     const clickAt = drag?.from ?? (!hadWallDrag && !hadStroke ? this.cellAt(event.clientX, event.clientY) : null);
     this.clearTileDrag();
-    if (!this.pairing() && !this.erase && !this.brush && !hadWallDrag && !hadStroke && clickAt) {
+    if (!this.pairing() && this.brush === "move" && !hadWallDrag && !hadStroke && clickAt) {
       this.openTileMenu(clickAt);
     }
   };
@@ -1684,7 +1659,7 @@ export class LevelEditor {
 
   private applyPaint(x: number, y: number): void {
     if (this.pairing() === "switch") return;
-    if (this.erase) {
+    if (this.brush === "erase") {
       const wall = elementAt(x, y, "data-wall");
       if (wall) {
         const axis: WallAxis = wall.dataset.axis === "h" ? "h" : "v";
@@ -1706,7 +1681,7 @@ export class LevelEditor {
     }
 
     const brush = this.brush;
-    if (!brush) return;
+    if (brush === "move" || brush === "wall") return;
     if ((brush === "warp" || brush === "switch") && this.stroke !== null) return;
     if (this.pairing() === "warp" && brush !== "warp") return;
 

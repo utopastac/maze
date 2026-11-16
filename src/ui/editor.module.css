@@ -357,48 +357,6 @@ button.step {
   }
 }
 
-.erase {
-  appearance: none;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--control-radius);
-  margin: 0;
-  width: 100%;
-  height: 40px;
-  padding: 0 14px 0 12px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 8px;
-  background: var(--glass);
-  color: var(--ink);
-  font: inherit;
-  font-size: 14px;
-  cursor: pointer;
-
-  & :is(svg) {
-    width: 18px;
-    height: 18px;
-  }
-
-  &:global(.selected),
-  &[aria-pressed="true"] {
-    color: var(--seam);
-    border-color: color-mix(in srgb, var(--seam) 50%, transparent);
-    background: color-mix(in srgb, var(--glass) 70%, var(--seam) 10%);
-  }
-
-  &:focus-visible {
-    outline: 1px solid var(--seam);
-    outline-offset: 1px;
-  }
-
-  @media (hover: hover) and (pointer: fine) {
-    &:hover:not(:disabled) {
-      background: color-mix(in srgb, var(--glass) 80%, var(--ink) 8%);
-    }
-  }
-}
-
 .palette {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1001,7 +959,7 @@ button.deleteBtn {
     --maze-frame: var(--theme-suburbia-frame);
   }
 
-  &[data-erase="true"] .cell,
+  &[data-brush="erase"] .cell,
   &[data-brush="pit"] .cell,
   &[data-brush="boost"] .cell,
   &[data-brush="ice"] .cell,
@@ -1015,8 +973,7 @@ button.deleteBtn {
     cursor: pointer;
   }
 
-  &:not([data-erase="true"]):not([data-brush]) .cell:not([data-kind="floor"]),
-  &[data-brush=""] .cell:not([data-kind="floor"]) {
+  &[data-brush="move"] .cell:not([data-kind="floor"]) {
     cursor: grab;
   }
 
@@ -1026,11 +983,13 @@ button.deleteBtn {
   }
 
   & .wall {
-    pointer-events: auto;
-    cursor: pointer;
+    pointer-events: none;
+    cursor: default;
   }
 
-  &[data-erase="true"] .wall {
+  &[data-brush="erase"] .wall,
+  &[data-brush="wall"] .wall {
+    pointer-events: auto;
     cursor: crosshair;
   }
 
@@ -1103,11 +1062,13 @@ button.deleteBtn {
   }
 
   @media (hover: hover) and (pointer: fine) {
-    &:not([data-erase="true"]):not([data-pairing]) .wall:hover {
+    &[data-brush="wall"] .wall:hover,
+    &[data-brush="erase"] .wall:hover {
       z-index: 6;
     }
 
-    &:not([data-erase="true"]):not([data-pairing]) .wall:hover::before {
+    &[data-brush="wall"] .wall:hover::before,
+    &[data-brush="erase"] .wall:hover::before {
       opacity: 1;
       background: var(--seam);
     }

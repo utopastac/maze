@@ -14,7 +14,8 @@ export type SettingKey =
   | "pixels"
   | "shade"
   | "skyPixels"
-  | "skyShade";
+  | "skyShade"
+  | "skyTheme";
 
 export type SettingGroup = "Controls" | "Physics" | "Camera" | "Picture";
 
@@ -27,6 +28,19 @@ export interface SettingSpec {
   step: number;
   format: (value: number) => string;
 }
+
+export const SKY_THEMES = [
+  { id: "neon", label: "Neon" },
+  { id: "sunset", label: "Sunset" },
+  { id: "aurora", label: "Aurora" },
+  { id: "ocean", label: "Ocean" },
+  { id: "candy", label: "Candy" },
+  { id: "ember", label: "Ember" },
+  { id: "ice", label: "Ice" },
+  { id: "noir", label: "Noir" },
+] as const;
+
+export type SkyThemeId = (typeof SKY_THEMES)[number]["id"];
 
 export const SETTING_SPECS: readonly SettingSpec[] = [
   { key: "tilt", label: "Tilt", group: "Controls", min: 4, max: 22, step: 0.5, format: (value) => `${value.toFixed(1)}°` },
@@ -41,7 +55,8 @@ export const SETTING_SPECS: readonly SettingSpec[] = [
   { key: "field", label: "Field", group: "Camera", min: 20, max: 48, step: 1, format: (value) => `${value.toFixed(0)}°` },
   { key: "pixels", label: "Pixels", group: "Picture", min: 1, max: 6, step: 1, format: formatPixels },
   { key: "shade", label: "Shade", group: "Picture", min: 2, max: 6, step: 0.1, format: (value) => `${value.toFixed(1)} steps` },
-  { key: "skyPixels", label: "Sky pixels", group: "Picture", min: 1, max: 12, step: 1, format: (value) => `${value.toFixed(0)}×` },
+  { key: "skyTheme", label: "Sky theme", group: "Picture", min: 0, max: SKY_THEMES.length - 1, step: 1, format: formatSkyTheme },
+  { key: "skyPixels", label: "Sky pixels", group: "Picture", min: 0.5, max: 12, step: 0.5, format: formatSkyPixels },
   { key: "skyShade", label: "Sky shade", group: "Picture", min: 6, max: 30, step: 1, format: (value) => `${value.toFixed(0)} steps` },
 ];
 
@@ -58,9 +73,15 @@ export const SETTING_DEFAULTS: Record<SettingKey, number> = {
   field: 30,
   pixels: 3,
   shade: 3,
+  skyTheme: 0,
   skyPixels: 4,
   skyShade: 6,
 };
+
+export function skyThemeAt(index: number): (typeof SKY_THEMES)[number] {
+  const clamped = Math.max(0, Math.min(SKY_THEMES.length - 1, Math.round(index)));
+  return SKY_THEMES[clamped] ?? SKY_THEMES[0];
+}
 
 const STORAGE_KEY = "maze.settings";
 
@@ -175,9 +196,20 @@ function formatPixels(value: number): string {
   return `${css.toFixed(2).replace(/0+$/, "").replace(/\.$/, "")} px`;
 }
 
+function formatSkyPixels(value: number): string {
+  if (Math.abs(value - Math.round(value)) < 1e-6) return `${Math.round(value)}×`;
+  return `${value.toFixed(1)}×`;
+}
+
+function formatSkyTheme(value: number): string {
+  return skyThemeAt(value).label;
+}
+
 function clampSetting(key: SettingKey, value: number): number {
   const spec = SETTING_SPECS.find((item) => item.key === key);
   if (!spec || !Number.isFinite(value)) return SETTING_DEFAULTS[key];
   const next = clamp(value, spec.min, spec.max);
-  return key === "pixels" ? snapPixels(next) : next;
+  if (key === "pixels") return snapPixels(next);
+  if (key === "skyPixels") return Math.round(next * 2) / 2;
+  return next;
 }

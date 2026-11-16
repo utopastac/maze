@@ -405,10 +405,11 @@ export class App {
       const bufferH = Math.max(1, Math.floor(height / scale));
       renderer?.setPixelRatio(1);
       renderer?.setSize(bufferW, bufferH, false);
-      this.canvas.style.width = `${bufferW * scale}px`;
-      this.canvas.style.height = `${bufferH * scale}px`;
+      // Fill the viewport even when floor(size/scale)*scale undershoots by a few CSS pixels.
+      this.canvas.style.width = `${width}px`;
+      this.canvas.style.height = `${height}px`;
       this.canvas.dataset.look = "pixel";
-      this.view?.resize(bufferW * scale, bufferH * scale);
+      this.view?.resize(width, height);
     }
     if (renderer) applyRendererLook(renderer, this.settings.normalLook);
   }

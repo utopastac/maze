@@ -52,7 +52,7 @@ import {
 } from "../core/layout.ts";
 import { clamp } from "../core/math.ts";
 import { DIRECTION_VECTOR, SWITCH_COLOR_COUNT, WARP_COLOR_COUNT } from "../core/maze.ts";
-import { SETTING_SPECS, type PlaySettings } from "../core/playSettings.ts";
+import { SETTING_SPECS, skyThemeAt, type PlaySettings } from "../core/playSettings.ts";
 import type { Pose } from "../core/simulation.ts";
 import { DEFAULT_FLOOR_THEME, type FloorThemeId } from "../core/theme.ts";
 import { makeThemeSurfaces, type ThemeSurfaces } from "./themeMaterials.ts";
@@ -490,7 +490,8 @@ export class MazeWorld {
   private applyWinScene(index: number): void {
     const scene = WIN_SCENES[index] ?? "pasture";
     this.buildWinScene(scene);
-    this.scene.background = new Color(token(WIN_SKY[scene]));
+    this.scene.background = this.voidSky.texture;
+    this.syncVoidSky(this.lastTime);
   }
 
   rebase(dy: number): void {
@@ -643,7 +644,10 @@ export class MazeWorld {
   private syncVoidSky(time: number): void {
     const chunk = this.settings?.values.skyPixels ?? 4;
     const steps = this.settings?.values.skyShade ?? 6;
-    const changed = this.voidSky.configure(chunk, steps);
+    const themeId = this.escaped
+      ? "rainbow"
+      : skyThemeAt(this.settings?.values.skyTheme ?? 0).id;
+    const changed = this.voidSky.configure(chunk, steps, themeId);
     if (this.reduceMotion) {
       if (changed) this.voidSky.paint(0, true);
       return;
@@ -710,7 +714,7 @@ export class MazeWorld {
     this.placeCamera();
     this.syncTiles(pose, time);
     this.tickHearts(time, dt);
-    if (!this.escaped) this.syncVoidSky(time);
+    this.syncVoidSky(time);
     if (this.reduceMotion) return;
     if (this.goalRing) {
       const wave = Math.sin(time * 2.2);
@@ -737,6 +741,16 @@ export class MazeWorld {
         animal.group.rotation.y = animal.facing + Math.sin(time * 0.7 + index * 1.3) * 0.08;
       }
       for (const [index, flame] of this.meadowFlames.entries()) {
+        if (flame.userData.auroraRibbon) {
+          const phase = typeof flame.userData.driftPhase === "number" ? flame.userData.driftPhase : index;
+          const speed = typeof flame.userData.driftSpeed === "number" ? flame.userData.driftSpeed : 0.35;
+          flame.position.z = Math.sin(time * speed + phase) * 0.55;
+          flame.position.y = Math.sin(time * speed * 0.7 + phase * 1.2) * 0.18;
+          if (flame.material instanceof MeshToonMaterial) {
+            flame.material.emissiveIntensity = 0.7 + Math.sin(time * 2.2 + phase) * 0.2;
+          }
+          continue;
+        }
         if (flame.userData.flickerScale !== false) {
           const flicker = 0.85 + Math.sin(time * 14 + index * 2.1) * 0.2;
           flame.scale.set(flicker, 0.9 + Math.sin(time * 11 + index) * 0.35, flicker);
@@ -2438,24 +2452,6 @@ const WIN_GLYPH_BANG = [
   ".#.",
 ];
 
-const WIN_SKY: Record<WinSceneKind, string> = {
-  pasture: "--maze-meadow-sky",
-  beach: "--maze-beach-sky",
-  snow: "--maze-snow-sky",
-  desert: "--maze-desert-sky",
-  orchard: "--maze-orchard-sky",
-  twilight: "--maze-twilight-sky",
-  underwater: "--maze-underwater-sky",
-  city: "--maze-city-sky",
-  village: "--maze-village-sky",
-  moon: "--maze-moon-sky",
-  venus: "--maze-venus-sky",
-  forest: "--maze-forest-sky",
-  rainforest: "--maze-rainforest-sky",
-  aurora: "--maze-aurora-sky",
-  disco: "--maze-disco-sky",
-};
-
 const SCENE_ANIMALS: Record<WinSceneKind, AnimalKind[]> = {
   pasture: ["cow", "sheep", "dog", "horse"],
   beach: ["crab", "seagull", "turtle", "seal"],
@@ -2557,17 +2553,19 @@ type VoidBlob = {
 };
 
 class VoidSky {
-  private static readonly WIDTH = 160;
-  private static readonly HEIGHT = 90;
+  // 2× base so skyPixels 0.5 can paint at true half-block fineness.
+  private static readonly WIDTH = 320;
+  private static readonly HEIGHT = 180;
 
   readonly texture: CanvasTexture;
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private readonly image: ImageData;
-  private readonly deep: [number, number, number];
+  private deep: [number, number, number] = [0, 0, 0];
   private readonly blobs: VoidBlob[];
   private chunk = 4;
   private steps = 6;
+  private themeId = "";
   private lastTime = Number.NaN;
 
   constructor() {
@@ -2578,15 +2576,14 @@ class VoidSky {
     if (!ctx) throw new Error("Void sky canvas unavailable");
     this.ctx = ctx;
     this.image = ctx.createImageData(VoidSky.WIDTH, VoidSky.HEIGHT);
-    this.deep = srgbBytes(token("--maze-void-deep"));
     this.blobs = [
-      { x: 0.12, y: 0.18, r: 0.58, rgb: srgbBytes(token("--maze-void-violet")), weight: 1.15, phase: 0.2, speed: 0.28, amp: 0.11 },
-      { x: 0.78, y: 0.12, r: 0.52, rgb: srgbBytes(token("--maze-void-magenta")), weight: 1.05, phase: 1.1, speed: 0.22, amp: 0.1 },
-      { x: 0.58, y: 0.48, r: 0.62, rgb: srgbBytes(token("--maze-void-cyan")), weight: 0.95, phase: 2.4, speed: 0.31, amp: 0.12 },
-      { x: 0.18, y: 0.78, r: 0.55, rgb: srgbBytes(token("--maze-void-coral")), weight: 1, phase: 3.7, speed: 0.25, amp: 0.11 },
-      { x: 0.88, y: 0.72, r: 0.48, rgb: srgbBytes(token("--maze-void-blue")), weight: 1.1, phase: 5.1, speed: 0.27, amp: 0.1 },
-      { x: 0.42, y: 0.28, r: 0.42, rgb: srgbBytes(token("--maze-void-amber")), weight: 0.7, phase: 0.8, speed: 0.35, amp: 0.09 },
-      { x: 0.5, y: 0.88, r: 0.5, rgb: srgbBytes(token("--maze-void-indigo")), weight: 1.2, phase: 4.2, speed: 0.19, amp: 0.08 },
+      { x: 0.12, y: 0.18, r: 0.58, rgb: [0, 0, 0], weight: 1.15, phase: 0.2, speed: 0.28, amp: 0.11 },
+      { x: 0.78, y: 0.12, r: 0.52, rgb: [0, 0, 0], weight: 1.05, phase: 1.1, speed: 0.22, amp: 0.1 },
+      { x: 0.58, y: 0.48, r: 0.62, rgb: [0, 0, 0], weight: 0.95, phase: 2.4, speed: 0.31, amp: 0.12 },
+      { x: 0.18, y: 0.78, r: 0.55, rgb: [0, 0, 0], weight: 1, phase: 3.7, speed: 0.25, amp: 0.11 },
+      { x: 0.88, y: 0.72, r: 0.48, rgb: [0, 0, 0], weight: 1.1, phase: 5.1, speed: 0.27, amp: 0.1 },
+      { x: 0.42, y: 0.28, r: 0.42, rgb: [0, 0, 0], weight: 0.7, phase: 0.8, speed: 0.35, amp: 0.09 },
+      { x: 0.5, y: 0.88, r: 0.5, rgb: [0, 0, 0], weight: 1.2, phase: 4.2, speed: 0.19, amp: 0.08 },
     ];
     this.texture = new CanvasTexture(this.canvas);
     this.texture.colorSpace = SRGBColorSpace;
@@ -2595,17 +2592,34 @@ class VoidSky {
     this.texture.wrapS = ClampToEdgeWrapping;
     this.texture.wrapT = ClampToEdgeWrapping;
     this.texture.generateMipmaps = false;
-    this.configure(4, 6);
+    this.configure(4, 6, "neon");
     this.paint(0, true);
   }
 
-  configure(chunk: number, steps: number): boolean {
-    const nextChunk = Math.max(1, Math.round(chunk));
+  configure(chunk: number, steps: number, themeId: string): boolean {
+    const nextChunk = Math.max(0.5, Math.round(chunk * 2) / 2);
     const nextSteps = Math.max(6, Math.round(steps));
-    if (nextChunk === this.chunk && nextSteps === this.steps) return false;
-    this.chunk = nextChunk;
-    this.steps = nextSteps;
-    return true;
+    let changed = false;
+    if (themeId !== this.themeId) {
+      this.applyTheme(themeId);
+      changed = true;
+    }
+    if (nextChunk !== this.chunk || nextSteps !== this.steps) {
+      this.chunk = nextChunk;
+      this.steps = nextSteps;
+      changed = true;
+    }
+    return changed;
+  }
+
+  private applyTheme(id: string): void {
+    this.themeId = id;
+    const prefix = `--sky-${id}`;
+    this.deep = srgbBytes(token(`${prefix}-deep`));
+    for (const [i, blob] of this.blobs.entries()) {
+      blob.rgb = srgbBytes(token(`${prefix}-${i}`));
+    }
+    document.documentElement.style.setProperty("--maze-void-deep", token(`${prefix}-deep`));
   }
 
   paint(time: number, force = false): void {
@@ -2613,7 +2627,7 @@ class VoidSky {
     this.lastTime = time;
     const width = VoidSky.WIDTH;
     const height = VoidSky.HEIGHT;
-    const block = this.chunk;
+    const block = Math.max(1, Math.round(this.chunk * 2));
     const cols = Math.ceil(width / block);
     const rows = Math.ceil(height / block);
     const data = this.image.data;
