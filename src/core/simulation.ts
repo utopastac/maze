@@ -205,6 +205,7 @@ export class Simulation {
         this.limitSpeed();
         this.contain();
         if (this.fallingThrough) this.guideToLanding();
+        else if (this.escaping && this.sentEscape) this.guideToward(0, 0);
         if (this.fallShield > 0) this.fallShield = Math.max(0, this.fallShield - STEP);
         const local = this.localBall();
         if (!this.escaping && local.y < FALL_Y && this.fallShield <= 0 && this.canFall(local)) {
@@ -338,9 +339,7 @@ export class Simulation {
     this.ball.setGravityScale(1, true);
     this.ball.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.ball.setAngvel({ x: 0, y: 0, z: 0 }, true);
-    this.board.setNextKinematicRotation(quatFromTilt(0, 0));
-    this.appliedPitch = 0;
-    this.appliedRoll = 0;
+    this.flatten();
     this.ball.wakeUp();
   }
 
@@ -351,8 +350,15 @@ export class Simulation {
       if (!at) continue;
       surface.collider.setTranslationWrtParent({ x: at.x, y: at.y + dy, z: at.z });
     }
+    this.flatten();
     this.placeAtStart();
     this.fallShield = 0.4;
+  }
+
+  flatten(): void {
+    this.board.setNextKinematicRotation(quatFromTilt(0, 0));
+    this.appliedPitch = 0;
+    this.appliedRoll = 0;
   }
 
   appendFloor(layout: MazeLayout): void {
@@ -636,10 +642,14 @@ export class Simulation {
       ? this.layout.goal
       : this.levels[this.active + 1]?.start;
     if (!landing) return;
+    this.guideToward(landing.x, landing.z);
+  }
+
+  private guideToward(tx: number, tz: number): void {
     const local = this.localBall();
     const blend = 1 - Math.exp(-12 * STEP);
-    const x = local.x + (landing.x - local.x) * blend;
-    const z = local.z + (landing.z - local.z) * blend;
+    const x = local.x + (tx - local.x) * blend;
+    const z = local.z + (tz - local.z) * blend;
     this.board.rotation(this.boardRot);
     this.ball.setTranslation(rotateVec(this.boardRot, { x, y: local.y, z }), true);
     const up = rotateVec(this.boardRot, { x: 0, y: 1, z: 0 });
@@ -777,7 +787,7 @@ export class Simulation {
     const rest = this.meadowY + SPAWN_Y;
     if (local.y < rest - 0.02) {
       this.board.rotation(this.boardRot);
-      this.ball.setTranslation(rotateVec(this.boardRot, { x: local.x, y: rest, z: local.z }), true);
+      this.ball.setTranslation(rotateVec(this.boardRot, { x: 0, y: rest, z: 0 }), true);
       this.ball.setLinvel({ x: 0, y: 0, z: 0 }, true);
       local = this.localBall();
     }

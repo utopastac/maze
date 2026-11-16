@@ -7,14 +7,18 @@ import {
   CircleGeometry,
   ClampToEdgeWrapping,
   Color,
+  CylinderGeometry,
   DataTexture,
   DirectionalLight,
   DoubleSide,
   ExtrudeGeometry,
   Group,
   HemisphereLight,
+  LinearFilter,
+  LinearMipmapLinearFilter,
   Mesh,
   MeshBasicMaterial,
+  MeshStandardMaterial,
   MeshToonMaterial,
   NearestFilter,
   OrthographicCamera,
@@ -29,6 +33,7 @@ import {
   TorusGeometry,
   TubeGeometry,
   Vector3,
+  type Material,
   type Quaternion,
   type Texture,
 } from "three";
@@ -42,6 +47,9 @@ import { DEFAULT_FLOOR_THEME, type FloorThemeId } from "../core/theme.ts";
 import { makeThemeSurfaces, type ThemeSurfaces } from "./themeMaterials.ts";
 
 const SHELL_ALPHA = 0.18;
+const WARP_GATE_R = 0.3;
+const WARP_GATE_H = 0.58;
+const WARP_GATE_ALPHA = 0.38;
 const ANGLE_SPEC = SETTING_SPECS.find((spec) => spec.key === "angle");
 const ANGLE_MIN = ANGLE_SPEC?.min ?? 22;
 const ANGLE_MAX = ANGLE_SPEC?.max ?? 80;
@@ -51,6 +59,16 @@ export class MazeWorld {
   readonly camera: PerspectiveCamera;
   private readonly board = new Group();
   private readonly ball: Mesh;
+  private readonly ballBands: [Mesh, Mesh];
+  private readonly ballToonMat: MeshToonMaterial;
+  private readonly ballSmoothMat: MeshStandardMaterial;
+  private readonly bandPixelMat: MeshBasicMaterial;
+  private readonly bandSmoothMat: MeshStandardMaterial;
+  private ballGeoPixel: BufferGeometry;
+  private ballGeoSmooth: BufferGeometry | null = null;
+  private bandGeoPixel: BufferGeometry;
+  private bandGeoSmooth: BufferGeometry | null = null;
+  private ballNormal = false;
   private readonly key: DirectionalLight;
   private readonly goalLight: PointLight;
   private readonly materials: Record<PieceKind, MeshToonMaterial>;
@@ -61,11 +79,6 @@ export class MazeWorld {
   private readonly floorMats: Record<WinSceneKind, MeshToonMaterial>;
   private readonly streamMat: MeshToonMaterial;
   private readonly streamDeepMat: MeshToonMaterial;
-  private readonly lavaMat: MeshToonMaterial;
-  private readonly lavaDeepMat: MeshToonMaterial;
-  private readonly lavaMidMat: MeshToonMaterial;
-  private readonly lavaBrightMat: MeshToonMaterial;
-  private readonly lavaCoolMat: MeshToonMaterial;
   private readonly oceanMat: MeshToonMaterial;
   private readonly oceanDeepMat: MeshToonMaterial;
   private readonly cactusMat: MeshToonMaterial;
@@ -77,12 +90,14 @@ export class MazeWorld {
   private readonly animalMats: AnimalMats;
   private readonly boostMarkMat: MeshToonMaterial;
   private readonly warpMats: MeshToonMaterial[];
+  private readonly warpGateMats: MeshToonMaterial[];
   private readonly iceMarkMat: MeshToonMaterial;
   private readonly switchMats: MeshToonMaterial[];
   private readonly gateMeshes: Mesh[] = [];
   private readonly crumbleMeshes: Mesh[] = [];
   private readonly arrowGeometry: BufferGeometry;
   private readonly heartGeometry: BufferGeometry;
+  private readonly warpGateGeometry: BufferGeometry;
   private readonly heartMat: MeshToonMaterial;
   private readonly hearts: HeartBit[] = [];
   private readonly warpSpins: Group[] = [];
@@ -99,6 +114,7 @@ export class MazeWorld {
   private meadowDiscoBall: Group | null = null;
   private readonly discoMats: MeshToonMaterial[];
   private meadowLight: PointLight | null = null;
+  private meadowWinLetters: Group | null = null;
   private escaped = false;
   private winSceneIndex = 0;
   private tower: TowerLayout | null = null;
@@ -181,10 +197,6 @@ export class MazeWorld {
       fire: glow(token("--maze-fire")),
       fireCore: glow(token("--maze-fire-core")),
       ember: toon(token("--maze-ember")),
-      basalt: toon(token("--maze-basalt")),
-      basaltDark: toon(token("--maze-basalt-dark")),
-      ash: toon(token("--maze-ash")),
-      lavaGlow: glow(token("--maze-lava-glow")),
       moonDust: toon(token("--maze-moon-dust")),
       moonDustDark: toon(token("--maze-moon-dust-dark")),
       moonRock: toon(token("--maze-moon-rock")),
@@ -214,6 +226,7 @@ export class MazeWorld {
       auroraBlue: glow(token("--maze-aurora-blue")),
       discoFloor: toon(token("--maze-disco-floor")),
       discoFloorDark: toon(token("--maze-disco-floor-dark")),
+      winNeon: toon(token("--maze-win-neon"), token("--maze-win-neon"), 0.35),
     };
     this.discoMats = Array.from({ length: 8 }, (_, index) => glow(token(`--maze-disco-${index}`)));
     for (const mat of this.discoMats) mat.emissiveIntensity = 0.95;
@@ -221,7 +234,6 @@ export class MazeWorld {
     this.groundMats.lamp.emissiveIntensity = 0.85;
     this.groundMats.fire.emissiveIntensity = 0.95;
     this.groundMats.fireCore.emissiveIntensity = 1.1;
-    this.groundMats.lavaGlow.emissiveIntensity = 1.05;
     this.groundMats.sulfurGlow.emissiveIntensity = 0.85;
     this.groundMats.star.emissiveIntensity = 0.95;
     this.groundMats.auroraGreen.emissiveIntensity = 0.9;
@@ -231,11 +243,6 @@ export class MazeWorld {
     this.groundMats.auroraBlue.emissiveIntensity = 0.8;
     this.streamMat = toon(token("--maze-stream"), token("--maze-stream"), 0.2);
     this.streamDeepMat = toon(token("--maze-stream-deep"), token("--maze-stream"), 0.12);
-    this.lavaMat = toon(token("--maze-lava"), token("--maze-lava-glow"), 0.55);
-    this.lavaDeepMat = toon(token("--maze-lava-deep"), token("--maze-lava"), 0.35);
-    this.lavaMidMat = toon(token("--maze-lava-mid"), token("--maze-lava"), 0.45);
-    this.lavaBrightMat = toon(token("--maze-lava-bright"), token("--maze-lava-glow"), 0.7);
-    this.lavaCoolMat = toon(token("--maze-lava-cool"), token("--maze-lava-deep"), 0.2);
     this.oceanMat = toon(token("--maze-ocean"), token("--maze-ocean"), 0.18);
     this.oceanDeepMat = toon(token("--maze-ocean-deep"), token("--maze-stream"), 0.1);
     this.cactusMat = toon(token("--maze-cactus"));
@@ -323,10 +330,18 @@ export class MazeWorld {
     this.startRingMat.emissiveIntensity = 0.28;
     this.boostMarkMat = glow(token("--maze-boost-mark"));
     this.warpMats = Array.from({ length: WARP_COLOR_COUNT }, (_, index) => glow(token(`--maze-warp-${index}`)));
+    this.warpGateMats = Array.from({ length: WARP_COLOR_COUNT }, (_, index) => {
+      const mat = glow(token(`--maze-warp-${index}`));
+      mat.transparent = true;
+      mat.opacity = WARP_GATE_ALPHA;
+      mat.depthWrite = false;
+      return mat;
+    });
     this.iceMarkMat = glow(token("--maze-ice-mark"));
     this.switchMats = Array.from({ length: SWITCH_COLOR_COUNT }, (_, index) => glow(token(`--maze-switch-${index}`)));
     this.arrowGeometry = arrowGeometry();
     this.heartGeometry = heartGeometry();
+    this.warpGateGeometry = facet(new CylinderGeometry(WARP_GATE_R, WARP_GATE_R, WARP_GATE_H, 8, 1, true));
     this.heartMat = glow(token("--maze-heart"));
     this.heartMat.emissiveIntensity = 0.8;
 
@@ -349,13 +364,27 @@ export class MazeWorld {
     this.goalLight = new PointLight(token("--maze-goal"), 3.2, 4.2, 2);
     this.board.add(this.goalLight);
 
-    this.ball = new Mesh(facet(new SphereGeometry(BALL_R, 8, 6)), toon(token("--maze-ball")));
+    this.ballToonMat = toon(token("--maze-ball"));
+    this.ballSmoothMat = new MeshStandardMaterial({
+      color: token("--maze-ball"),
+      roughness: 0.28,
+      metalness: 0.08,
+    });
+    this.bandPixelMat = new MeshBasicMaterial({ color: token("--maze-mark"), toneMapped: false });
+    this.bandSmoothMat = new MeshStandardMaterial({
+      color: token("--maze-mark"),
+      roughness: 0.55,
+      metalness: 0.12,
+    });
+    this.ballGeoPixel = facet(new SphereGeometry(BALL_R, 8, 6));
+    this.bandGeoPixel = new TorusGeometry(BALL_R * 0.98, BALL_R * 0.04, 5, 20);
+    this.ball = new Mesh(this.ballGeoPixel, this.ballToonMat);
     this.ball.castShadow = true;
-    const bandMat = new MeshBasicMaterial({ color: token("--maze-mark"), toneMapped: false });
-    const bandGeo = new TorusGeometry(BALL_R * 0.98, BALL_R * 0.04, 5, 20);
-    const bandA = new Mesh(bandGeo, bandMat);
-    const bandB = new Mesh(bandGeo, bandMat);
+    this.ball.receiveShadow = true;
+    const bandA = new Mesh(this.bandGeoPixel, this.bandPixelMat);
+    const bandB = new Mesh(this.bandGeoPixel, this.bandPixelMat);
     bandB.rotation.x = Math.PI / 2;
+    this.ballBands = [bandA, bandB];
     this.ball.add(bandA, bandB);
     this.scene.add(this.ball);
   }
@@ -490,8 +519,83 @@ export class MazeWorld {
 
   applyPicture(): void {
     const steps = this.settings?.values.shade ?? 3;
-    if (Math.abs(steps - paintedSteps) < 0.001) return;
-    paintRamp(ramp, steps);
+    const normal = this.settings?.normalLook ?? false;
+    const lookChanged = normal !== paintedNormal;
+    const shadowSize = normal ? 2048 : 512;
+    if (this.key.shadow.mapSize.x !== shadowSize) {
+      this.key.shadow.mapSize.set(shadowSize, shadowSize);
+      this.key.shadow.map?.dispose();
+      this.key.shadow.map = null;
+    }
+    this.applyBallLook(normal);
+    organicProps = normal;
+    if (lookChanged && this.escaped) this.applyWinScene(this.winSceneIndex);
+    if (!lookChanged && Math.abs(steps - paintedSteps) < 0.001) return;
+    paintRamp(ramp, steps, normal);
+    this.setTextureFiltering(normal);
+  }
+
+  private applyBallLook(normal: boolean): void {
+    if (normal === this.ballNormal) return;
+    this.ballNormal = normal;
+    if (normal) {
+      if (!this.ballGeoSmooth) this.ballGeoSmooth = new SphereGeometry(BALL_R, 48, 32);
+      if (!this.bandGeoSmooth) {
+        this.bandGeoSmooth = new TorusGeometry(BALL_R * 0.98, BALL_R * 0.032, 14, 64);
+      }
+      this.ball.geometry = this.ballGeoSmooth;
+      this.ball.material = this.ballSmoothMat;
+      for (const band of this.ballBands) {
+        band.geometry = this.bandGeoSmooth;
+        band.material = this.bandSmoothMat;
+        band.castShadow = true;
+      }
+    } else {
+      this.ball.geometry = this.ballGeoPixel;
+      this.ball.material = this.ballToonMat;
+      for (const band of this.ballBands) {
+        band.geometry = this.bandGeoPixel;
+        band.material = this.bandPixelMat;
+        band.castShadow = false;
+      }
+    }
+  }
+
+  private setTextureFiltering(normal: boolean): void {
+    const mag = normal ? LinearFilter : NearestFilter;
+    const min = normal ? LinearMipmapLinearFilter : NearestFilter;
+    for (const tex of this.pictureTextures()) {
+      const nextMin = tex.generateMipmaps ? min : mag;
+      if (tex.magFilter === mag && tex.minFilter === nextMin) continue;
+      tex.magFilter = mag;
+      tex.minFilter = nextMin;
+      tex.needsUpdate = true;
+    }
+    ramp.magFilter = normal ? LinearFilter : NearestFilter;
+    ramp.minFilter = normal ? LinearFilter : NearestFilter;
+    ramp.needsUpdate = true;
+  }
+
+  private pictureTextures(): Texture[] {
+    const out: Texture[] = [];
+    const take = (mat: Material | Material[] | undefined): void => {
+      if (!mat) return;
+      const list = Array.isArray(mat) ? mat : [mat];
+      for (const item of list) {
+        if (!(item instanceof MeshToonMaterial)) continue;
+        if (item.map) out.push(item.map);
+      }
+    };
+    for (const mat of Object.values(this.materials)) take(mat);
+    for (const mat of Object.values(this.groundMats)) take(mat);
+    for (const mat of Object.values(this.floorMats)) take(mat);
+    for (const surfaces of this.themeSurfaces.values()) {
+      take(surfaces.floor);
+      take(surfaces.wall);
+      take(surfaces.start);
+    }
+    take(this.materials.crumble);
+    return out;
   }
 
   applyCamera(): void {
@@ -612,11 +716,22 @@ export class MazeWorld {
         this.meadowDiscoBall.rotation.y = time * 1.8;
         this.meadowDiscoBall.position.y = 2.1 + Math.sin(time * 2.2) * 0.08;
       }
+      if (this.meadowWinLetters) {
+        for (const letter of this.meadowWinLetters.children) {
+          const phase = typeof letter.userData.phase === "number" ? letter.userData.phase : 0;
+          const baseY = typeof letter.userData.baseY === "number" ? letter.userData.baseY : 0;
+          letter.position.y = baseY + Math.sin(time * 2.4 + phase) * 0.12;
+          letter.rotation.y = Math.sin(time * 1.1 + phase) * 0.08;
+        }
+      }
     }
     this.boostMarkMat.emissiveIntensity = 0.55 + Math.sin(time * 4.5) * 0.28;
     this.iceMarkMat.emissiveIntensity = 0.35 + Math.sin(time * 1.6) * 0.12;
     for (const [index, mat] of this.warpMats.entries()) {
-      mat.emissiveIntensity = 0.55 + Math.sin(time * 2.2 + index * 0.7) * 0.25;
+      const pulse = 0.55 + Math.sin(time * 2.2 + index * 0.7) * 0.25;
+      mat.emissiveIntensity = pulse;
+      const gate = this.warpGateMats[index];
+      if (gate) gate.emissiveIntensity = pulse;
     }
     for (const spin of this.warpSpins) spin.rotation.y = time * 0.65;
   }
@@ -867,10 +982,6 @@ export class MazeWorld {
     } else if (kind === "village") {
       this.addVillage(group, span);
       this.addBonfire(group);
-    } else if (kind === "lava") {
-      const river = meadowStream(span);
-      this.addLavaRiver(group, river);
-      this.addLavaField(group, span, river);
     } else if (kind === "moon") {
       this.addMoonscape(group, span);
     } else if (kind === "venus") {
@@ -888,10 +999,51 @@ export class MazeWorld {
     } else {
       this.addDiscoFloor(group, span);
     }
-    const riverScene = kind === "pasture" || kind === "lava" || kind === "forest" || kind === "rainforest";
+    const riverScene = kind === "pasture" || kind === "forest" || kind === "rainforest";
     this.addAnimals(group, span, kind, riverScene ? meadowStream(span) : null);
+    this.addWinSign(group, span);
     this.board.add(group);
     this.meadow = group;
+  }
+
+  private addWinSign(parent: Group, span: number): void {
+    const glyphs = [WIN_GLYPH_W, WIN_GLYPH_I, WIN_GLYPH_N, WIN_GLYPH_BANG];
+    const rows = WIN_GLYPH_W.length;
+    let cols = 0;
+    for (const glyph of glyphs) cols += glyph[0]?.length ?? 0;
+    cols += glyphs.length - 1;
+
+    const targetW = span * 0.62;
+    const cell = targetW / cols;
+    const depth = cell * 0.9;
+    const letterH = cell * rows;
+    const mat = this.groundMats.winNeon;
+
+    const letters = new Group();
+    letters.position.set(0, cell * 0.35, -span * 0.42);
+
+    let cursor = -targetW * 0.5;
+    for (const [index, glyph] of glyphs.entries()) {
+      const width = glyph[0]?.length ?? 0;
+      const letter = new Group();
+      letter.position.x = cursor + width * cell * 0.5;
+      letter.userData.baseY = 0;
+      letter.userData.phase = index * 0.9;
+      for (let r = 0; r < glyph.length; r += 1) {
+        const line = glyph[r] ?? "";
+        for (let c = 0; c < line.length; c += 1) {
+          if (line[c] !== "#") continue;
+          const x = (c + 0.5 - width * 0.5) * cell;
+          const y = letterH - (r + 0.5) * cell;
+          voxel(letter, mat, cell * 0.46, cell * 0.46, depth * 0.5, x, y, 0);
+        }
+      }
+      letters.add(letter);
+      cursor += (width + 1) * cell;
+    }
+
+    parent.add(letters);
+    this.meadowWinLetters = letters;
   }
 
   private addGround(parent: Group, span: number, kind: WinSceneKind): void {
@@ -905,7 +1057,6 @@ export class MazeWorld {
       underwater: this.groundMats.seabedDark,
       city: this.groundMats.pavementDark,
       village: this.groundMats.cobbleDark,
-      lava: this.groundMats.basaltDark,
       moon: this.groundMats.moonDustDark,
       venus: this.groundMats.venusGroundDark,
       forest: this.groundMats.moss,
@@ -915,6 +1066,7 @@ export class MazeWorld {
     };
     const pad = new Mesh(new BoxGeometry(span, 0.22, span), sideMats[kind]);
     pad.position.y = -0.11;
+    pad.receiveShadow = organicProps;
     parent.add(pad);
 
     const floorMat = this.floorMats[kind];
@@ -926,6 +1078,7 @@ export class MazeWorld {
     const carpet = new Mesh(new PlaneGeometry(span, span), floorMat);
     carpet.rotation.x = -Math.PI / 2;
     carpet.position.y = 0.01;
+    carpet.receiveShadow = organicProps;
     parent.add(carpet);
     this.addFloorDetail(parent, span, kind);
   }
@@ -969,48 +1122,6 @@ export class MazeWorld {
       disc.position.set(patch.x * span, 0.05 + index * 0.002, patch.z * span);
       parent.add(disc);
     }
-  }
-
-  private addLavaField(parent: Group, span: number, river: CatmullRomCurve3): void {
-    const rim = span * 0.34;
-    for (let i = 0; i < 9; i += 1) {
-      const a = i * 2.2;
-      const x = Math.cos(a) * rim * 0.85;
-      const z = Math.sin(a) * rim * 0.7;
-      if (nearStream(x, z, river, 0.7)) continue;
-      const rock = new Mesh(
-        new BoxGeometry(0.28 + (i % 3) * 0.1, 0.22 + (i % 2) * 0.12, 0.24 + (i % 4) * 0.06),
-        i % 2 === 0 ? this.groundMats.basaltDark : this.groundMats.ash,
-      );
-      rock.position.set(x, 0.12, z);
-      parent.add(rock);
-    }
-    const cone = new Group();
-    cone.position.set(span * 0.22, 0, -span * 0.18);
-    voxel(cone, this.groundMats.basalt, 0.55, 0.35, 0.55, 0, 0.35, 0);
-    voxel(cone, this.groundMats.basaltDark, 0.38, 0.28, 0.38, 0, 0.78, 0);
-    voxel(cone, this.groundMats.basalt, 0.22, 0.18, 0.22, 0, 1.1, 0);
-    voxel(cone, this.groundMats.lavaGlow, 0.12, 0.08, 0.12, 0, 1.28, 0);
-    parent.add(cone);
-    this.meadowFlames.push(cone.children[cone.children.length - 1] as Mesh);
-
-    for (let i = 0; i < 7; i += 1) {
-      const a = i * 1.9 + 0.4;
-      const x = Math.cos(a) * rim * 0.55;
-      const z = Math.sin(a) * rim * 0.5;
-      if (nearStream(x, z, river, 0.55)) continue;
-      const crack = new Mesh(new BoxGeometry(0.18 + (i % 3) * 0.08, 0.04, 0.06), this.groundMats.lavaGlow);
-      crack.position.set(x, 0.04, z);
-      crack.rotation.y = a;
-      crack.userData.flickerScale = false;
-      parent.add(crack);
-      this.meadowFlames.push(crack);
-    }
-
-    const light = new PointLight(token("--maze-lava"), 3.2, 12, 2);
-    light.position.set(0, 1.2, 0);
-    parent.add(light);
-    this.meadowLight = light;
   }
 
   private addMoonscape(parent: Group, span: number): void {
@@ -1467,41 +1578,6 @@ export class MazeWorld {
     this.meadowLight = light;
   }
 
-  private addLavaRiver(parent: Group, river: CatmullRomCurve3): void {
-    const crust = new Mesh(new TubeGeometry(river, 80, 0.72, 10, false), this.lavaCoolMat);
-    crust.position.y = -0.03;
-    crust.scale.y = 0.28;
-    const deep = new Mesh(new TubeGeometry(river, 80, 0.58, 10, false), this.lavaDeepMat);
-    deep.position.y = 0.0;
-    deep.scale.y = 0.24;
-    const mid = new Mesh(new TubeGeometry(river, 80, 0.46, 10, false), this.lavaMidMat);
-    mid.position.y = 0.03;
-    mid.scale.y = 0.2;
-    const flow = new Mesh(new TubeGeometry(river, 80, 0.34, 10, false), this.lavaMat);
-    flow.position.y = 0.055;
-    flow.scale.y = 0.16;
-    const bright = new Mesh(new TubeGeometry(river, 80, 0.2, 8, false), this.lavaBrightMat);
-    bright.position.y = 0.08;
-    bright.scale.y = 0.12;
-    parent.add(crust, deep, mid, flow, bright);
-    this.meadowFlames.push(bright);
-    bright.userData.flickerScale = false;
-
-    const probe = new Vector3();
-    for (let i = 0; i < 10; i += 1) {
-      river.getPoint((i + 0.5) / 10, probe);
-      const blob = new Mesh(
-        new BoxGeometry(0.22 + (i % 3) * 0.08, 0.05, 0.14 + (i % 2) * 0.06),
-        i % 2 === 0 ? this.groundMats.lavaGlow : this.lavaBrightMat,
-      );
-      blob.position.set(probe.x + ((i % 2) * 0.12 - 0.06), 0.1, probe.z);
-      blob.rotation.y = i * 0.7;
-      blob.userData.flickerScale = false;
-      parent.add(blob);
-      this.meadowFlames.push(blob);
-    }
-  }
-
   private addShore(parent: Group, span: number): void {
     const ocean = new Mesh(new BoxGeometry(span * 1.05, 0.14, span * 0.42), this.oceanDeepMat);
     ocean.position.set(0, -0.06, span * 0.32);
@@ -1809,6 +1885,7 @@ export class MazeWorld {
     this.meadowDisco.length = 0;
     this.meadowDiscoBall = null;
     this.meadowLight = null;
+    this.meadowWinLetters = null;
   }
 
   private fit(): void {
@@ -1867,8 +1944,10 @@ export class MazeWorld {
     }
 
     for (const warp of layout.warps) {
-      const mat = this.warpMats[warp.pair % WARP_COLOR_COUNT];
-      if (!mat) continue;
+      const tone = warp.pair % WARP_COLOR_COUNT;
+      const mat = this.warpMats[tone];
+      const gateMat = this.warpGateMats[tone];
+      if (!mat || !gateMat) continue;
       const spin = new Group();
       spin.position.set(warp.x, 0, warp.z);
       const ring = new Mesh(facet(new TorusGeometry(0.32, 0.045, 4, 8)), mat);
@@ -1879,8 +1958,11 @@ export class MazeWorld {
       disc.rotation.x = -Math.PI / 2;
       disc.position.y = 0.022;
       disc.renderOrder = 2;
-      spin.add(ring, disc);
-      if (!warp.open) this.warpSpins.push(spin);
+      const gate = new Mesh(this.warpGateGeometry, gateMat);
+      gate.position.y = WARP_GATE_H / 2 + 0.02;
+      gate.renderOrder = 3;
+      spin.add(ring, disc, gate);
+      this.warpSpins.push(spin);
       parent.add(spin);
     }
 
@@ -2019,7 +2101,10 @@ export class MazeWorld {
 
   private disposeGenerated(child: object): void {
     if (!(child instanceof Mesh)) return;
-    const shared = child.geometry === this.arrowGeometry || child.geometry === this.heartGeometry;
+    const shared =
+      child.geometry === this.arrowGeometry
+      || child.geometry === this.heartGeometry
+      || child.geometry === this.warpGateGeometry;
     if (!shared) child.geometry.dispose();
     if (child.userData.chunkMat instanceof MeshToonMaterial) child.userData.chunkMat.dispose();
     if (child.userData.owned === true && child.material instanceof MeshToonMaterial) child.material.dispose();
@@ -2039,6 +2124,7 @@ export class MazeWorld {
     this.meadowDisco.length = 0;
     this.meadowDiscoBall = null;
     this.meadowLight = null;
+    this.meadowWinLetters = null;
     this.hearts.length = 0;
     this.warpSpins.length = 0;
     this.gateMeshes.length = 0;
@@ -2224,7 +2310,6 @@ type WinSceneKind =
   | "underwater"
   | "city"
   | "village"
-  | "lava"
   | "moon"
   | "venus"
   | "forest"
@@ -2242,13 +2327,44 @@ const WIN_SCENES: WinSceneKind[] = [
   "underwater",
   "city",
   "village",
-  "lava",
   "moon",
   "venus",
   "forest",
   "rainforest",
   "aurora",
   "disco",
+];
+
+const WIN_GLYPH_W = [
+  "#...#",
+  "#...#",
+  "#.#.#",
+  "##.##",
+  "#...#",
+];
+
+const WIN_GLYPH_I = [
+  ".#.",
+  "...",
+  ".#.",
+  ".#.",
+  ".#.",
+];
+
+const WIN_GLYPH_N = [
+  "#...#",
+  "##..#",
+  "#.#.#",
+  "#..##",
+  "#...#",
+];
+
+const WIN_GLYPH_BANG = [
+  ".#.",
+  ".#.",
+  ".#.",
+  "...",
+  ".#.",
 ];
 
 const WIN_SKY: Record<WinSceneKind, string> = {
@@ -2261,7 +2377,6 @@ const WIN_SKY: Record<WinSceneKind, string> = {
   underwater: "--maze-underwater-sky",
   city: "--maze-city-sky",
   village: "--maze-village-sky",
-  lava: "--maze-lava-sky",
   moon: "--maze-moon-sky",
   venus: "--maze-venus-sky",
   forest: "--maze-forest-sky",
@@ -2280,7 +2395,6 @@ const SCENE_ANIMALS: Record<WinSceneKind, AnimalKind[]> = {
   underwater: ["shark", "whale", "jelly", "fish"],
   city: ["pigeon", "cat", "rat", "dog"],
   village: ["dog", "chicken", "pig", "cat"],
-  lava: ["lizard", "snake", "scorpion", "fox"],
   moon: ["cow", "hare", "fox", "owl"],
   venus: ["camel", "lizard", "snake", "scorpion"],
   forest: ["deer", "rabbit", "fox", "owl"],
@@ -2582,26 +2696,6 @@ function paintFloor(ctx: CanvasRenderingContext2D, size: number, kind: WinSceneK
         const ox = (y / 4) % 2 === 0 ? 0 : 2;
         px(shade, x + ox, y, 3, 3);
         if (hash(x, y) > 0.7) px(lit, x + ox + 1, y + 1);
-      }
-    }
-    return;
-  }
-
-  if (kind === "lava") {
-    const base = token("--maze-basalt");
-    const shade = soft(base, token("--maze-basalt-dark"), 0.3);
-    const ash = soft(base, token("--maze-ash"), 0.26);
-    const lava = soft(base, token("--maze-lava"), 0.35);
-    const glow = soft(base, token("--maze-lava-glow"), 0.28);
-    ctx.fillStyle = base;
-    ctx.fillRect(0, 0, size, size);
-    for (let y = 0; y < size; y += 1) {
-      for (let x = 0; x < size; x += 1) {
-        const n = hash(x, y);
-        if (n > 0.72) px(shade, x, y);
-        if (n > 0.88) px(ash, x, y);
-        if (n > 0.94 && (x + y) % 5 === 0) px(lava, x, y);
-        if (n > 0.98) px(glow, x, y);
       }
     }
     return;
@@ -2956,6 +3050,10 @@ function voxel(
   z: number,
 ): void {
   const mesh = new Mesh(new BoxGeometry(hx * 2, hy * 2, hz * 2), mat);
+  if (organicProps) {
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+  }
   mesh.position.set(x, y, z);
   parent.add(mesh);
 }
@@ -3379,9 +3477,11 @@ function arrowGeometry(): BufferGeometry {
 const RAMP_WIDTH = 32;
 const ramp = shadeRamp(3);
 let paintedSteps = 3;
+let paintedNormal = false;
+let organicProps = false;
 
 function shadeRamp(bands: number): DataTexture {
-  const tex = new DataTexture(rampBytes(bands), RAMP_WIDTH, 1);
+  const tex = new DataTexture(rampBytes(bands, false), RAMP_WIDTH, 1);
   tex.magFilter = NearestFilter;
   tex.minFilter = NearestFilter;
   tex.wrapS = ClampToEdgeWrapping;
@@ -3391,19 +3491,20 @@ function shadeRamp(bands: number): DataTexture {
   return tex;
 }
 
-function paintRamp(tex: DataTexture, bands: number): void {
-  tex.image.data = rampBytes(bands);
+function paintRamp(tex: DataTexture, bands: number, normal = false): void {
+  tex.image.data = rampBytes(bands, normal);
   tex.image.width = RAMP_WIDTH;
   tex.image.height = 1;
   tex.needsUpdate = true;
   paintedSteps = bands;
+  paintedNormal = normal;
 }
 
-function rampBytes(bands: number): Uint8Array {
+function rampBytes(bands: number, normal: boolean): Uint8Array {
   const data = new Uint8Array(RAMP_WIDTH * 4);
   for (let i = 0; i < RAMP_WIDTH; i += 1) {
     const t = i / (RAMP_WIDTH - 1);
-    const tone = 72 + Math.round((255 - 72) * quantize(t, bands));
+    const tone = 72 + Math.round((255 - 72) * (normal ? t : quantize(t, bands)));
     const offset = i * 4;
     data[offset] = tone;
     data[offset + 1] = tone;

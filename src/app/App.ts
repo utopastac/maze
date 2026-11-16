@@ -5,7 +5,7 @@ import { cloneTower, generateTower, type Tower } from "../core/tower.ts";
 import { PlaySettings, snapPixels } from "../core/playSettings.ts";
 import { initPhysics, Simulation } from "../core/simulation.ts";
 import { TiltController } from "../core/tilt.ts";
-import { createRenderer } from "../render/createRenderer.ts";
+import { applyRendererLook, createRenderer } from "../render/createRenderer.ts";
 import { MazeWorld } from "../render/MazeWorld.ts";
 import { resizeMaze } from "../core/maze.ts";
 import { DEFAULT_FLOOR_THEME } from "../core/theme.ts";
@@ -244,7 +244,9 @@ export class App {
     this.recallCamera = false;
     this.driveCamera(dt, tilting);
 
-    const event = sim.update(dt, this.tilt.pitch, this.tilt.roll);
+    const pitch = this.phase === "won" || this.phase === "lost" ? 0 : this.tilt.pitch;
+    const roll = this.phase === "won" || this.phase === "lost" ? 0 : this.tilt.roll;
+    const event = sim.update(dt, pitch, roll);
     const picked = sim.takeHearts();
     if (this.phase === "play" && picked.length > 0) this.gainLives(picked);
     if (this.phase === "play" && event === "fell") this.drop();
@@ -265,20 +267,37 @@ export class App {
   private resize(): void {
     const width = window.innerWidth;
     const height = window.innerHeight;
-    const scale = snapPixels(this.settings.values.pixels);
-    const bufferW = Math.max(1, Math.floor(width / scale));
-    const bufferH = Math.max(1, Math.floor(height / scale));
-    this.renderer?.setPixelRatio(1);
-    this.renderer?.setSize(bufferW, bufferH, false);
-    this.canvas.style.width = `${bufferW * scale}px`;
-    this.canvas.style.height = `${bufferH * scale}px`;
-    this.view?.resize(bufferW * scale, bufferH * scale);
+    const renderer = this.renderer;
+    if (this.settings.normalLook) {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      renderer?.setPixelRatio(dpr);
+      renderer?.setSize(width, height, false);
+      this.canvas.style.width = `${width}px`;
+      this.canvas.style.height = `${height}px`;
+      this.canvas.dataset.look = "normal";
+      this.view?.resize(width, height);
+    } else {
+      const scale = snapPixels(this.settings.values.pixels);
+      const bufferW = Math.max(1, Math.floor(width / scale));
+      const bufferH = Math.max(1, Math.floor(height / scale));
+      renderer?.setPixelRatio(1);
+      renderer?.setSize(bufferW, bufferH, false);
+      this.canvas.style.width = `${bufferW * scale}px`;
+      this.canvas.style.height = `${bufferH * scale}px`;
+      this.canvas.dataset.look = "pixel";
+      this.view?.resize(bufferW * scale, bufferH * scale);
+    }
+    if (renderer) applyRendererLook(renderer, this.settings.normalLook);
   }
 
   private beginDescend(): void {
     const sim = this.sim;
     const view = this.view;
     if (!sim || !view || !this.tower) return;
+    this.tilt.level();
+    this.tilt.snap();
+    this.dragging = false;
+    this.dragPointer = null;
     view.crumbleTop();
     sim.dropTop();
     sim.shift(STORY);
@@ -359,6 +378,9 @@ export class App {
     this.running = false;
     this.dragging = false;
     this.dragPointer = null;
+    this.tilt.level();
+    this.tilt.snap();
+    this.sim?.hold();
     this.hud.hideHint();
     this.hud.setCelebrate(true);
     this.closeSettings();
@@ -554,7 +576,6 @@ export class App {
     if (
       this.editor.isOpen()
       || event.button !== 0
-      || this.phase === "won"
       || this.phase === "lost"
       || this.phase === "escaping"
     ) return;
@@ -572,6 +593,10 @@ export class App {
     this.lastX = event.clientX;
     this.lastY = event.clientY;
     if (dx === 0 && dy === 0) return;
+    if (this.phase === "won") {
+      this.view?.nudgeCamera(-dy * 0.16, -dx * 0.28);
+      return;
+    }
     this.tilt.drag(dx, dy);
     this.recallCamera = true;
     this.noteActivity();
@@ -622,7 +647,15 @@ export class App {
   private driveCamera(dt: number, tilting: boolean): void {
     const view = this.view;
     if (!view) return;
-    if (tilting) {
+    if (this.phase === "won") {
+      let dAngle = 0;
+      let dOrbit = 0;
+      if (this.keys.has("q") || this.keys.has("arrowdown") || this.keys.has("s")) dAngle -= 28 * dt;
+      if (this.keys.has("e") || this.keys.has("arrowup") || this.keys.has("w")) dAngle += 28 * dt;
+      if (this.keys.has("z") || this.keys.has("arrowleft") || this.keys.has("a")) dOrbit -= 80 * dt;
+      if (this.keys.has("c") || this.keys.has("arrowright") || this.keys.has("d")) dOrbit += 80 * dt;
+      if (dAngle !== 0 || dOrbit !== 0) view.nudgeCamera(dAngle, dOrbit);
+    } else if (tilting) {
       view.recallCamera();
     } else {
       let dAngle = 0;

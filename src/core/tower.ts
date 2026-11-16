@@ -1,4 +1,16 @@
-import { carveFloor, cloneMaze, resizeMaze, type GridPoint, type Maze } from "./maze.ts";
+import {
+  carveFloor,
+  cloneMaze,
+  deleteColumn,
+  deleteRow,
+  insertColumn,
+  insertRow,
+  moveColumn,
+  moveRow,
+  resizeMaze,
+  type GridPoint,
+  type Maze,
+} from "./maze.ts";
 
 export interface Tower {
   floors: Maze[];
@@ -40,6 +52,40 @@ export function resizeFloor(tower: Tower, index: number, cols: number, rows: num
   const floor = next.floors[index];
   if (!floor) return next;
   next.floors[index] = resizeMaze(floor, cols, rows);
+  repairTower(next);
+  return next;
+}
+
+export function insertFloorColumn(tower: Tower, index: number, at: number): Tower {
+  return mapFloor(tower, index, (floor) => insertColumn(floor, at));
+}
+
+export function insertFloorRow(tower: Tower, index: number, at: number): Tower {
+  return mapFloor(tower, index, (floor) => insertRow(floor, at));
+}
+
+export function deleteFloorColumn(tower: Tower, index: number, col: number): Tower {
+  return mapFloor(tower, index, (floor) => deleteColumn(floor, col));
+}
+
+export function deleteFloorRow(tower: Tower, index: number, row: number): Tower {
+  return mapFloor(tower, index, (floor) => deleteRow(floor, row));
+}
+
+export function moveFloorColumn(tower: Tower, index: number, from: number, to: number): Tower {
+  return mapFloor(tower, index, (floor) => moveColumn(floor, from, to));
+}
+
+export function moveFloorRow(tower: Tower, index: number, from: number, to: number): Tower {
+  return mapFloor(tower, index, (floor) => moveRow(floor, from, to));
+}
+
+function mapFloor(tower: Tower, index: number, map: (floor: Maze) => Maze): Tower {
+  if (index < 0 || index >= tower.floors.length) return cloneTower(tower);
+  const next = cloneTower(tower);
+  const floor = next.floors[index];
+  if (!floor) return next;
+  next.floors[index] = map(floor);
   repairTower(next);
   return next;
 }

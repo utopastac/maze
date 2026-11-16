@@ -2,18 +2,18 @@ import {
   MAZE_MAX,
   MAZE_MIN,
   WARP_COLOR_COUNT,
+  bindSwitchWall,
+  canDropLifted,
+  cancelPendingPair,
   clearFloor,
   clearInterior,
   interiorClosed,
   liftAt,
   loneWarpPair,
-  bindSwitchWall,
   moveLifted,
   paintSwitch,
   paintWarp,
   pendingSwitch,
-  placeGoal,
-  placeStart,
   resizeMaze,
   setBoost,
   setCrumble,
@@ -44,8 +44,13 @@ import {
   FLOOR_MIN,
   addFloor,
   cloneTower,
+  deleteFloorColumn,
+  deleteFloorRow,
+  insertFloorColumn,
+  insertFloorRow,
+  moveFloorColumn,
+  moveFloorRow,
   removeFloor,
-  resizeFloor,
   setHatch,
   type Tower,
 } from "../core/tower.ts";
@@ -60,17 +65,10 @@ export interface EditorCallbacks {
   onShare: (tower: Tower) => Promise<boolean | null>;
 }
 
-const SHARE_COPY = {
-  title: "Share level",
-  lead: "Stack floors, cut hatches between them, and share a link others can play. Drag Start and Exit on the board to move them.",
-};
+const SHARE_TITLE = "Share level";
+const CAMPAIGN_TITLE = "Campaign floor";
 
-const CAMPAIGN_COPY = {
-  title: "Campaign floor",
-  lead: "Design one floor. Drag Start and Exit on the board — Exit is where the ball drops through (floor 100 is the real exit). Copy model, then paste into authoredFloors.ts.",
-};
-
-type Tool = "wall" | "pit" | "start" | "goal" | "floor" | "boost" | "warp" | "ice" | "crumble" | "switch" | "hatch";
+type PaletteKind = "pit" | "boost" | "warp" | "ice" | "crumble" | "switch" | "hatch";
 type Stroke = "open" | "close";
 type CellKind = "start" | "goal" | "pit" | "floor" | "boost" | "warp" | "ice" | "crumble" | "switch" | "hatch";
 type WallDrag = {
@@ -82,14 +80,21 @@ type WallDrag = {
 
 type TileDrag = {
   lift: LiftedTile;
-  at: { c: number; r: number };
+  from: { c: number; r: number };
+  over: { c: number; r: number };
   moved: boolean;
 };
 
-const TOOLS: readonly { id: Tool; label: string; icon: IconName }[] = [
-  { id: "wall", label: "Wall", icon: "wall" },
+type LineDrag = {
+  kind: "col" | "row";
+  from: number;
+  over: number;
+  moved: boolean;
+  pointerId: number;
+};
+
+const PALETTE: readonly { id: PaletteKind; label: string; icon: IconName }[] = [
   { id: "pit", label: "Pit", icon: "pit" },
-  { id: "floor", label: "Floor", icon: "floor" },
   { id: "boost", label: "Boost", icon: "boost" },
   { id: "warp", label: "Warp", icon: "warp" },
   { id: "ice", label: "Ice", icon: "ice" },
@@ -98,18 +103,16 @@ const TOOLS: readonly { id: Tool; label: string; icon: IconName }[] = [
   { id: "hatch", label: "Hatch", icon: "hatch" },
 ];
 
-const HINTS: Record<Tool, string> = {
-  wall: "Drag along a row or column, in one direction, to open or close walls. Drag placed tiles to move them.",
+const HINT_SELECT = "Click a cell for tile options. Drag tiles, walls, or row/column handles to edit.";
+const HINT_ERASE = "Erase is on. Click tiles to clear them.";
+const HINT_BRUSH: Record<PaletteKind, string> = {
   pit: "Paint pits the ball can fall through.",
-  start: "Drag the start marker on the board.",
-  goal: "Drag the exit marker on the board.",
-  hatch: "Cut a hole through to the floor below.",
-  floor: "Clear pits and special tiles.",
-  boost: "Pick a direction, then paint lanes that shove the ball.",
+  boost: "Pick a direction, then paint boost lanes.",
   warp: "Click two cells to link a warp. Click a warp to remove that end.",
-  ice: "Paint slick tiles. The ball keeps sliding until it reaches something with grip.",
-  crumble: "Paint floors that start crumbling when the ball touches them. They break even if it leaves, then reform after five seconds.",
+  ice: "Paint slick tiles.",
+  crumble: "Paint floors that crumble when the ball touches them.",
   switch: "Click a cell, then a wall. Stop on the plate to open that wall.",
+  hatch: "Cut a hole through to the floor below.",
 };
 
 const DIR_WORD: Record<Direction, string> = {
@@ -131,11 +134,28 @@ export class LevelEditor {
   private readonly callbacks: EditorCallbacks;
   private readonly board: HTMLElement;
   private readonly hint: HTMLElement;
-  private readonly colReadout: HTMLElement;
-  private readonly rowReadout: HTMLElement;
-  private readonly toolButtons = new Map<Tool, HTMLButtonElement>();
+  private readonly paletteButtons = new Map<PaletteKind, HTMLButtonElement>();
+  private readonly eraseBtn: HTMLButtonElement;
   private readonly cells = new Map<string, HTMLButtonElement>();
   private readonly walls = new Map<string, HTMLElement>();
+  private readonly colReadout: HTMLElement;
+  private readonly rowReadout: HTMLElement;
+  private readonly sheet: HTMLElement;
+  private readonly playFrame: HTMLElement;
+  private readonly chrome: HTMLElement;
+  private readonly colRail: HTMLElement;
+  private readonly rowRail: HTMLElement;
+  private readonly gapBtn: HTMLButtonElement;
+  private readonly gapLine: HTMLElement;
+  private readonly edgeSouth: HTMLButtonElement;
+  private readonly edgeEast: HTMLButtonElement;
+  private readonly deleteBtn: HTMLButtonElement;
+  private readonly selectBox: HTMLElement;
+  private lineSelect: { kind: "col" | "row"; index: number } | null = null;
+  private lineDrag: LineDrag | null = null;
+  private tileMenuAt: { c: number; r: number } | null = null;
+  private readonly tileMenu: HTMLElement;
+  private readonly boardWrap: HTMLElement;
   private tower: Tower = {
     floors: [
       resizeMaze(
@@ -157,12 +177,12 @@ export class LevelEditor {
   };
   private floorIndex = 0;
   private mode: EditorMode = "share";
-  private tool: Tool = "wall";
+  private erase = false;
+  private brush: PaletteKind | null = null;
   private boostDir: Direction = "n";
   private readonly dirs: HTMLElement;
   private readonly themeSelect: HTMLSelectElement;
   private readonly titleEl: HTMLElement;
-  private readonly leadEl: HTMLElement;
   private readonly dirButtons = new Map<Direction, HTMLButtonElement>();
   private stroke: Stroke | null = null;
   private wallDrag: WallDrag | null = null;
@@ -179,18 +199,34 @@ export class LevelEditor {
       <div class="${styles.scrim}" data-scrim></div>
       <div class="${styles.card}" role="dialog" aria-modal="true" aria-labelledby="editor-title">
         <header class="${styles.head}">
-          <div>
-            <p class="${styles.kicker}" id="editor-title" data-title>${SHARE_COPY.title}</p>
-            <p class="${styles.lead}" data-lead>${SHARE_COPY.lead}</p>
-          </div>
+          <p class="${styles.kicker}" id="editor-title" data-title>${SHARE_TITLE}</p>
           <button type="button" class="glass-btn ${styles.close}" data-close aria-label="Close editor">${iconSvg("close")}</button>
         </header>
         <div class="${styles.body}">
+          <nav class="${styles.floorNav}" data-floors data-share-only role="tablist" aria-label="Floors"></nav>
           <div class="${styles.side}">
-            <div class="${styles.toolbar}">
+            <label class="${styles.themeField}">
+              <span class="${styles.label}">Theme</span>
+              <select class="${styles.themeSelect}" data-theme-select aria-label="Floor theme"></select>
+            </label>
+            <button type="button" class="glass-pill ${styles.erase}" data-erase aria-pressed="false">${iconSvg("floor")}Erase</button>
+            <div class="${styles.palette}" role="list" aria-label="Tiles" data-palette></div>
+            <div class="${styles.dirs}" data-dirs role="radiogroup" aria-label="Boost direction" hidden>
+              <span class="${styles.dirLabel}">Boost dir</span>
+            </div>
+            <p class="${styles.hint}" data-hint aria-live="polite"></p>
+            <div class="${styles.footer}">
+              <button type="button" class="glass-pill" data-paste title="Paste a model into the editor">${iconSvg("paste")}Paste</button>
+              <button type="button" class="glass-pill" data-copy data-campaign-only title="Copy a paste-ready line for authoredFloors.ts">${iconSvg("copy")}Copy model</button>
+              <button type="button" class="glass-pill" data-share data-share-only>${iconSvg("share")}Share</button>
+              <button type="button" class="glass-pill metal-ring ${styles.play}" data-play>Play</button>
+            </div>
+          </div>
+          <div class="${styles.stage}">
+            <div class="${styles.stageTop}">
               <div class="${styles.sizes}" data-sizes>
                 <div class="${styles.size}">
-                  <span class="${styles.label}">Columns</span>
+                  <span class="${styles.label}">Cols</span>
                   <div class="${styles.stepper}">
                     <button type="button" class="glass-btn ${styles.step}" data-axis="cols" data-delta="-1" aria-label="Fewer columns">${iconSvg("minus")}</button>
                     <span class="${styles.count}" data-cols>7</span>
@@ -206,46 +242,60 @@ export class LevelEditor {
                   </div>
                 </div>
               </div>
-              <div class="${styles.floors}" data-floors data-share-only role="tablist" aria-label="Floors"></div>
               <button type="button" class="glass-pill ${styles.clear}" data-clear>Clear</button>
             </div>
-            <div class="${styles.tools}" role="radiogroup" aria-label="Brush" data-tools></div>
-            <div class="${styles.dirs}" data-dirs role="radiogroup" aria-label="Boost direction" hidden>
-              <span class="${styles.dirLabel}">Direction</span>
+            <div class="${styles.boardWrap}" data-board-wrap>
+              <div class="${styles.sheet}" data-sheet data-theme="${DEFAULT_FLOOR_THEME}">
+                <div class="${styles.board}" data-board data-theme="${DEFAULT_FLOOR_THEME}" role="group" aria-label="Maze grid"></div>
+                <div class="${styles.playFrame}" data-play-frame aria-hidden="true"></div>
+                <div class="${styles.chrome}" data-chrome>
+                  <div class="${styles.colRail}" data-col-rail role="toolbar" aria-label="Columns"></div>
+                  <div class="${styles.rowRail}" data-row-rail role="toolbar" aria-label="Rows"></div>
+                  <div class="${styles.selectBox}" data-select-box hidden></div>
+                  <div class="${styles.gapLine}" data-gap-line hidden></div>
+                  <button type="button" class="${styles.gapBtn}" data-gap-btn hidden aria-label="Insert">${iconSvg("plus")}</button>
+                  <button type="button" class="${styles.edgePill} ${styles.edgeSouth}" data-append="row" aria-label="Add a row below">${iconSvg("plus")}</button>
+                  <button type="button" class="${styles.edgePill} ${styles.edgeEast}" data-append="col" aria-label="Add a column right">${iconSvg("plus")}</button>
+                  <button type="button" class="${styles.deleteBtn}" data-delete-line hidden aria-label="Delete">${iconSvg("minus")}</button>
+                </div>
+              </div>
+              <div class="${styles.tileMenu}" data-tile-menu hidden role="menu" aria-label="Place tile"></div>
             </div>
-            <label class="${styles.themeField}">
-              <span class="${styles.label}">Theme</span>
-              <select class="${styles.themeSelect}" data-theme-select aria-label="Floor theme"></select>
-            </label>
-            <p class="${styles.hint}" data-hint aria-live="polite"></p>
-            <div class="${styles.footer}">
-              <button type="button" class="glass-pill" data-paste title="Paste a model into the editor">${iconSvg("paste")}Paste</button>
-              <button type="button" class="glass-pill" data-copy data-campaign-only title="Copy a paste-ready line for authoredFloors.ts">${iconSvg("copy")}Copy model</button>
-              <button type="button" class="glass-pill" data-share data-share-only>${iconSvg("share")}Share</button>
-              <button type="button" class="glass-pill metal-ring ${styles.play}" data-play>Play</button>
-            </div>
-          </div>
-          <div class="${styles.stage}">
-            <div class="${styles.board}" data-board data-tool="wall" data-theme="${DEFAULT_FLOOR_THEME}" role="group" aria-label="Maze grid"></div>
           </div>
         </div>
       </div>
     `;
 
     this.board = this.require("[data-board]");
+    this.boardWrap = this.require("[data-board-wrap]");
     this.hint = this.require("[data-hint]");
-    this.colReadout = this.require("[data-cols]");
-    this.rowReadout = this.require("[data-rows]");
     this.dirs = this.require("[data-dirs]");
     this.themeSelect = this.require("[data-theme-select]");
     this.titleEl = this.require("[data-title]");
-    this.leadEl = this.require("[data-lead]");
-    this.mountTools();
+    this.colReadout = this.require("[data-cols]");
+    this.rowReadout = this.require("[data-rows]");
+    this.sheet = this.require("[data-sheet]");
+    this.playFrame = this.require("[data-play-frame]");
+    this.chrome = this.require("[data-chrome]");
+    this.colRail = this.require("[data-col-rail]");
+    this.rowRail = this.require("[data-row-rail]");
+    this.gapBtn = this.require("[data-gap-btn]");
+    this.gapLine = this.require("[data-gap-line]");
+    this.edgeSouth = this.require("[data-append='row']");
+    this.edgeEast = this.require("[data-append='col']");
+    this.deleteBtn = this.require("[data-delete-line]");
+    this.selectBox = this.require("[data-select-box]");
+    this.eraseBtn = this.require("[data-erase]");
+    this.tileMenu = this.require("[data-tile-menu]");
+    this.mountPalette();
+    this.mountTileMenu();
     this.mountDirections();
     this.mountThemes();
+    this.eraseBtn.addEventListener("click", () => this.setErase(!this.erase));
     this.require("[data-scrim]").addEventListener("click", this.requestClose);
     this.require("[data-close]").addEventListener("click", this.requestClose);
     this.require("[data-clear]").addEventListener("click", () => {
+      if (this.pairing()) return;
       clearInterior(this.draft);
       this.renderBoard();
     });
@@ -277,6 +327,37 @@ export class LevelEditor {
       const axis = button.dataset.axis === "rows" ? "rows" : "cols";
       this.changeSize(axis, Number(button.dataset.delta));
     });
+    this.edgeSouth.addEventListener("click", () => this.insertAt("row", this.draft.rows));
+    this.edgeEast.addEventListener("click", () => this.insertAt("col", this.draft.cols));
+    this.gapBtn.addEventListener("click", () => {
+      const kind = this.gapBtn.dataset.kind === "col" ? "col" : "row";
+      const at = Number(this.gapBtn.dataset.at);
+      if (!Number.isInteger(at)) return;
+      this.insertAt(kind, at);
+    });
+    this.deleteBtn.addEventListener("click", () => {
+      if (!this.lineSelect) return;
+      if (this.lineSelect.kind === "col") this.removeColumn(this.lineSelect.index);
+      else this.removeRow(this.lineSelect.index);
+    });
+    this.colRail.addEventListener("pointerdown", (event) => this.onHandlePointerDown(event, "col"));
+    this.rowRail.addEventListener("pointerdown", (event) => this.onHandlePointerDown(event, "row"));
+    this.colRail.addEventListener("pointermove", this.onLinePointerMove);
+    this.rowRail.addEventListener("pointermove", this.onLinePointerMove);
+    this.colRail.addEventListener("pointerup", this.onLinePointerUp);
+    this.rowRail.addEventListener("pointerup", this.onLinePointerUp);
+    this.colRail.addEventListener("pointercancel", this.onLinePointerUp);
+    this.rowRail.addEventListener("pointercancel", this.onLinePointerUp);
+    this.sheet.addEventListener("pointermove", this.onSheetPointerMove);
+    this.sheet.addEventListener("pointerleave", this.onSheetPointerLeave);
+    this.tileMenu.addEventListener("click", (event) => {
+      const button = (event.target as Element | null)?.closest<HTMLButtonElement>("[data-place]");
+      if (!button || button.disabled) return;
+      const place = button.dataset.place;
+      if (place === "clear" || PALETTE.some((tile) => tile.id === place)) {
+        this.placeFromMenu(place as PaletteKind | "clear");
+      }
+    });
     this.themeSelect.addEventListener("change", () => {
       this.setTheme(parseFloorTheme(this.themeSelect.value));
     });
@@ -286,7 +367,7 @@ export class LevelEditor {
     this.board.addEventListener("pointercancel", this.onPointerUp);
     this.board.addEventListener("contextmenu", (event) => event.preventDefault());
     window.addEventListener("keydown", this.onKey, true);
-    this.setTool("wall");
+    this.setErase(false);
   }
 
   isOpen(): boolean {
@@ -300,18 +381,22 @@ export class LevelEditor {
   open(tower: Tower, mode: EditorMode = "share"): void {
     this.mode = mode;
     this.root.dataset.mode = mode;
-    const copy = mode === "campaign" ? CAMPAIGN_COPY : SHARE_COPY;
-    this.titleEl.textContent = copy.title;
-    this.leadEl.textContent = copy.lead;
+    this.titleEl.textContent = mode === "campaign" ? CAMPAIGN_TITLE : SHARE_TITLE;
     this.tower = cloneTower(tower);
-    if (mode === "campaign" && this.tower.floors.length > 1) {
-      this.tower = { floors: [cloneTower(this.tower).floors[0]!] };
+    if (mode === "campaign") {
+      if (this.tower.floors.length > 1) this.tower = { floors: [cloneTower(this.tower).floors[0]!] };
+      const floor = this.tower.floors[0];
+      if (floor?.hatch) {
+        floor.goal = { ...floor.hatch };
+        floor.hatch = null;
+      }
     }
     this.floorIndex = 0;
-    this.setTool("wall");
+    this.brush = null;
+    this.setErase(false);
     this.syncSize();
     this.syncFloors();
-    this.syncTools();
+    this.syncPalette();
     this.syncThemes();
     this.renderBoard();
     this.root.hidden = false;
@@ -325,9 +410,13 @@ export class LevelEditor {
     this.pointerId = null;
     this.stroke = null;
     this.wallDrag = null;
-    this.tileDrag = null;
-    this.board.classList.remove(styles.dragging);
+    this.lineDrag = null;
+    this.clearTileDrag();
+    this.lineSelect = null;
+    this.hideTileMenu();
+    this.hideGap();
     this.clearNotice();
+    delete this.chrome.dataset.dragging;
     delete this.root.dataset.phase;
     this.root.hidden = true;
   }
@@ -338,19 +427,138 @@ export class LevelEditor {
     this.callbacks.onClose();
   };
 
-  private mountTools(): void {
-    const host = this.require("[data-tools]");
-    for (const tool of TOOLS) {
+  private mountPalette(): void {
+    const host = this.require("[data-palette]");
+    for (const tile of PALETTE) {
       const button = document.createElement("button");
       button.type = "button";
-      button.className = `glass-pill ${styles.tool}`;
-      button.dataset.tool = tool.id;
+      button.className = styles.swatch;
+      button.dataset.palette = tile.id;
+      button.dataset.kind = tile.id;
       button.setAttribute("role", "radio");
-      button.innerHTML = `${iconSvg(tool.icon)}${tool.label}`;
-      button.addEventListener("click", () => this.setTool(tool.id));
-      this.toolButtons.set(tool.id, button);
+      button.title = tile.label;
+      button.innerHTML = `${iconSvg(tile.icon)}<span>${tile.label}</span>`;
+      button.addEventListener("click", () => this.setBrush(tile.id));
+      this.paletteButtons.set(tile.id, button);
       host.append(button);
     }
+  }
+
+  private mountTileMenu(): void {
+    this.tileMenu.replaceChildren();
+    const clear = document.createElement("button");
+    clear.type = "button";
+    clear.className = styles.tileMenuItem;
+    clear.dataset.place = "clear";
+    clear.setAttribute("role", "menuitem");
+    clear.title = "Clear";
+    clear.innerHTML = `${iconSvg("floor")}<span>Clear</span>`;
+    this.tileMenu.append(clear);
+    for (const tile of PALETTE) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = styles.tileMenuItem;
+      button.dataset.place = tile.id;
+      button.setAttribute("role", "menuitem");
+      button.title = tile.label;
+      button.innerHTML = `${iconSvg(tile.icon)}<span>${tile.label}</span>`;
+      this.tileMenu.append(button);
+    }
+  }
+
+  private openTileMenu(point: { c: number; r: number }): void {
+    if (this.pairing()) return;
+    const cell = this.cells.get(`${point.c},${point.r}`);
+    if (!cell) return;
+    this.tileMenuAt = point;
+    const hatchOk = this.floorIndex !== this.tower.floors.length - 1;
+    for (const button of this.tileMenu.querySelectorAll<HTMLButtonElement>("[data-place]")) {
+      const hide = button.dataset.place === "hatch" && !hatchOk;
+      button.hidden = hide;
+      button.disabled = hide;
+    }
+    this.tileMenu.hidden = false;
+    this.syncMenuHighlight();
+    this.tileMenu.style.left = "0px";
+    this.tileMenu.style.top = "0px";
+    const wrap = this.boardWrap.getBoundingClientRect();
+    const rect = cell.getBoundingClientRect();
+    const menuW = this.tileMenu.offsetWidth;
+    const menuH = this.tileMenu.offsetHeight;
+    let left = rect.left - wrap.left + rect.width + 8;
+    let top = rect.top - wrap.top;
+    if (left + menuW > wrap.width) left = rect.left - wrap.left - menuW - 8;
+    if (top + menuH > wrap.height) top = Math.max(0, wrap.height - menuH);
+    if (left < 0) left = Math.max(0, rect.left - wrap.left);
+    this.tileMenu.style.left = `${Math.round(left)}px`;
+    this.tileMenu.style.top = `${Math.round(top)}px`;
+  }
+
+  private hideTileMenu(): void {
+    this.tileMenuAt = null;
+    this.tileMenu.hidden = true;
+    this.syncMenuHighlight();
+  }
+
+  private syncMenuHighlight(): void {
+    for (const cell of this.cells.values()) {
+      const on = !!this.tileMenuAt
+        && Number(cell.dataset.c) === this.tileMenuAt.c
+        && Number(cell.dataset.r) === this.tileMenuAt.r;
+      if (on) cell.dataset.menu = "true";
+      else delete cell.dataset.menu;
+    }
+  }
+
+  private pairing(): "switch" | "warp" | null {
+    if (pendingSwitch(this.draft)) return "switch";
+    if (loneWarpPair(this.draft) !== null) return "warp";
+    return null;
+  }
+
+  private enterPairing(kind: "switch" | "warp"): void {
+    this.brush = kind;
+    this.erase = false;
+    this.board.dataset.erase = "false";
+    this.eraseBtn.classList.toggle("selected", false);
+    this.eraseBtn.setAttribute("aria-pressed", "false");
+    this.dirs.hidden = true;
+    this.syncPalette();
+    this.refreshHint();
+  }
+
+  private cancelPairing(): boolean {
+    if (!this.pairing()) return false;
+    cancelPendingPair(this.draft);
+    this.brush = null;
+    this.stroke = null;
+    this.syncPalette();
+    this.syncCells();
+    this.syncWalls();
+    this.refreshHint();
+    return true;
+  }
+
+  private placeFromMenu(kind: PaletteKind | "clear"): void {
+    const point = this.tileMenuAt;
+    this.hideTileMenu();
+    if (!point) return;
+    if (kind === "clear") clearFloor(this.draft, point);
+    else if (kind === "hatch") setHatch(this.tower, this.floorIndex, point);
+    else if (kind === "pit") setPit(this.draft, point, true);
+    else if (kind === "boost") setBoost(this.draft, point, this.boostDir);
+    else if (kind === "ice") setIce(this.draft, point);
+    else if (kind === "crumble") setCrumble(this.draft, point);
+    else if (kind === "switch") {
+      paintSwitch(this.draft, point);
+      if (pendingSwitch(this.draft)) this.enterPairing("switch");
+    } else if (kind === "warp") {
+      paintWarp(this.draft, point);
+      if (loneWarpPair(this.draft) !== null) this.enterPairing("warp");
+    }
+    this.syncCells();
+    this.syncWalls();
+    this.refreshHint();
   }
 
   private mountDirections(): void {
@@ -398,19 +606,31 @@ export class LevelEditor {
   private syncThemes(): void {
     const theme = parseFloorTheme(this.draft.theme);
     this.board.dataset.theme = theme;
+    this.sheet.dataset.theme = theme;
     this.themeSelect.value = theme;
   }
 
-  private setTool(tool: Tool): void {
-    this.tool = tool;
-    this.board.dataset.tool = tool;
-    this.dirs.hidden = tool !== "boost";
+  private setErase(on: boolean): void {
+    if (on && this.pairing()) return;
+    this.erase = on;
+    this.board.dataset.erase = String(on);
+    this.eraseBtn.classList.toggle("selected", on);
+    this.eraseBtn.setAttribute("aria-pressed", String(on));
+    if (on) this.stroke = null;
+    this.hideTileMenu();
+    this.syncPalette();
     this.refreshHint();
-    for (const [id, button] of this.toolButtons) {
-      const on = id === tool;
-      button.classList.toggle("selected", on);
-      button.setAttribute("aria-checked", String(on));
-    }
+  }
+
+  private setBrush(kind: PaletteKind): void {
+    if (this.pairing() && kind !== this.pairing()) return;
+    this.brush = this.brush === kind ? null : kind;
+    if (this.pairing() && this.brush !== this.pairing()) this.brush = this.pairing();
+    this.setErase(false);
+    this.dirs.hidden = this.brush !== "boost";
+    this.hideTileMenu();
+    this.syncPalette();
+    this.refreshHint();
   }
 
   private async share(): Promise<void> {
@@ -455,11 +675,10 @@ export class LevelEditor {
     this.floorIndex = 0;
     this.stroke = null;
     this.wallDrag = null;
-    this.tileDrag = null;
-    this.board.classList.remove(styles.dragging);
+    this.clearTileDrag();
     this.syncSize();
     this.syncFloors();
-    this.syncTools();
+    this.syncPalette();
     this.syncThemes();
     this.renderBoard();
     this.refreshHint();
@@ -481,15 +700,24 @@ export class LevelEditor {
 
   private refreshHint(): void {
     if (this.noticeTimer !== 0) return;
-    if (this.tool === "warp" && loneWarpPair(this.draft) !== null) {
-      this.hint.textContent = "Click a second cell to place the other end of the warp.";
+    const pair = this.pairing();
+    if (pair === "warp") {
+      this.hint.textContent = "Finish the warp: click a second cell. Esc cancels.";
       return;
     }
-    if (this.tool === "switch" && pendingSwitch(this.draft)) {
-      this.hint.textContent = "Click a wall. The plate opens it once the ball stops there.";
+    if (pair === "switch") {
+      this.hint.textContent = "Finish the switch: click a wall to link. Esc cancels.";
       return;
     }
-    this.hint.textContent = HINTS[this.tool];
+    if (this.erase) {
+      this.hint.textContent = HINT_ERASE;
+      return;
+    }
+    if (this.brush) {
+      this.hint.textContent = HINT_BRUSH[this.brush];
+      return;
+    }
+    this.hint.textContent = HINT_SELECT;
   }
 
   private get draft(): Maze {
@@ -499,29 +727,358 @@ export class LevelEditor {
   }
 
   private changeSize(axis: "cols" | "rows", delta: number): void {
-    const cols = this.draft.cols + (axis === "cols" ? delta : 0);
-    const rows = this.draft.rows + (axis === "rows" ? delta : 0);
-    this.tower = resizeFloor(this.tower, this.floorIndex, cols, rows);
+    if (this.pairing()) return;
+    if (delta > 0) {
+      this.insertAt(axis === "cols" ? "col" : "row", axis === "cols" ? this.draft.cols : this.draft.rows);
+      return;
+    }
+    if (axis === "cols") this.removeColumn(this.draft.cols - 1);
+    else this.removeRow(this.draft.rows - 1);
+  }
+
+  private insertAt(kind: "col" | "row", at: number): void {
+    if (this.pairing()) return;
+    if (kind === "col") {
+      if (this.draft.cols >= MAZE_MAX) return;
+      this.tower = insertFloorColumn(this.tower, this.floorIndex, at);
+    } else {
+      if (this.draft.rows >= MAZE_MAX) return;
+      this.tower = insertFloorRow(this.tower, this.floorIndex, at);
+    }
+    this.clearLineSelect();
+    this.hideGap();
     this.syncSize();
     this.renderBoard();
   }
 
+  private removeColumn(index: number): void {
+    if (this.draft.cols <= MAZE_MIN) return;
+    this.tower = deleteFloorColumn(this.tower, this.floorIndex, index);
+    this.clearLineSelect();
+    this.hideGap();
+    this.syncSize();
+    this.renderBoard();
+  }
+
+  private removeRow(index: number): void {
+    if (this.draft.rows <= MAZE_MIN) return;
+    this.tower = deleteFloorRow(this.tower, this.floorIndex, index);
+    this.clearLineSelect();
+    this.hideGap();
+    this.syncSize();
+    this.renderBoard();
+  }
+
+  private selectLine(kind: "col" | "row", index: number): void {
+    if (kind === "col" && (index < 0 || index >= this.draft.cols)) return;
+    if (kind === "row" && (index < 0 || index >= this.draft.rows)) return;
+    this.lineSelect = { kind, index };
+    this.hideGap();
+    this.hideTileMenu();
+    this.syncChrome();
+  }
+
+  private clearLineSelect(): void {
+    this.lineSelect = null;
+    this.syncChrome();
+  }
+
+  private onHandlePointerDown = (event: PointerEvent, kind: "col" | "row"): void => {
+    if (event.button !== 0 || this.pairing()) return;
+    const handle = (event.target as Element | null)?.closest<HTMLButtonElement>("[data-handle]");
+    if (!handle || handle.disabled) return;
+    const index = Number(handle.dataset.index);
+    if (!Number.isInteger(index)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.hideTileMenu();
+    this.hideGap();
+    this.lineDrag = { kind, from: index, over: index, moved: false, pointerId: event.pointerId };
+    this.selectLine(kind, index);
+    handle.setPointerCapture(event.pointerId);
+    this.chrome.dataset.dragging = kind;
+  };
+
+  private onLinePointerMove = (event: PointerEvent): void => {
+    const drag = this.lineDrag;
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    const active = this.activeBoardRect();
+    if (!active) return;
+    const count = drag.kind === "col" ? this.draft.cols : this.draft.rows;
+    const span = drag.kind === "col" ? active.width : active.height;
+    const local = drag.kind === "col" ? event.clientX - active.left : event.clientY - active.top;
+    const over = Math.min(count - 1, Math.max(0, Math.floor(local / Math.max(span / count, 1))));
+    if (over === drag.over) return;
+    drag.over = over;
+    drag.moved = over !== drag.from;
+    this.selectLine(drag.kind, over);
+  };
+
+  private onLinePointerUp = (event: PointerEvent): void => {
+    const drag = this.lineDrag;
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    this.lineDrag = null;
+    delete this.chrome.dataset.dragging;
+    if (drag.moved && drag.over !== drag.from) {
+      if (drag.kind === "col") this.tower = moveFloorColumn(this.tower, this.floorIndex, drag.from, drag.over);
+      else this.tower = moveFloorRow(this.tower, this.floorIndex, drag.from, drag.over);
+      this.renderBoard();
+      this.selectLine(drag.kind, drag.over);
+      return;
+    }
+    this.selectLine(drag.kind, drag.from);
+  };
+
+  private hideGap(): void {
+    this.gapBtn.hidden = true;
+    this.gapLine.hidden = true;
+    delete this.sheet.dataset.gap;
+  }
+
+  private onSheetPointerMove = (event: PointerEvent): void => {
+    if (this.pointerId !== null || this.tileDrag || this.lineDrag || this.pairing()) return;
+    const target = event.target as Element | null;
+    const onChromeControl = target?.closest<HTMLElement>("[data-gap-btn], [data-append], [data-delete-line], [data-handle]");
+    if (onChromeControl?.hasAttribute("data-gap-btn")) {
+      if (!this.gapBtn.hidden) this.gapLine.hidden = false;
+      this.clearRailHover();
+      return;
+    }
+    if (onChromeControl && !onChromeControl.hasAttribute("data-handle")) return;
+
+    const active = this.activeBoardRect();
+    if (!active) {
+      this.hideGap();
+      this.sheet.dataset.edge = "";
+      this.clearRailHover();
+      return;
+    }
+    const { cols, rows } = this.draft;
+    const cellW = active.width / cols;
+    const cellH = active.height / rows;
+    const x = event.clientX - active.left;
+    const y = event.clientY - active.top;
+    const rail = 34;
+    const edge = 24;
+    const gapHit = 12;
+
+    const inRailX = x >= -rail && x < Math.min(cellW * 0.55, 40);
+    const inRailY = y >= -rail && y < Math.min(cellH * 0.55, 40);
+    const inBoard = x >= 0 && y >= 0 && x <= active.width && y <= active.height;
+
+    let gap: { kind: "col" | "row"; at: number } | null = null;
+    if (this.draft.cols < MAZE_MAX && (inBoard || inRailY) && y >= -rail && y <= active.height + edge) {
+      for (let at = 0; at <= cols; at += 1) {
+        if (Math.abs(x - at * cellW) <= gapHit) {
+          gap = { kind: "col", at };
+          break;
+        }
+      }
+    }
+    if (!gap && this.draft.rows < MAZE_MAX && (inBoard || inRailX) && x >= -rail && x <= active.width + edge) {
+      for (let at = 0; at <= rows; at += 1) {
+        if (Math.abs(y - at * cellH) <= gapHit) {
+          gap = { kind: "row", at };
+          break;
+        }
+      }
+    }
+
+    if (gap) {
+      this.showGap(gap.kind, gap.at, active, cellW, cellH);
+      this.clearRailHover();
+      this.sheet.dataset.edge = "";
+      this.sheet.dataset.hot = "true";
+      return;
+    }
+
+    this.hideGap();
+
+    let hoverCol: number | null = null;
+    let hoverRow: number | null = null;
+    if (onChromeControl?.hasAttribute("data-handle")) {
+      const kind = onChromeControl.dataset.handle === "row" ? "row" : "col";
+      const index = Number(onChromeControl.dataset.index);
+      if (kind === "col") hoverCol = index;
+      else hoverRow = index;
+    } else {
+      if (inBoard || inRailY) {
+        const col = Math.floor(x / cellW);
+        if (col >= 0 && col < cols) hoverCol = col;
+      }
+      if (inBoard || inRailX) {
+        const row = Math.floor(y / cellH);
+        if (row >= 0 && row < rows) hoverRow = row;
+      }
+      if (inRailY && !inBoard) hoverRow = null;
+      if (inRailX && !inBoard) hoverCol = null;
+    }
+    this.setRailHover(hoverCol, hoverRow);
+
+    let edgeMode: "" | "south" | "east" | "both" = "";
+    if (x >= 0 && x <= active.width && y >= active.height - edge && y <= active.height + edge + 10) {
+      edgeMode = "south";
+    }
+    if (y >= 0 && y <= active.height && x >= active.width - edge && x <= active.width + edge + 10) {
+      edgeMode = edgeMode === "south" ? "both" : "east";
+    }
+    this.sheet.dataset.edge = edgeMode;
+    this.sheet.dataset.hot = inBoard || inRailX || inRailY || edgeMode !== "" ? "true" : "";
+  };
+
+  private onSheetPointerLeave = (): void => {
+    this.hideGap();
+    this.sheet.dataset.edge = "";
+    this.sheet.dataset.hot = "";
+    this.clearRailHover();
+  };
+
+  private setRailHover(col: number | null, row: number | null): void {
+    for (const handle of this.colRail.querySelectorAll<HTMLButtonElement>("[data-handle]")) {
+      const index = Number(handle.dataset.index);
+      handle.dataset.hot = col === index ? "true" : "";
+    }
+    for (const handle of this.rowRail.querySelectorAll<HTMLButtonElement>("[data-handle]")) {
+      const index = Number(handle.dataset.index);
+      handle.dataset.hot = row === index ? "true" : "";
+    }
+  }
+
+  private clearRailHover(): void {
+    this.setRailHover(null, null);
+  }
+
+  private showGap(
+    kind: "col" | "row",
+    at: number,
+    active: DOMRect,
+    cellW: number,
+    cellH: number,
+  ): void {
+    const chrome = this.chrome.getBoundingClientRect();
+    this.gapBtn.hidden = false;
+    this.gapLine.hidden = true;
+    this.gapBtn.dataset.kind = kind;
+    this.gapBtn.dataset.at = String(at);
+    this.sheet.dataset.gap = kind;
+    if (kind === "row") {
+      const y = active.top - chrome.top + at * cellH;
+      this.gapLine.style.left = `${active.left - chrome.left}px`;
+      this.gapLine.style.top = `${y}px`;
+      this.gapLine.style.width = `${active.width}px`;
+      this.gapLine.style.height = "2px";
+      this.gapBtn.style.left = `${active.left - chrome.left - 14}px`;
+      this.gapBtn.style.top = `${y}px`;
+      this.gapBtn.setAttribute("aria-label", at === 0 ? "Add a row above" : at >= this.draft.rows ? "Add a row below" : "Insert a row");
+    } else {
+      const x = active.left - chrome.left + at * cellW;
+      this.gapLine.style.left = `${x}px`;
+      this.gapLine.style.top = `${active.top - chrome.top}px`;
+      this.gapLine.style.width = "2px";
+      this.gapLine.style.height = `${active.height}px`;
+      this.gapBtn.style.left = `${x}px`;
+      this.gapBtn.style.top = `${active.top - chrome.top - 14}px`;
+      this.gapBtn.setAttribute("aria-label", at === 0 ? "Add a column left" : at >= this.draft.cols ? "Add a column right" : "Insert a column");
+    }
+  }
+
+  private activeBoardRect(): DOMRect | null {
+    const rect = this.board.getBoundingClientRect();
+    const style = getComputedStyle(this.board);
+    const left = parseFloat(style.borderLeftWidth) || 0;
+    const top = parseFloat(style.borderTopWidth) || 0;
+    const right = parseFloat(style.borderRightWidth) || 0;
+    const bottom = parseFloat(style.borderBottomWidth) || 0;
+    const width = rect.width - left - right;
+    const height = rect.height - top - bottom;
+    if (width <= 0 || height <= 0) return null;
+    return new DOMRect(rect.left + left, rect.top + top, width, height);
+  }
+
+  private syncChrome(): void {
+    const { cols, rows } = this.draft;
+    for (const el of [this.chrome, this.playFrame, this.sheet]) {
+      el.style.setProperty("--cols", String(cols));
+      el.style.setProperty("--rows", String(rows));
+    }
+    this.edgeSouth.disabled = rows >= MAZE_MAX;
+    this.edgeEast.disabled = cols >= MAZE_MAX;
+
+    const canDeleteCol = cols > MAZE_MIN;
+    const canDeleteRow = rows > MAZE_MIN;
+    for (const handle of this.colRail.querySelectorAll<HTMLButtonElement>("[data-handle]")) {
+      const index = Number(handle.dataset.index);
+      handle.dataset.selected = this.lineSelect?.kind === "col" && this.lineSelect.index === index ? "true" : "";
+    }
+    for (const handle of this.rowRail.querySelectorAll<HTMLButtonElement>("[data-handle]")) {
+      const index = Number(handle.dataset.index);
+      handle.dataset.selected = this.lineSelect?.kind === "row" && this.lineSelect.index === index ? "true" : "";
+    }
+
+    for (const cell of this.cells.values()) delete cell.dataset.line;
+
+    if (!this.lineSelect) {
+      this.selectBox.hidden = true;
+      this.deleteBtn.hidden = true;
+      return;
+    }
+
+    const { kind, index } = this.lineSelect;
+    if ((kind === "col" && index >= cols) || (kind === "row" && index >= rows)) {
+      this.lineSelect = null;
+      this.selectBox.hidden = true;
+      this.deleteBtn.hidden = true;
+      return;
+    }
+
+    this.selectBox.hidden = false;
+    this.deleteBtn.hidden = false;
+    this.deleteBtn.disabled = kind === "col" ? !canDeleteCol : !canDeleteRow;
+    this.deleteBtn.setAttribute("aria-label", kind === "col" ? `Delete column ${index + 1}` : `Delete row ${index + 1}`);
+    this.selectBox.dataset.kind = kind;
+    if (kind === "col") {
+      this.selectBox.style.left = `calc(${index} / var(--cols) * 100%)`;
+      this.selectBox.style.top = "0";
+      this.selectBox.style.width = `calc(100% / var(--cols))`;
+      this.selectBox.style.height = "100%";
+      this.deleteBtn.style.left = `calc((${index} + 0.5) / var(--cols) * 100%)`;
+      this.deleteBtn.style.top = "0";
+      this.deleteBtn.style.transform = "translate(-50%, calc(-100% - 8px))";
+    } else {
+      this.selectBox.style.left = "0";
+      this.selectBox.style.top = `calc(${index} / var(--rows) * 100%)`;
+      this.selectBox.style.width = "100%";
+      this.selectBox.style.height = `calc(100% / var(--rows))`;
+      this.deleteBtn.style.left = "0";
+      this.deleteBtn.style.top = `calc((${index} + 0.5) / var(--rows) * 100%)`;
+      this.deleteBtn.style.transform = "translate(calc(-100% - 8px), -50%)";
+    }
+
+    for (const cell of this.cells.values()) {
+      const match = kind === "col"
+        ? Number(cell.dataset.c) === index
+        : Number(cell.dataset.r) === index;
+      if (match) cell.dataset.line = "true";
+    }
+  }
+
   private selectFloor(index: number): void {
+    if (this.pairing()) return;
     if (!Number.isInteger(index) || index < 0 || index >= this.tower.floors.length) return;
     if (index === this.floorIndex) return;
     this.floorIndex = index;
     this.stroke = null;
     this.wallDrag = null;
-    this.tileDrag = null;
+    this.clearTileDrag();
     this.syncFloors();
-    this.syncTools();
+    this.syncPalette();
     this.syncThemes();
     this.renderBoard();
     this.refreshHint();
   }
 
   private changeFloors(delta: number): void {
-    if (this.mode === "campaign") return;
+    if (this.mode === "campaign" || this.pairing()) return;
     if (delta > 0) {
       this.tower = addFloor(this.tower);
       this.floorIndex = this.tower.floors.length - 1;
@@ -531,9 +1088,9 @@ export class LevelEditor {
     }
     this.stroke = null;
     this.wallDrag = null;
-    this.tileDrag = null;
+    this.clearTileDrag();
     this.syncFloors();
-    this.syncTools();
+    this.syncPalette();
     this.syncThemes();
     this.renderBoard();
     this.refreshHint();
@@ -546,7 +1103,7 @@ export class LevelEditor {
     this.tower.floors.forEach((_, index) => {
       const button = document.createElement("button");
       button.type = "button";
-      button.className = `glass-pill ${styles.tab}`;
+      button.className = `glass-pill ${styles.floorTab}`;
       button.dataset.floor = String(index);
       button.setAttribute("role", "tab");
       button.setAttribute("aria-selected", String(index === this.floorIndex));
@@ -556,14 +1113,14 @@ export class LevelEditor {
     });
     const add = document.createElement("button");
     add.type = "button";
-    add.className = `glass-btn ${styles.step}`;
+    add.className = `glass-btn ${styles.floorStep}`;
     add.dataset.floor = "add";
     add.disabled = count >= FLOOR_MAX;
     add.setAttribute("aria-label", "Add a floor below");
     add.innerHTML = iconSvg("plus");
     const remove = document.createElement("button");
     remove.type = "button";
-    remove.className = `glass-btn ${styles.step}`;
+    remove.className = `glass-btn ${styles.floorStep}`;
     remove.dataset.floor = "remove";
     remove.disabled = count <= FLOOR_MIN;
     remove.setAttribute("aria-label", "Remove this floor");
@@ -571,43 +1128,44 @@ export class LevelEditor {
     host.append(add, remove);
   }
 
-  private syncTools(): void {
+  private syncPalette(): void {
     const last = this.tower.floors.length - 1;
-    const allow: Record<Tool, boolean> = {
-      wall: true,
-      pit: true,
-      floor: true,
-      boost: true,
-      warp: true,
-      ice: true,
-      crumble: true,
-      switch: true,
-      hatch: this.floorIndex !== last,
-      start: false,
-      goal: false,
-    };
-    for (const [id, button] of this.toolButtons) button.hidden = !allow[id];
-    if (!allow[this.tool]) this.setTool("wall");
+    const hatchOk = this.floorIndex !== last;
+    if (this.brush === "hatch" && !hatchOk) this.brush = null;
+    for (const [id, button] of this.paletteButtons) {
+      const hide = id === "hatch" && !hatchOk;
+      const on = !this.erase && this.brush === id;
+      button.hidden = hide;
+      button.disabled = hide;
+      button.classList.toggle("selected", on);
+      button.setAttribute("aria-checked", String(on));
+    }
+    this.dirs.hidden = this.erase || this.brush !== "boost";
+    this.board.dataset.brush = this.erase ? "erase" : (this.brush ?? "");
   }
 
   private syncSize(): void {
     this.colReadout.textContent = String(this.draft.cols);
     this.rowReadout.textContent = String(this.draft.rows);
-    for (const button of this.root.querySelectorAll<HTMLButtonElement>("[data-delta]")) {
+    for (const button of this.root.querySelectorAll<HTMLButtonElement>("[data-sizes] [data-delta]")) {
       const axis = button.dataset.axis === "rows" ? "rows" : "cols";
       const value = axis === "rows" ? this.draft.rows : this.draft.cols;
       const delta = Number(button.dataset.delta);
       button.disabled = delta < 0 ? value <= MAZE_MIN : value >= MAZE_MAX;
     }
+    this.syncChrome();
   }
 
   private renderBoard(): void {
     const { cols, rows } = this.draft;
     this.board.style.setProperty("--cols", String(cols));
     this.board.style.setProperty("--rows", String(rows));
+    this.sheet.style.setProperty("--cols", String(cols));
+    this.sheet.style.setProperty("--rows", String(rows));
     this.board.replaceChildren();
     this.cells.clear();
     this.walls.clear();
+    this.mountRails();
 
     for (let r = 0; r < rows; r += 1) {
       for (let c = 0; c < cols; c += 1) {
@@ -620,8 +1178,8 @@ export class LevelEditor {
         cell.dataset.r = String(r);
         cell.style.setProperty("--c", String(c));
         cell.style.setProperty("--r", String(r));
-        this.board.append(cell);
         this.cells.set(`${c},${r}`, cell);
+        this.board.append(cell);
       }
     }
 
@@ -632,8 +1190,37 @@ export class LevelEditor {
       for (let c = 0; c < cols; c += 1) this.addWall("h", c, r);
     }
 
+    this.syncSize();
     this.syncCells();
     this.syncWalls();
+  }
+
+  private mountRails(): void {
+    const { cols, rows } = this.draft;
+    this.colRail.replaceChildren();
+    this.rowRail.replaceChildren();
+    for (let c = 0; c < cols; c += 1) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = styles.handle;
+      button.dataset.handle = "col";
+      button.dataset.index = String(c);
+      button.style.setProperty("--i", String(c));
+      button.setAttribute("aria-label", `Select column ${c + 1}`);
+      button.innerHTML = `<span class="${styles.handleBars}" aria-hidden="true"></span>`;
+      this.colRail.append(button);
+    }
+    for (let r = 0; r < rows; r += 1) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = styles.handle;
+      button.dataset.handle = "row";
+      button.dataset.index = String(r);
+      button.style.setProperty("--i", String(r));
+      button.setAttribute("aria-label", `Select row ${r + 1}`);
+      button.innerHTML = `<span class="${styles.handleBars}" aria-hidden="true"></span>`;
+      this.rowRail.append(button);
+    }
   }
 
   private addWall(axis: WallAxis, c: number, r: number): void {
@@ -653,11 +1240,17 @@ export class LevelEditor {
 
   private syncCells(): void {
     const openPairs = openWarpPairs(this.draft);
+    const drag = this.tileDrag;
     for (const [id, cell] of this.cells) {
       const [c, r] = id.split(",").map(Number);
       if (c === undefined || r === undefined) continue;
       const last = this.tower.floors.length - 1;
-      const paint = describeCell(this.draft, c, r, openPairs, this.floorIndex === last, this.floorIndex > 0);
+      let paint = describeCell(this.draft, c, r, openPairs, this.floorIndex === last, this.floorIndex > 0);
+      const isSource = !!drag && drag.from.c === c && drag.from.r === r;
+      const isOver = !!drag && drag.moved && drag.over.c === c && drag.over.r === r;
+      if (isOver && this.canDropAt(drag.over, drag.lift)) {
+        paint = describeLift(drag.lift, c, r, this.floorIndex > 0);
+      }
       cell.dataset.kind = paint.kind;
       if (paint.dir) cell.dataset.dir = paint.dir;
       else delete cell.dataset.dir;
@@ -665,6 +1258,13 @@ export class LevelEditor {
       else delete cell.dataset.pair;
       if (paint.open) cell.dataset.open = "true";
       else delete cell.dataset.open;
+      if (isSource) cell.dataset.dragging = "true";
+      else delete cell.dataset.dragging;
+      if (isOver) cell.dataset.drop = this.canDropAt(drag.over, drag.lift) ? "ok" : "no";
+      else delete cell.dataset.drop;
+      const menuOn = !!this.tileMenuAt && this.tileMenuAt.c === c && this.tileMenuAt.r === r;
+      if (menuOn) cell.dataset.menu = "true";
+      else delete cell.dataset.menu;
       cell.setAttribute("aria-label", paint.label);
     }
   }
@@ -684,6 +1284,29 @@ export class LevelEditor {
     const tone = switchTone(this.draft, axis, c, r);
     if (tone === null) delete wall.dataset.pair;
     else wall.dataset.pair = String(tone);
+    if (axis === "v") {
+      const joinN = !open && r > 0
+        && (interiorClosed(this.draft, "h", c, r - 1) || interiorClosed(this.draft, "h", c + 1, r - 1));
+      const joinS = !open
+        && (interiorClosed(this.draft, "h", c, r) || interiorClosed(this.draft, "h", c + 1, r));
+      if (joinN) wall.dataset.joinN = "true";
+      else delete wall.dataset.joinN;
+      if (joinS) wall.dataset.joinS = "true";
+      else delete wall.dataset.joinS;
+      delete wall.dataset.joinW;
+      delete wall.dataset.joinE;
+    } else {
+      const joinW = !open && c > 0
+        && (interiorClosed(this.draft, "v", c - 1, r) || interiorClosed(this.draft, "v", c - 1, r + 1));
+      const joinE = !open
+        && (interiorClosed(this.draft, "v", c, r) || interiorClosed(this.draft, "v", c, r + 1));
+      if (joinW) wall.dataset.joinW = "true";
+      else delete wall.dataset.joinW;
+      if (joinE) wall.dataset.joinE = "true";
+      else delete wall.dataset.joinE;
+      delete wall.dataset.joinN;
+      delete wall.dataset.joinS;
+    }
     const direction = axis === "v" ? "Vertical" : "Horizontal";
     const linked = tone === null ? "" : ", linked to a switch";
     wall.setAttribute("aria-label", `${direction} wall, ${open ? "open" : "closed"}${linked}`);
@@ -695,15 +1318,14 @@ export class LevelEditor {
     this.pointerId = event.pointerId;
     this.stroke = null;
     this.wallDrag = null;
-    this.tileDrag = null;
+    this.clearTileDrag();
+    if (this.lineSelect) this.clearLineSelect();
+    this.hideGap();
+    if (!this.tileMenu.contains(event.target as Node)) this.hideTileMenu();
     this.board.setPointerCapture(event.pointerId);
 
-    if (this.tool === "wall") {
-      this.beginWallDrag(event.clientX, event.clientY);
-      if (this.wallDrag) return;
-    }
-
-    if (this.tool === "switch" && pendingSwitch(this.draft)) {
+    const pair = this.pairing();
+    if (pair === "switch") {
       const wall = elementAt(event.clientX, event.clientY, "data-wall");
       if (wall) {
         this.stroke = "close";
@@ -711,11 +1333,22 @@ export class LevelEditor {
         this.syncCells();
         this.syncWalls();
         this.refreshHint();
-        return;
       }
+      return;
+    }
+    if (pair === "warp") {
+      this.brush = "warp";
+      this.applyPaint(event.clientX, event.clientY);
+      return;
     }
 
-    if (this.beginTileDrag(event.clientX, event.clientY)) return;
+    if (!this.erase && !this.brush && this.beginTileDrag(event.clientX, event.clientY)) return;
+
+    if (!this.erase) {
+      this.beginWallDrag(event.clientX, event.clientY);
+      if (this.wallDrag) return;
+    }
+
     this.applyPaint(event.clientX, event.clientY);
   };
 
@@ -725,91 +1358,61 @@ export class LevelEditor {
       this.extendTileDrag(event.clientX, event.clientY);
       return;
     }
+    if (this.wallDrag) {
+      this.extendWallDrag(event.clientX, event.clientY);
+      return;
+    }
     this.applyPaint(event.clientX, event.clientY);
   };
 
   private onPointerUp = (event: PointerEvent): void => {
     if (event.pointerId !== this.pointerId) return;
     const drag = this.tileDrag;
+    const hadWallDrag = this.wallDrag !== null;
+    const hadStroke = this.stroke !== null;
     this.pointerId = null;
     this.stroke = null;
     this.wallDrag = null;
-    this.tileDrag = null;
-    this.board.classList.remove(styles.dragging);
-    if (drag && !drag.moved) this.clickLift(drag);
-  };
-
-  private beginTileDrag(x: number, y: number): boolean {
-    const cell = elementAt(x, y, "data-cell");
-    if (!cell) return false;
-    const c = Number(cell.dataset.c);
-    const r = Number(cell.dataset.r);
-    if (!Number.isInteger(c) || !Number.isInteger(r)) return false;
-    const last = this.tower.floors.length - 1;
-    const lift = liftAt(this.draft, { c, r }, {
-      start: this.floorIndex === 0,
-      goal: this.floorIndex === last,
-      hatch: this.floorIndex !== last,
-    });
-    if (!lift) return false;
-    this.tileDrag = { lift, at: { c, r }, moved: false };
-    this.board.classList.add(styles.dragging);
-    return true;
-  }
-
-  private extendTileDrag(x: number, y: number): void {
-    const drag = this.tileDrag;
-    if (!drag) return;
-    const cell = elementAt(x, y, "data-cell");
-    if (!cell) return;
-    const c = Number(cell.dataset.c);
-    const r = Number(cell.dataset.r);
-    if (!Number.isInteger(c) || !Number.isInteger(r)) return;
-    if (drag.at.c === c && drag.at.r === r) return;
-    if (!this.relocateLift(drag.at, { c, r }, drag.lift)) return;
-    drag.at = { c, r };
-    drag.moved = true;
-    this.syncCells();
-    this.syncWalls();
-  }
-
-  private relocateLift(from: { c: number; r: number }, to: { c: number; r: number }, lift: LiftedTile): boolean {
-    if (lift.kind === "hatch") {
-      const below = this.tower.floors[this.floorIndex + 1];
-      if (!below) return false;
-      if (to.c >= below.cols || to.r >= below.rows) return false;
-      if (samePoint(to, this.draft.start)) return false;
-      setHatch(this.tower, this.floorIndex, to);
-      return !!this.draft.hatch && samePoint(this.draft.hatch, to);
-    }
-    return moveLifted(this.draft, from, to, lift);
-  }
-
-  private clickLift(drag: TileDrag): void {
-    if (drag.lift.kind === "warp" && this.tool === "warp") {
-      paintWarp(this.draft, drag.at);
-      this.syncCells();
-      this.refreshHint();
-      return;
-    }
-    if (drag.lift.kind === "switch" && this.tool === "switch") {
-      paintSwitch(this.draft, drag.at);
+    if (drag && drag.moved) {
+      if (this.canDropAt(drag.over, drag.lift)) this.commitLift(drag.from, drag.over, drag.lift);
+      this.clearTileDrag();
       this.syncCells();
       this.syncWalls();
-      this.refreshHint();
+      return;
+    }
+    const clickAt = drag?.from ?? (!hadWallDrag && !hadStroke ? this.cellAt(event.clientX, event.clientY) : null);
+    this.clearTileDrag();
+    if (!this.pairing() && !this.erase && !this.brush && !hadWallDrag && !hadStroke && clickAt) {
+      this.openTileMenu(clickAt);
+    }
+  };
+
+  private clearTileDrag(): void {
+    this.tileDrag = null;
+    this.board.classList.remove(styles.dragging);
+    for (const cell of this.cells.values()) {
+      delete cell.dataset.dragging;
+      delete cell.dataset.drop;
     }
   }
 
   private applyPaint(x: number, y: number): void {
-    if (this.tool === "wall") {
-      if (this.wallDrag === null) this.beginWallDrag(x, y);
-      else this.extendWallDrag(x, y);
+    if (this.pairing() === "switch") return;
+    if (this.erase) {
+      const point = this.cellAt(x, y);
+      if (!point) return;
+      clearFloor(this.draft, point);
+      this.syncCells();
+      this.syncWalls();
       return;
     }
 
-    if ((this.tool === "warp" || this.tool === "switch") && this.stroke !== null) return;
+    const brush = this.brush;
+    if (!brush) return;
+    if ((brush === "warp" || brush === "switch") && this.stroke !== null) return;
+    if (this.pairing() === "warp" && brush !== "warp") return;
 
-    if (this.tool === "switch") {
+    if (brush === "switch") {
       const wall = elementAt(x, y, "data-wall");
       if (wall) {
         this.stroke = "close";
@@ -821,26 +1424,84 @@ export class LevelEditor {
       }
     }
 
-    const cell = elementAt(x, y, "data-cell");
-    if (!cell) return;
-    const c = Number(cell.dataset.c);
-    const r = Number(cell.dataset.r);
-    if (!Number.isInteger(c) || !Number.isInteger(r)) return;
-    const point = { c, r };
-    if (this.tool === "warp" || this.tool === "switch") this.stroke = "close";
-    if (this.tool === "start") placeStart(this.draft, point);
-    else if (this.tool === "goal") placeGoal(this.draft, point);
-    else if (this.tool === "hatch") setHatch(this.tower, this.floorIndex, point);
-    else if (this.tool === "pit") setPit(this.draft, point, true);
-    else if (this.tool === "floor") clearFloor(this.draft, point);
-    else if (this.tool === "boost") setBoost(this.draft, point, this.boostDir);
-    else if (this.tool === "ice") setIce(this.draft, point);
-    else if (this.tool === "crumble") setCrumble(this.draft, point);
-    else if (this.tool === "switch") paintSwitch(this.draft, point);
-    else paintWarp(this.draft, point);
+    const point = this.cellAt(x, y);
+    if (!point) return;
+    if (brush === "warp" || brush === "switch") this.stroke = "close";
+    if (brush === "hatch") setHatch(this.tower, this.floorIndex, point);
+    else if (brush === "pit") setPit(this.draft, point, true);
+    else if (brush === "boost") setBoost(this.draft, point, this.boostDir);
+    else if (brush === "ice") setIce(this.draft, point);
+    else if (brush === "crumble") setCrumble(this.draft, point);
+    else if (brush === "switch") {
+      paintSwitch(this.draft, point);
+      if (pendingSwitch(this.draft)) this.enterPairing("switch");
+    } else if (brush === "warp") {
+      paintWarp(this.draft, point);
+      if (loneWarpPair(this.draft) !== null) this.enterPairing("warp");
+    }
     this.syncCells();
     this.syncWalls();
-    if (this.tool === "warp" || this.tool === "switch") this.refreshHint();
+    if (brush === "warp" || brush === "switch") this.refreshHint();
+  }
+
+  private beginTileDrag(x: number, y: number): boolean {
+    const point = this.cellAt(x, y);
+    if (!point) return false;
+    const last = this.tower.floors.length - 1;
+    const lift = liftAt(this.draft, point, {
+      start: this.floorIndex === 0,
+      goal: this.floorIndex === last,
+      hatch: this.floorIndex !== last,
+    });
+    if (!lift) return false;
+    this.tileDrag = { lift, from: point, over: point, moved: false };
+    this.board.classList.add(styles.dragging);
+    this.syncCells();
+    return true;
+  }
+
+  private extendTileDrag(x: number, y: number): void {
+    const drag = this.tileDrag;
+    if (!drag) return;
+    const point = this.cellAt(x, y);
+    if (!point) return;
+    if (drag.over.c === point.c && drag.over.r === point.r) return;
+    drag.over = point;
+    drag.moved = drag.moved || !samePoint(point, drag.from);
+    this.syncCells();
+  }
+
+  private canDropAt(to: { c: number; r: number }, lift: LiftedTile): boolean {
+    if (lift.kind === "hatch") return !samePoint(to, this.draft.start);
+    return canDropLifted(this.draft, this.tileDrag?.from ?? to, to, lift);
+  }
+
+  private commitLift(from: { c: number; r: number }, to: { c: number; r: number }, lift: LiftedTile): boolean {
+    if (lift.kind === "hatch") {
+      if (samePoint(to, this.draft.start)) return false;
+      setHatch(this.tower, this.floorIndex, to);
+      return !!this.draft.hatch && samePoint(this.draft.hatch, to);
+    }
+    return moveLifted(this.draft, from, to, lift);
+  }
+
+  private cellAt(x: number, y: number): { c: number; r: number } | null {
+    const rect = this.board.getBoundingClientRect();
+    const style = getComputedStyle(this.board);
+    const left = parseFloat(style.borderLeftWidth) || 0;
+    const top = parseFloat(style.borderTopWidth) || 0;
+    const right = parseFloat(style.borderRightWidth) || 0;
+    const bottom = parseFloat(style.borderBottomWidth) || 0;
+    const width = rect.width - left - right;
+    const height = rect.height - top - bottom;
+    if (width <= 0 || height <= 0) return null;
+    const localX = x - rect.left - left;
+    const localY = y - rect.top - top;
+    if (localX < 0 || localY < 0 || localX >= width || localY >= height) return null;
+    const c = Math.floor((localX / width) * this.draft.cols);
+    const r = Math.floor((localY / height) * this.draft.rows);
+    if (c < 0 || r < 0 || c >= this.draft.cols || r >= this.draft.rows) return null;
+    return { c, r };
   }
 
   private bindSwitch(wall: HTMLElement): void {
@@ -888,8 +1549,7 @@ export class LevelEditor {
   private commitWall(axis: WallAxis, c: number, r: number): void {
     if (this.stroke === null) return;
     setInteriorWall(this.draft, axis, c, r, this.stroke === "close");
-    const wall = this.walls.get(`${axis}:${c},${r}`);
-    if (wall) this.paintWall(wall, axis, c, r);
+    this.syncWalls();
     this.syncCells();
   }
 
@@ -900,11 +1560,11 @@ export class LevelEditor {
     const top = parseFloat(style.borderTopWidth) || 0;
     const right = parseFloat(style.borderRightWidth) || 0;
     const bottom = parseFloat(style.borderBottomWidth) || 0;
-    const span = axis === "v" ? this.draft.rows : this.draft.cols;
+    const active = axis === "v" ? this.draft.rows : this.draft.cols;
     const size = axis === "v" ? rect.height - top - bottom : rect.width - left - right;
     const local = axis === "v" ? y - rect.top - top : x - rect.left - left;
-    const index = Math.floor((local / Math.max(size, 1)) * span);
-    return Math.min(span - 1, Math.max(0, index));
+    const index = Math.floor((local / Math.max(size, 1)) * active);
+    return Math.min(active - 1, Math.max(0, index));
   }
 
   private onKey = (event: KeyboardEvent): void => {
@@ -912,7 +1572,23 @@ export class LevelEditor {
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
+      if (this.cancelPairing()) return;
+      if (this.tileMenuAt) {
+        this.hideTileMenu();
+        return;
+      }
+      if (this.lineSelect) {
+        this.clearLineSelect();
+        return;
+      }
       this.requestClose();
+      return;
+    }
+    if ((event.key === "Backspace" || event.key === "Delete") && this.lineSelect && !this.deleteBtn.disabled) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (this.lineSelect.kind === "col") this.removeColumn(this.lineSelect.index);
+      else this.removeRow(this.lineSelect.index);
       return;
     }
     const meta = event.metaKey || event.ctrlKey;
@@ -950,6 +1626,8 @@ function openWarpPairs(maze: Maze): Set<number> {
   return open;
 }
 
+type CellPaint = { kind: CellKind; dir?: Direction; pair?: number; open?: boolean; label: string };
+
 function describeCell(
   maze: Maze,
   c: number,
@@ -957,7 +1635,7 @@ function describeCell(
   openPairs: Set<number>,
   showGoal: boolean,
   landing: boolean,
-): { kind: CellKind; dir?: Direction; pair?: number; open?: boolean; label: string } {
+): CellPaint {
   const where = `column ${c + 1}, row ${r + 1}`;
   if (maze.start.c === c && maze.start.r === r) {
     return { kind: "start", label: `${landing ? "Landing" : "Start"}, ${where}` };
@@ -988,6 +1666,30 @@ function describeCell(
     };
   }
   return { kind: "floor", label: `Floor, ${where}` };
+}
+
+function describeLift(lift: LiftedTile, c: number, r: number, landing: boolean): CellPaint {
+  const where = `column ${c + 1}, row ${r + 1}`;
+  if (lift.kind === "start") return { kind: "start", label: `${landing ? "Landing" : "Start"}, ${where}` };
+  if (lift.kind === "goal") return { kind: "goal", label: `Exit, ${where}` };
+  if (lift.kind === "hatch") return { kind: "hatch", label: `Hatch, ${where}` };
+  if (lift.kind === "pit") return { kind: "pit", label: `Pit, ${where}` };
+  if (lift.kind === "boost") return { kind: "boost", dir: lift.dir, label: `Boost ${DIR_WORD[lift.dir]}, ${where}` };
+  if (lift.kind === "ice") return { kind: "ice", label: `Ice, ${where}` };
+  if (lift.kind === "crumble") return { kind: "crumble", label: `Crumble, ${where}` };
+  if (lift.kind === "warp") {
+    return {
+      kind: "warp",
+      pair: lift.pair % WARP_COLOR_COUNT,
+      label: `Warp ${(lift.pair % WARP_COLOR_COUNT) + 1}, ${where}`,
+    };
+  }
+  return {
+    kind: "switch",
+    pair: lift.tone % 6,
+    open: lift.wall === null,
+    label: lift.wall ? `Switch, ${where}` : `Unlinked switch, ${where}`,
+  };
 }
 
 function floorName(index: number, count: number): string {

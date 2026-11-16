@@ -27,8 +27,13 @@
       transform: translate3d(0, 18px, 0);
     }
 
-    &[data-phase="in"] .card {
-      transform: translate3d(0, 0, 0);
+    &[data-phase="in"] {
+      pointer-events: none;
+
+      & .card {
+        pointer-events: auto;
+        transform: translate3d(0, 0, 0);
+      }
     }
   }
 

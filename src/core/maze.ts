@@ -196,14 +196,183 @@ export function resizeMaze(maze: Maze, cols: number, rows: number): Maze {
   next.tiles = next.tiles.filter(
     (tile) => !same(tile, next.start) && !same(tile, next.goal) && !(next.hatch && same(tile, next.hatch)),
   );
-  for (const tile of next.tiles) {
-    if (tile.kind !== "switch" || !tile.wall) continue;
-    const wall = tile.wall;
-    const inside = wall.axis === "v"
-      ? wall.c < next.cols - 1 && wall.r < next.rows
-      : wall.c < next.cols && wall.r < next.rows - 1;
-    if (!inside || !interiorClosed(next, wall.axis, wall.c, wall.r)) tile.wall = null;
+  scrubSwitchWalls(next);
+  return next;
+}
+
+/** Insert an empty column before `at` (0 = west edge, cols = east edge). */
+export function insertColumn(maze: Maze, at: number): Maze {
+  if (maze.cols >= MAZE_MAX) return cloneMaze(maze);
+  const index = Math.min(Math.max(Math.round(at), 0), maze.cols);
+  const next = cloneMaze(maze);
+  next.cols += 1;
+  next.walls = next.walls.map((row) => {
+    const copy = row.slice();
+    copy.splice(index, 0, 0);
+    return copy;
+  });
+  next.start = shiftPointCol(next.start, index, 1);
+  next.goal = shiftPointCol(next.goal, index, 1);
+  next.hatch = next.hatch ? shiftPointCol(next.hatch, index, 1) : null;
+  next.holes = next.holes.map((hole) => shiftPointCol(hole, index, 1));
+  next.tiles = next.tiles.map((tile) => shiftTileCol(tile, index, 1));
+  openInsertSeamCol(next, index);
+  sealBorder(next);
+  scrubSwitchWalls(next);
+  return next;
+}
+
+/** Insert an empty row before `at` (0 = north edge, rows = south edge). */
+export function insertRow(maze: Maze, at: number): Maze {
+  if (maze.rows >= MAZE_MAX) return cloneMaze(maze);
+  const index = Math.min(Math.max(Math.round(at), 0), maze.rows);
+  const next = cloneMaze(maze);
+  next.rows += 1;
+  next.walls.splice(index, 0, Array.from({ length: next.cols }, () => 0));
+  next.start = shiftPointRow(next.start, index, 1);
+  next.goal = shiftPointRow(next.goal, index, 1);
+  next.hatch = next.hatch ? shiftPointRow(next.hatch, index, 1) : null;
+  next.holes = next.holes.map((hole) => shiftPointRow(hole, index, 1));
+  next.tiles = next.tiles.map((tile) => shiftTileRow(tile, index, 1));
+  openInsertSeamRow(next, index);
+  sealBorder(next);
+  scrubSwitchWalls(next);
+  return next;
+}
+
+export function deleteColumn(maze: Maze, index: number): Maze {
+  if (maze.cols <= MAZE_MIN || index < 0 || index >= maze.cols) return cloneMaze(maze);
+  const next = cloneMaze(maze);
+  const lostStart = next.start.c === index;
+  const lostGoal = next.goal.c === index;
+  const lostHatch = !!next.hatch && next.hatch.c === index;
+  next.cols -= 1;
+  next.walls = next.walls.map((row) => row.filter((_, c) => c !== index));
+  next.start = lostStart ? next.start : shiftPointCol(next.start, index, -1);
+  next.goal = lostGoal ? next.goal : shiftPointCol(next.goal, index, -1);
+  next.hatch = lostHatch || !next.hatch ? null : shiftPointCol(next.hatch, index, -1);
+  next.holes = next.holes
+    .filter((hole) => hole.c !== index)
+    .map((hole) => shiftPointCol(hole, index, -1));
+  next.tiles = next.tiles
+    .filter((tile) => tile.c !== index)
+    .map((tile) => shiftTileCol(tile, index, -1));
+  if (lostStart) next.start = spareAfterDelete(next, [next.goal, next.hatch]);
+  if (lostGoal) next.goal = spareAfterDelete(next, [next.start, next.hatch]);
+  next.start = clampCell(next.start, next.cols, next.rows);
+  next.goal = clampCell(next.goal, next.cols, next.rows);
+  if (next.hatch) next.hatch = clampCell(next.hatch, next.cols, next.rows);
+  sealBorder(next);
+  separateEnds(next);
+  scrubSwitchWalls(next);
+  return next;
+}
+
+export function deleteRow(maze: Maze, index: number): Maze {
+  if (maze.rows <= MAZE_MIN || index < 0 || index >= maze.rows) return cloneMaze(maze);
+  const next = cloneMaze(maze);
+  const lostStart = next.start.r === index;
+  const lostGoal = next.goal.r === index;
+  const lostHatch = !!next.hatch && next.hatch.r === index;
+  next.rows -= 1;
+  next.walls = next.walls.filter((_, r) => r !== index);
+  next.start = lostStart ? next.start : shiftPointRow(next.start, index, -1);
+  next.goal = lostGoal ? next.goal : shiftPointRow(next.goal, index, -1);
+  next.hatch = lostHatch || !next.hatch ? null : shiftPointRow(next.hatch, index, -1);
+  next.holes = next.holes
+    .filter((hole) => hole.r !== index)
+    .map((hole) => shiftPointRow(hole, index, -1));
+  next.tiles = next.tiles
+    .filter((tile) => tile.r !== index)
+    .map((tile) => shiftTileRow(tile, index, -1));
+  if (lostStart) next.start = spareAfterDelete(next, [next.goal, next.hatch]);
+  if (lostGoal) next.goal = spareAfterDelete(next, [next.start, next.hatch]);
+  next.start = clampCell(next.start, next.cols, next.rows);
+  next.goal = clampCell(next.goal, next.cols, next.rows);
+  if (next.hatch) next.hatch = clampCell(next.hatch, next.cols, next.rows);
+  sealBorder(next);
+  separateEnds(next);
+  scrubSwitchWalls(next);
+  return next;
+}
+
+/** Move column `from` to index `to` (0-based), keeping cell contents and adjacent seams. */
+export function moveColumn(maze: Maze, from: number, to: number): Maze {
+  if (!Number.isInteger(from) || !Number.isInteger(to)) return cloneMaze(maze);
+  if (from === to || from < 0 || to < 0 || from >= maze.cols || to >= maze.cols) return cloneMaze(maze);
+
+  const order = Array.from({ length: maze.cols }, (_, index) => index);
+  const [taken] = order.splice(from, 1);
+  order.splice(to, 0, taken!);
+  const mapC = (c: number) => order.indexOf(c);
+
+  const next = cloneMaze(maze);
+  next.walls = Array.from({ length: next.rows }, () => Array.from({ length: next.cols }, () => 0));
+
+  for (let nc = 0; nc < next.cols; nc += 1) {
+    const oc = order[nc]!;
+    for (let r = 0; r < next.rows - 1; r += 1) {
+      setInteriorWall(next, "h", nc, r, interiorClosed(maze, "h", oc, r));
+    }
   }
+  for (let nc = 0; nc < next.cols - 1; nc += 1) {
+    const left = order[nc]!;
+    const right = order[nc + 1]!;
+    for (let r = 0; r < next.rows; r += 1) {
+      let closed = false;
+      if (right === left + 1) closed = interiorClosed(maze, "v", left, r);
+      else if (left === right + 1) closed = interiorClosed(maze, "v", right, r);
+      setInteriorWall(next, "v", nc, r, closed);
+    }
+  }
+
+  next.start = { c: mapC(maze.start.c), r: maze.start.r };
+  next.goal = { c: mapC(maze.goal.c), r: maze.goal.r };
+  next.hatch = maze.hatch ? { c: mapC(maze.hatch.c), r: maze.hatch.r } : null;
+  next.holes = maze.holes.map((hole) => ({ c: mapC(hole.c), r: hole.r }));
+  next.tiles = maze.tiles.map((tile) => remapTileCol(tile, mapC));
+  sealBorder(next);
+  scrubSwitchWalls(next);
+  return next;
+}
+
+/** Move row `from` to index `to` (0-based), keeping cell contents and adjacent seams. */
+export function moveRow(maze: Maze, from: number, to: number): Maze {
+  if (!Number.isInteger(from) || !Number.isInteger(to)) return cloneMaze(maze);
+  if (from === to || from < 0 || to < 0 || from >= maze.rows || to >= maze.rows) return cloneMaze(maze);
+
+  const order = Array.from({ length: maze.rows }, (_, index) => index);
+  const [taken] = order.splice(from, 1);
+  order.splice(to, 0, taken!);
+  const mapR = (r: number) => order.indexOf(r);
+
+  const next = cloneMaze(maze);
+  next.walls = Array.from({ length: next.rows }, () => Array.from({ length: next.cols }, () => 0));
+
+  for (let nr = 0; nr < next.rows; nr += 1) {
+    const or = order[nr]!;
+    for (let c = 0; c < next.cols - 1; c += 1) {
+      setInteriorWall(next, "v", c, nr, interiorClosed(maze, "v", c, or));
+    }
+  }
+  for (let nr = 0; nr < next.rows - 1; nr += 1) {
+    const above = order[nr]!;
+    const below = order[nr + 1]!;
+    for (let c = 0; c < next.cols; c += 1) {
+      let closed = false;
+      if (below === above + 1) closed = interiorClosed(maze, "h", c, above);
+      else if (above === below + 1) closed = interiorClosed(maze, "h", c, below);
+      setInteriorWall(next, "h", c, nr, closed);
+    }
+  }
+
+  next.start = { c: maze.start.c, r: mapR(maze.start.r) };
+  next.goal = { c: maze.goal.c, r: mapR(maze.goal.r) };
+  next.hatch = maze.hatch ? { c: maze.hatch.c, r: mapR(maze.hatch.r) } : null;
+  next.holes = maze.holes.map((hole) => ({ c: hole.c, r: mapR(hole.r) }));
+  next.tiles = maze.tiles.map((tile) => remapTileRow(tile, mapR));
+  sealBorder(next);
+  scrubSwitchWalls(next);
   return next;
 }
 
@@ -232,18 +401,20 @@ export function setInteriorWall(maze: Maze, axis: WallAxis, c: number, r: number
   if (!closed) releaseSwitch(maze, { axis, c, r });
 }
 
-export function placeStart(maze: Maze, cell: GridPoint): void {
-  if (!contains(maze, cell) || same(cell, maze.goal) || (maze.hatch && same(cell, maze.hatch))) return;
+export function placeStart(maze: Maze, cell: GridPoint): boolean {
+  if (!contains(maze, cell) || same(cell, maze.goal) || (maze.hatch && same(cell, maze.hatch))) return false;
   maze.start = { c: cell.c, r: cell.r };
   maze.holes = maze.holes.filter((hole) => !same(hole, cell));
   clearTile(maze, cell);
+  return true;
 }
 
-export function placeGoal(maze: Maze, cell: GridPoint): void {
-  if (!contains(maze, cell) || same(cell, maze.start)) return;
+export function placeGoal(maze: Maze, cell: GridPoint): boolean {
+  if (!contains(maze, cell) || same(cell, maze.start) || (maze.hatch && same(cell, maze.hatch))) return false;
   maze.goal = { c: cell.c, r: cell.r };
   maze.holes = maze.holes.filter((hole) => !same(hole, cell));
   clearTile(maze, cell);
+  return true;
 }
 
 export function setPit(maze: Maze, cell: GridPoint, pit: boolean): void {
@@ -311,6 +482,17 @@ export function pendingSwitch(maze: Maze): boolean {
   return maze.tiles.some((tile) => tile.kind === "switch" && tile.wall === null);
 }
 
+/** Drop an unfinished switch plate or lone warp so pairing can end. */
+export function cancelPendingPair(maze: Maze): boolean {
+  const before = maze.tiles.length;
+  maze.tiles = maze.tiles.filter((tile) => !(tile.kind === "switch" && tile.wall === null));
+  const lone = loneWarpPair(maze);
+  if (lone !== null) {
+    maze.tiles = maze.tiles.filter((tile) => !(tile.kind === "warp" && tile.pair === lone));
+  }
+  return maze.tiles.length !== before;
+}
+
 export function paintWarp(maze: Maze, cell: GridPoint): void {
   if (!paintable(maze, cell)) return;
   const existing = tileAt(maze, cell.c, cell.r);
@@ -357,24 +539,25 @@ export function liftAt(
   return { kind: "switch", tone: tile.tone, wall: tile.wall ? { ...tile.wall } : null };
 }
 
+/** Whether a lifted tile can land on `to` without mutating the maze. Hatch is handled by the caller. */
+export function canDropLifted(maze: Maze, from: GridPoint, to: GridPoint, lift: LiftedTile): boolean {
+  if (lift.kind === "hatch") return false;
+  if (!contains(maze, to)) return false;
+  if (same(from, to)) return true;
+  if (lift.kind === "start") return !same(to, maze.goal) && !(maze.hatch && same(to, maze.hatch));
+  if (lift.kind === "goal") return !same(to, maze.start) && !(maze.hatch && same(to, maze.hatch));
+  return !same(to, maze.start) && !same(to, maze.goal) && !(maze.hatch && same(to, maze.hatch));
+}
+
 /** Move a lifted tile from one cell to another. Hatch is handled by the caller. */
 export function moveLifted(maze: Maze, from: GridPoint, to: GridPoint, lift: LiftedTile): boolean {
   if (lift.kind === "hatch") return false;
-  if (!contains(maze, to) || same(from, to)) return same(from, to);
+  if (!canDropLifted(maze, from, to, lift)) return false;
+  if (same(from, to)) return true;
   if (!liftStillAt(maze, from, lift)) return false;
 
-  if (lift.kind === "start") {
-    if (same(to, maze.goal) || (maze.hatch && same(to, maze.hatch))) return false;
-    placeStart(maze, to);
-    return true;
-  }
-  if (lift.kind === "goal") {
-    if (same(to, maze.start) || (maze.hatch && same(to, maze.hatch))) return false;
-    placeGoal(maze, to);
-    return true;
-  }
-
-  if (same(to, maze.start) || same(to, maze.goal) || (maze.hatch && same(to, maze.hatch))) return false;
+  if (lift.kind === "start") return placeStart(maze, to);
+  if (lift.kind === "goal") return placeGoal(maze, to);
 
   stripCell(maze, from);
   stripCell(maze, to);
@@ -472,6 +655,108 @@ function clampCell(cell: GridPoint, cols: number, rows: number): GridPoint {
   };
 }
 
+function scrubSwitchWalls(maze: Maze): void {
+  for (const tile of maze.tiles) {
+    if (tile.kind !== "switch" || !tile.wall) continue;
+    const wall = tile.wall;
+    const inside = wall.axis === "v"
+      ? wall.c >= 0 && wall.r >= 0 && wall.c < maze.cols - 1 && wall.r < maze.rows
+      : wall.c >= 0 && wall.r >= 0 && wall.c < maze.cols && wall.r < maze.rows - 1;
+    if (!inside || !interiorClosed(maze, wall.axis, wall.c, wall.r)) tile.wall = null;
+  }
+}
+
+function shiftPointCol(point: GridPoint, at: number, dir: 1 | -1): GridPoint {
+  if (dir === 1) return point.c >= at ? { c: point.c + 1, r: point.r } : { ...point };
+  return point.c > at ? { c: point.c - 1, r: point.r } : { ...point };
+}
+
+function shiftPointRow(point: GridPoint, at: number, dir: 1 | -1): GridPoint {
+  if (dir === 1) return point.r >= at ? { c: point.c, r: point.r + 1 } : { ...point };
+  return point.r > at ? { c: point.c, r: point.r - 1 } : { ...point };
+}
+
+function shiftWallCol(wall: WallRef, at: number, dir: 1 | -1): WallRef | null {
+  if (dir === 1) {
+    if (wall.c >= at) return { ...wall, c: wall.c + 1 };
+    return { ...wall };
+  }
+  if (wall.axis === "v" && (wall.c === at || wall.c === at - 1)) return null;
+  if (wall.axis === "h" && wall.c === at) return null;
+  if (wall.c > at) return { ...wall, c: wall.c - 1 };
+  return { ...wall };
+}
+
+function shiftWallRow(wall: WallRef, at: number, dir: 1 | -1): WallRef | null {
+  if (dir === 1) {
+    if (wall.r >= at) return { ...wall, r: wall.r + 1 };
+    return { ...wall };
+  }
+  if (wall.axis === "h" && (wall.r === at || wall.r === at - 1)) return null;
+  if (wall.axis === "v" && wall.r === at) return null;
+  if (wall.r > at) return { ...wall, r: wall.r - 1 };
+  return { ...wall };
+}
+
+function shiftTileCol(tile: FloorTile, at: number, dir: 1 | -1): FloorTile {
+  const point = shiftPointCol(tile, at, dir);
+  if (tile.kind === "switch") {
+    const wall = tile.wall ? shiftWallCol(tile.wall, at, dir) : null;
+    return { ...tile, c: point.c, r: point.r, wall };
+  }
+  return { ...tile, c: point.c, r: point.r };
+}
+
+function shiftTileRow(tile: FloorTile, at: number, dir: 1 | -1): FloorTile {
+  const point = shiftPointRow(tile, at, dir);
+  if (tile.kind === "switch") {
+    const wall = tile.wall ? shiftWallRow(tile.wall, at, dir) : null;
+    return { ...tile, c: point.c, r: point.r, wall };
+  }
+  return { ...tile, c: point.c, r: point.r };
+}
+
+function remapWallCol(wall: WallRef, mapC: (c: number) => number): WallRef | null {
+  if (wall.axis === "h") return { axis: "h", c: mapC(wall.c), r: wall.r };
+  const a = mapC(wall.c);
+  const b = mapC(wall.c + 1);
+  if (Math.abs(a - b) !== 1) return null;
+  return { axis: "v", c: Math.min(a, b), r: wall.r };
+}
+
+function remapWallRow(wall: WallRef, mapR: (r: number) => number): WallRef | null {
+  if (wall.axis === "v") return { axis: "v", c: wall.c, r: mapR(wall.r) };
+  const a = mapR(wall.r);
+  const b = mapR(wall.r + 1);
+  if (Math.abs(a - b) !== 1) return null;
+  return { axis: "h", c: wall.c, r: Math.min(a, b) };
+}
+
+function remapTileCol(tile: FloorTile, mapC: (c: number) => number): FloorTile {
+  const next = cloneTile(tile);
+  next.c = mapC(tile.c);
+  if (next.kind === "switch") next.wall = next.wall ? remapWallCol(next.wall, mapC) : null;
+  return next;
+}
+
+function remapTileRow(tile: FloorTile, mapR: (r: number) => number): FloorTile {
+  const next = cloneTile(tile);
+  next.r = mapR(tile.r);
+  if (next.kind === "switch") next.wall = next.wall ? remapWallRow(next.wall, mapR) : null;
+  return next;
+}
+
+function spareAfterDelete(maze: Maze, avoid: Array<GridPoint | null>): GridPoint {
+  const blocked = (cell: GridPoint) => avoid.some((item) => item !== null && same(item, cell));
+  for (let r = 0; r < maze.rows; r += 1) {
+    for (let c = 0; c < maze.cols; c += 1) {
+      const cell = { c, r };
+      if (!blocked(cell)) return cell;
+    }
+  }
+  return { c: 0, r: 0 };
+}
+
 function separateEnds(maze: Maze): void {
   if (!same(maze.start, maze.goal)) return;
   const corners = [
@@ -508,6 +793,24 @@ function sealBorder(maze: Maze): void {
   for (let r = 0; r < maze.rows; r += 1) {
     writeBit(maze, 0, r, Wall.west, true);
     writeBit(maze, maze.cols - 1, r, Wall.east, true);
+  }
+}
+
+/** Clear walls along the seam created by inserting a column at `at`. */
+function openInsertSeamCol(maze: Maze, at: number): void {
+  for (let r = 0; r < maze.rows; r += 1) {
+    if (at > 0) writeBit(maze, at - 1, r, Wall.east, false);
+    if (at < maze.cols) writeBit(maze, at, r, Wall.west, false);
+    if (at + 1 < maze.cols) writeBit(maze, at + 1, r, Wall.west, false);
+  }
+}
+
+/** Clear walls along the seam created by inserting a row at `at`. */
+function openInsertSeamRow(maze: Maze, at: number): void {
+  for (let c = 0; c < maze.cols; c += 1) {
+    if (at > 0) writeBit(maze, c, at - 1, Wall.south, false);
+    if (at < maze.rows) writeBit(maze, c, at, Wall.north, false);
+    if (at + 1 < maze.rows) writeBit(maze, c, at + 1, Wall.north, false);
   }
 }
 

@@ -243,7 +243,6 @@
   --maze-underwater-sky: #1a6a7a;
   --maze-city-sky: #5a6a7a;
   --maze-village-sky: #3a2a28;
-  --maze-lava-sky: #2a1410;
   --maze-moon-sky: #05060a;
   --maze-venus-sky: #c47a3a;
   --maze-forest-sky: #6aa88a;
@@ -289,15 +288,6 @@
   --maze-toucan-chest: #e2586c;
   --maze-monkey: #8a5a32;
   --maze-monkey-face: #d5c4a8;
-  --maze-basalt: #2a2422;
-  --maze-basalt-dark: #161210;
-  --maze-lava: #ff6a28;
-  --maze-lava-deep: #c23a12;
-  --maze-lava-mid: #e24a18;
-  --maze-lava-bright: #ff9a3a;
-  --maze-lava-glow: #ffbc61;
-  --maze-lava-cool: #8a2a12;
-  --maze-ash: #4a4540;
   --maze-moon-dust: #9aa0a8;
   --maze-moon-dust-dark: #6a7078;
   --maze-moon-rock: #5a6068;
@@ -307,6 +297,7 @@
   --maze-sulfur: #e8c84a;
   --maze-sulfur-glow: #ffe08a;
   --maze-heart: #e2586c;
+  --maze-win-neon: #ffbc61;
   --maze-ball: #ffffff;
   --maze-mark: #1a1a1a;
   --maze-sky: #6aafdf;
@@ -361,6 +352,10 @@ body,
   image-rendering: pixelated;
   filter: blur(0px);
   transition: filter 0.45s ease-in-out;
+
+  &[data-look="normal"] {
+    image-rendering: auto;
+  }
 
   &:active {
     cursor: grabbing;

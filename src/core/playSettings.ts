@@ -61,6 +61,7 @@ const STORAGE_KEY = "maze.settings";
 export class PlaySettings {
   readonly values: Record<SettingKey, number> = { ...SETTING_DEFAULTS };
   invertY = false;
+  normalLook = false;
   private readonly listeners = new Set<() => void>();
 
   constructor() {
@@ -90,9 +91,17 @@ export class PlaySettings {
     this.emit();
   }
 
+  setNormalLook(value: boolean): void {
+    if (this.normalLook === value) return;
+    this.normalLook = value;
+    this.save();
+    this.emit();
+  }
+
   reset(): void {
     for (const spec of SETTING_SPECS) this.values[spec.key] = SETTING_DEFAULTS[spec.key];
     this.invertY = false;
+    this.normalLook = false;
     this.save();
     this.emit();
   }
@@ -114,12 +123,16 @@ export class PlaySettings {
       if (!raw) return;
       const parsed: unknown = JSON.parse(raw);
       if (!parsed || typeof parsed !== "object") return;
-      const record = parsed as Partial<Record<SettingKey, unknown>> & { invertY?: unknown };
+      const record = parsed as Partial<Record<SettingKey, unknown>> & {
+        invertY?: unknown;
+        normalLook?: unknown;
+      };
       for (const spec of SETTING_SPECS) {
         const value = record[spec.key];
         if (typeof value === "number") this.values[spec.key] = clampSetting(spec.key, value);
       }
       if (typeof record.invertY === "boolean") this.invertY = record.invertY;
+      if (typeof record.normalLook === "boolean") this.normalLook = record.normalLook;
     } catch {
       // Keep the defaults when storage is unavailable or unreadable.
     }
@@ -127,7 +140,10 @@ export class PlaySettings {
 
   private save(): void {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...this.values, invertY: this.invertY }));
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ ...this.values, invertY: this.invertY, normalLook: this.normalLook }),
+      );
     } catch {
       // Private mode can reject storage writes. The live values still apply.
     }

@@ -19,7 +19,9 @@ export class SettingsPanel {
   private readonly callbacks: SettingsPanelCallbacks;
   private readonly inputs = new Map<SettingKey, HTMLInputElement>();
   private readonly readouts = new Map<SettingKey, HTMLElement>();
+  private readonly fields = new Map<SettingKey, HTMLElement>();
   private invertInput: HTMLInputElement | null = null;
+  private normalInput: HTMLInputElement | null = null;
 
   constructor(host: HTMLElement, settings: PlaySettings, callbacks: SettingsPanelCallbacks) {
     this.host = host;
@@ -62,6 +64,7 @@ export class SettingsPanel {
       });
       this.inputs.set(spec.key, input);
       this.readouts.set(spec.key, readout);
+      this.fields.set(spec.key, field);
       slot.appendChild(field);
     }
 
@@ -84,6 +87,25 @@ export class SettingsPanel {
       }
     }
 
+    const picture = this.host.querySelector<HTMLElement>('[data-group="Picture"]');
+    if (picture) {
+      const field = document.createElement("label");
+      field.className = styles.toggle;
+      field.innerHTML = `
+        <span>Normal look</span>
+        <input type="checkbox" aria-label="Normal look" />
+        <span class="${styles.switch}" aria-hidden="true"></span>
+      `;
+      const input = field.querySelector("input");
+      if (input) {
+        input.addEventListener("change", () => {
+          this.settings.setNormalLook(input.checked);
+        });
+        this.normalInput = input;
+        picture.prepend(field);
+      }
+    }
+
     this.host.querySelector("[data-done]")?.addEventListener("click", () => this.callbacks.onClose());
     this.host.querySelector("[data-defaults]")?.addEventListener("click", () => {
       this.settings.reset();
@@ -93,16 +115,22 @@ export class SettingsPanel {
   }
 
   refresh(): void {
+    const normal = this.settings.normalLook;
     for (const spec of SETTING_SPECS) {
       const input = this.inputs.get(spec.key);
       const readout = this.readouts.get(spec.key);
+      const field = this.fields.get(spec.key);
       const value = this.settings.values[spec.key];
+      const pictureSlider = spec.key === "pixels" || spec.key === "shade";
       if (input) {
         if (spec.key === "pixels") input.step = String(pixelStep());
         input.value = String(value);
+        input.disabled = pictureSlider && normal;
       }
+      if (field) field.classList.toggle(styles.dimmed, pictureSlider && normal);
       if (readout) readout.textContent = spec.format(value);
     }
     if (this.invertInput) this.invertInput.checked = this.settings.invertY;
+    if (this.normalInput) this.normalInput.checked = normal;
   }
 }
