@@ -36,6 +36,7 @@ export type FloorTile =
   | { kind: "warp"; c: number; r: number; pair: number }
   | { kind: "ice"; c: number; r: number }
   | { kind: "crumble"; c: number; r: number }
+  | { kind: "block"; c: number; r: number }
   | { kind: "switch"; c: number; r: number; tone: number; wall: WallRef | null };
 
 export function wallKey(wall: WallRef): string {
@@ -450,6 +451,12 @@ export function setCrumble(maze: Maze, cell: GridPoint): void {
   maze.tiles.push({ kind: "crumble", c: cell.c, r: cell.r });
 }
 
+export function setBlock(maze: Maze, cell: GridPoint): void {
+  if (!paintable(maze, cell)) return;
+  stripCell(maze, cell);
+  maze.tiles.push({ kind: "block", c: cell.c, r: cell.r });
+}
+
 export function paintSwitch(maze: Maze, cell: GridPoint): void {
   if (!paintable(maze, cell)) return;
   const existing = tileAt(maze, cell.c, cell.r);
@@ -518,6 +525,7 @@ export type LiftedTile =
   | { kind: "warp"; pair: number }
   | { kind: "ice" }
   | { kind: "crumble" }
+  | { kind: "block" }
   | { kind: "switch"; tone: number; wall: WallRef | null };
 
 export function liftAt(
@@ -536,6 +544,7 @@ export function liftAt(
   if (tile.kind === "warp") return { kind: "warp", pair: tile.pair };
   if (tile.kind === "ice") return { kind: "ice" };
   if (tile.kind === "crumble") return { kind: "crumble" };
+  if (tile.kind === "block") return { kind: "block" };
   return { kind: "switch", tone: tile.tone, wall: tile.wall ? { ...tile.wall } : null };
 }
 
@@ -566,6 +575,7 @@ export function moveLifted(maze: Maze, from: GridPoint, to: GridPoint, lift: Lif
   else if (lift.kind === "warp") maze.tiles.push({ kind: "warp", c: to.c, r: to.r, pair: lift.pair });
   else if (lift.kind === "ice") maze.tiles.push({ kind: "ice", c: to.c, r: to.r });
   else if (lift.kind === "crumble") maze.tiles.push({ kind: "crumble", c: to.c, r: to.r });
+  else if (lift.kind === "block") maze.tiles.push({ kind: "block", c: to.c, r: to.r });
   else maze.tiles.push({ kind: "switch", c: to.c, r: to.r, tone: lift.tone, wall: lift.wall });
   return true;
 }

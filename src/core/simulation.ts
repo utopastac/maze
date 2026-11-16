@@ -812,7 +812,7 @@ export class Simulation {
 
 function materialFor(kind: PieceKind, grip: number): { friction: number } {
   if (kind === "goal") return { friction: 1.15 * grip };
-  if (kind === "wall" || kind === "frame") return { friction: 0.16 * grip };
+  if (kind === "wall" || kind === "frame" || kind === "block") return { friction: 0.16 * grip };
   if (kind === "boost") return { friction: 0.18 * grip };
   if (kind === "warp") return { friction: 0.55 * grip };
   if (kind === "ice") return { friction: 0.02 };

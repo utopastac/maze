@@ -2,7 +2,7 @@ import { Wall, type Maze } from "../core/maze.ts";
 import { parseFloorTheme } from "../core/theme.ts";
 import styles from "./mazeThumbnail.module.css";
 
-type CellKind = "floor" | "start" | "goal" | "hatch" | "pit" | "boost" | "ice" | "crumble" | "warp" | "switch";
+type CellKind = "floor" | "start" | "goal" | "hatch" | "pit" | "boost" | "ice" | "crumble" | "block" | "warp" | "switch";
 
 export function renderMazeThumbnail(maze: Maze): HTMLElement {
   const board = document.createElement("div");
@@ -39,6 +39,7 @@ function cellKind(maze: Maze, c: number, r: number): CellKind {
   if (tile.kind === "boost") return "boost";
   if (tile.kind === "ice") return "ice";
   if (tile.kind === "crumble") return "crumble";
+  if (tile.kind === "block") return "block";
   if (tile.kind === "warp") return "warp";
   return "switch";
 }

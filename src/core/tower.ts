@@ -138,6 +138,9 @@ export function setHatch(tower: Tower, floorIndex: number, cell: GridPoint): voi
   if (!floor || floorIndex >= tower.floors.length - 1) return;
   if (!inside(floor, cell) || same(cell, floor.start)) return;
   floor.hatch = { c: cell.c, r: cell.r };
+  // Intermediate floors use the hatch as the exit; keep goal aligned so the old
+  // cell does not stay blocked as an invisible goal.
+  floor.goal = { c: cell.c, r: cell.r };
   floor.holes = floor.holes.filter((hole) => !same(hole, cell));
   floor.tiles = floor.tiles.filter((tile) => !same(tile, cell));
   repairTower(tower);
@@ -160,12 +163,12 @@ export function repairTower(tower: Tower): void {
         : spareCell(floor, [floor.start]);
       if (same(floor.hatch, floor.start)) floor.hatch = spareCell(floor, [floor.start]);
     }
-    if (same(floor.goal, floor.start)) {
-      floor.goal = spareCell(floor, [floor.start, floor.hatch].filter(isPoint));
-    }
     if (floor.hatch) {
+      floor.goal = { ...floor.hatch };
       floor.holes = floor.holes.filter((hole) => !same(hole, floor.hatch as GridPoint));
       floor.tiles = floor.tiles.filter((tile) => !same(tile, floor.hatch as GridPoint));
+    } else if (same(floor.goal, floor.start)) {
+      floor.goal = spareCell(floor, [floor.start]);
     }
     floor.holes = floor.holes.filter((hole) => !same(hole, floor.start) && !same(hole, floor.goal));
     floor.tiles = floor.tiles.filter((tile) => !same(tile, floor.start) && !same(tile, floor.goal));

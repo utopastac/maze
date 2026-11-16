@@ -35,7 +35,7 @@ const COUNT_BITS = 9;
 
 const PIT = 1;
 const BOOST = 2;
-const BOUNCE = 3;
+const BLOCK = 3;
 const WARP = 4;
 const ICE = 5;
 const CRUMBLE = 6;
@@ -48,6 +48,7 @@ type WarpCode = { color: number; link: number };
 type Feature =
   | { c: number; r: number; kind: "pit" }
   | { c: number; r: number; kind: "boost"; dir: Direction }
+  | { c: number; r: number; kind: "block" }
   | { c: number; r: number; kind: "warp"; color: number; link: number }
   | { c: number; r: number; kind: "ice" }
   | { c: number; r: number; kind: "crumble" }
@@ -246,7 +247,8 @@ function writeFeature(writer: BitWriter, feature: Feature): void {
   else if (feature.kind === "boost") {
     writer.write(BOOST, 3);
     writer.write(DIRS.indexOf(feature.dir), 2);
-  } else if (feature.kind === "warp") {
+  } else if (feature.kind === "block") writer.write(BLOCK, 3);
+  else if (feature.kind === "warp") {
     writer.write(WARP, 3);
     writer.write(feature.color, 3);
     writer.write(feature.link, 8);
@@ -281,7 +283,8 @@ function featuresOf(maze: Maze): Feature[] {
       if (tile.kind === "boost") {
         if (!DIRS.includes(tile.dir)) throw new Error("boost");
         features.push({ c, r, kind: "boost", dir: tile.dir });
-      } else if (tile.kind === "warp") {
+      } else if (tile.kind === "block") features.push({ c, r, kind: "block" });
+      else if (tile.kind === "warp") {
         const code = warps.get(tile.pair);
         if (!code) throw new Error("warp");
         features.push({ c, r, kind: "warp", color: code.color, link: code.link });
@@ -404,7 +407,10 @@ function readFeature(reader: BitReader, maze: Maze, seen: Set<string>): boolean 
     maze.tiles.push({ kind: "boost", c, r, dir: direction });
     return true;
   }
-  if (kind === BOUNCE) return true;
+  if (kind === BLOCK) {
+    maze.tiles.push({ kind: "block", c, r });
+    return true;
+  }
   if (kind === WARP) {
     const color = reader.read(3);
     const link = reader.read(8);

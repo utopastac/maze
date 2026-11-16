@@ -151,6 +151,10 @@
     background: var(--maze-crumble);
   }
 
+  &[data-kind="block"] {
+    background: var(--maze-block, var(--maze-wall));
+  }
+
   &[data-kind="warp"] {
     background: var(--maze-warp);
 

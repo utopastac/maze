@@ -153,6 +153,7 @@ export class MazeWorld {
       warp: toon(token("--maze-warp"), token("--maze-warp"), 0.14),
       ice: toon(token("--maze-ice"), token("--maze-ice-mark"), 0.1),
       crumble: makeCrumbleMat(),
+      block: toon(token("--maze-block")),
       switch: toon(token("--maze-switch"), token("--maze-switch-0"), 0.12),
       start: toon(token("--maze-start")),
       goal: toon(token("--maze-goal-floor"), token("--maze-goal"), 0.24),
@@ -923,7 +924,7 @@ export class MazeWorld {
         for (const geo of geos) geo.dispose();
       }
       const mesh = new Mesh(merged, this.surfaceMaterial(kind, surfaces));
-      mesh.castShadow = kind === "wall" || kind === "frame";
+      mesh.castShadow = kind === "wall" || kind === "frame" || kind === "block";
       mesh.receiveShadow =
         kind === "floor" ||
         kind === "start" ||
@@ -932,6 +933,7 @@ export class MazeWorld {
         kind === "warp" ||
         kind === "ice" ||
         kind === "crumble" ||
+        kind === "block" ||
         kind === "switch" ||
         kind === "grout";
       if (kind === "frame") {
@@ -947,7 +949,7 @@ export class MazeWorld {
     if (surfaces) {
       if (kind === "floor") return surfaces.floor;
       if (kind === "start") return surfaces.start;
-      if (kind === "wall") return surfaces.wall;
+      if (kind === "wall" || kind === "block") return surfaces.wall;
       if (kind === "grout") return surfaces.grout;
       if (kind === "frame") return surfaces.frame;
     }

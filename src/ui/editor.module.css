@@ -410,13 +410,6 @@ button.swatch {
   }
 }
 
-.dirs {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 8px;
-}
-
 .themeField {
   display: block;
 }
@@ -441,18 +434,6 @@ button.swatch {
     outline: 1px solid var(--seam);
     outline-offset: 1px;
   }
-}
-
-.dirLabel {
-  margin-right: 4px;
-  color: var(--ink-faint);
-  font-size: 13px;
-}
-
-button.dir {
-  width: 36px;
-  height: 36px;
-  flex-basis: 36px;
 }
 
 .stage {
@@ -961,6 +942,7 @@ button.deleteBtn {
 
   &[data-brush="erase"] .cell,
   &[data-brush="pit"] .cell,
+  &[data-brush="block"] .cell,
   &[data-brush="boost"] .cell,
   &[data-brush="ice"] .cell,
   &[data-brush="crumble"] .cell {
@@ -968,8 +950,7 @@ button.deleteBtn {
   }
 
   &[data-brush="warp"] .cell,
-  &[data-brush="switch"] .cell,
-  &[data-brush="hatch"] .cell {
+  &[data-brush="switch"] .cell {
     cursor: pointer;
   }
 
@@ -1329,6 +1310,14 @@ button.deleteBtn {
     }
   }
 
+  &[data-kind="block"] {
+    background:
+      linear-gradient(145deg, color-mix(in srgb, var(--maze-block, var(--maze-wall)) 78%, #fff) 0 38%, transparent 38%),
+      linear-gradient(325deg, color-mix(in srgb, var(--maze-block, var(--maze-wall)) 70%, #000) 0 34%, transparent 34%),
+      var(--maze-block, var(--maze-wall));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, #000 22%, transparent);
+  }
+
   &[data-kind="switch"] {
     --switch: var(--maze-switch-0);
     background: var(--maze-switch);
@@ -1506,6 +1495,12 @@ button.tileMenuItem {
   &:disabled {
     opacity: 0.35;
     cursor: default;
+  }
+
+  &:global(.selected) {
+    color: var(--seam);
+    border-color: color-mix(in srgb, var(--seam) 55%, transparent);
+    background: color-mix(in srgb, var(--glass) 70%, var(--seam) 12%);
   }
 
   &:focus-visible {

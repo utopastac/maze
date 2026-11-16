@@ -15,6 +15,7 @@ import {
   paintWarp,
   pendingSwitch,
   resizeMaze,
+  setBlock,
   setBoost,
   setCrumble,
   setIce,
@@ -69,7 +70,7 @@ export interface EditorCallbacks {
   onShare: (tower: Tower) => Promise<boolean | null>;
 }
 
-type PaletteKind = "pit" | "boost" | "warp" | "ice" | "crumble" | "switch" | "hatch";
+type PaletteKind = "pit" | "boost" | "warp" | "ice" | "crumble" | "block" | "switch";
 type EditorTool = "move" | "erase" | "wall" | PaletteKind;
 
 const HINT_TITLE: Record<EditorTool | "warp-pair" | "switch-pair", string> = {
@@ -81,13 +82,13 @@ const HINT_TITLE: Record<EditorTool | "warp-pair" | "switch-pair", string> = {
   warp: "Warp",
   ice: "Ice",
   crumble: "Crumble",
+  block: "Block",
   switch: "Switch",
-  hatch: "Hatch",
   "warp-pair": "Warp",
   "switch-pair": "Switch",
 };
 type Stroke = "open" | "close";
-type CellKind = "start" | "goal" | "pit" | "floor" | "boost" | "warp" | "ice" | "crumble" | "switch" | "hatch";
+type CellKind = "start" | "goal" | "pit" | "floor" | "boost" | "warp" | "ice" | "crumble" | "block" | "switch" | "hatch";
 type WallDrag = {
   axis: WallAxis;
   anchor: number;
@@ -112,12 +113,12 @@ type LineDrag = {
 
 const PALETTE: readonly { id: PaletteKind; label: string; icon: IconName }[] = [
   { id: "pit", label: "Pit", icon: "pit" },
+  { id: "block", label: "Block", icon: "block" },
   { id: "boost", label: "Boost", icon: "boost" },
   { id: "warp", label: "Warp", icon: "warp" },
   { id: "ice", label: "Ice", icon: "ice" },
   { id: "crumble", label: "Crumble", icon: "crumble" },
   { id: "switch", label: "Switch", icon: "switch" },
-  { id: "hatch", label: "Hatch", icon: "hatch" },
 ];
 
 const TOOLS: readonly { id: EditorTool; label: string; icon: IconName }[] = [
@@ -132,12 +133,12 @@ const HINT_BRUSH: Record<EditorTool, string> = {
   erase: "Click tiles or walls to clear them.",
   wall: "Click or drag along edges to draw or clear walls.",
   pit: "Paint pits the ball can fall through.",
-  boost: "Pick a direction, then paint boost lanes.",
+  boost: "Paint boost lanes. Click a boost to rotate, or pick a direction beside it.",
   warp: "Click two cells to link a warp. Click a warp to remove that end.",
   ice: "Paint slick tiles.",
   crumble: "Paint floors that crumble when the ball touches them.",
+  block: "Fill a cell with an impassable cube.",
   switch: "Click a cell, then a wall. Stop on the plate to open that wall.",
-  hatch: "Cut a hole through to the floor below.",
 };
 
 const DIR_WORD: Record<Direction, string> = {
@@ -153,6 +154,13 @@ const DIRECTION_TOOLS: readonly { id: Direction; label: string; icon: IconName }
   { id: "s", label: "South", icon: "south" },
   { id: "w", label: "West", icon: "west" },
 ];
+
+const NEXT_DIR: Record<Direction, Direction> = {
+  n: "e",
+  e: "s",
+  s: "w",
+  w: "n",
+};
 
 export class LevelEditor {
   private readonly root: HTMLElement;
@@ -205,14 +213,14 @@ export class LevelEditor {
   private mode: EditorMode = "share";
   private brush: EditorTool = "move";
   private boostDir: Direction = "n";
-  private readonly dirs: HTMLElement;
   private readonly themeSelect: HTMLSelectElement;
   private readonly nameInput: HTMLInputElement;
-  private readonly dirButtons = new Map<Direction, HTMLButtonElement>();
   private stroke: Stroke | null = null;
   private wallDrag: WallDrag | null = null;
   private tileDrag: TileDrag | null = null;
   private brushHover: { c: number; r: number } | null = null;
+  private boostMenuAt: { c: number; r: number } | null = null;
+  private boostGesture: "rotate" | "paint" | null = null;
   private pointerId: number | null = null;
   private noticeTimer = 0;
 
@@ -250,9 +258,6 @@ export class LevelEditor {
                 </label>
                 <h2 class="${styles.panelTitle}">Tools</h2>
                 <div class="${styles.palette}" role="list" aria-label="Tools" data-palette></div>
-                <div class="${styles.dirs}" data-dirs role="radiogroup" aria-label="Boost direction" hidden>
-                  <span class="${styles.dirLabel}">Boost dir</span>
-                </div>
                 <div class="${styles.hint}" data-hint aria-live="polite">
                   <p class="${styles.hintTitle}" data-hint-title></p>
                   <p class="${styles.hintBody}" data-hint-body></p>
@@ -320,7 +325,6 @@ export class LevelEditor {
     this.hint = this.require("[data-hint]");
     this.hintTitle = this.require("[data-hint-title]");
     this.hintBody = this.require("[data-hint-body]");
-    this.dirs = this.require("[data-dirs]");
     this.themeSelect = this.require("[data-theme-select]");
     this.nameInput = this.require("[data-level-name]");
     this.colReadout = this.require("[data-cols]");
@@ -339,7 +343,6 @@ export class LevelEditor {
     this.tileMenu = this.require("[data-tile-menu]");
     this.mountPalette();
     this.mountTileMenu();
-    this.mountDirections();
     this.mountThemes();
     this.require("[data-scrim]").addEventListener("click", this.requestClose);
     this.require("[data-close]").addEventListener("click", this.requestClose);
@@ -417,6 +420,14 @@ export class LevelEditor {
     this.sheet.addEventListener("pointermove", this.onSheetPointerMove);
     this.sheet.addEventListener("pointerleave", this.onSheetPointerLeave);
     this.tileMenu.addEventListener("click", (event) => {
+      const dirButton = (event.target as Element | null)?.closest<HTMLButtonElement>("[data-dir]");
+      if (dirButton && !dirButton.disabled) {
+        const dir = dirButton.dataset.dir;
+        if (dir === "n" || dir === "e" || dir === "s" || dir === "w") {
+          this.pickBoostDir(dir);
+        }
+        return;
+      }
       const button = (event.target as Element | null)?.closest<HTMLButtonElement>("[data-place]");
       if (!button || button.disabled) return;
       const place = button.dataset.place;
@@ -532,6 +543,17 @@ export class LevelEditor {
       button.innerHTML = `${iconSvg(tile.icon)}<span>${tile.label}</span>`;
       this.tileMenu.append(button);
     }
+    for (const dir of DIRECTION_TOOLS) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = styles.tileMenuItem;
+      button.dataset.dir = dir.id;
+      button.hidden = true;
+      button.setAttribute("role", "menuitemradio");
+      button.title = dir.label;
+      button.innerHTML = `${iconSvg(dir.icon)}<span>${dir.label}</span>`;
+      this.tileMenu.append(button);
+    }
   }
 
   private openTileMenu(point: { c: number; r: number }): void {
@@ -539,12 +561,43 @@ export class LevelEditor {
     const cell = this.cells.get(`${point.c},${point.r}`);
     if (!cell) return;
     this.tileMenuAt = point;
-    const hatchOk = this.floorIndex !== this.tower.floors.length - 1;
+    this.tileMenu.dataset.mode = "place";
+    this.tileMenu.setAttribute("aria-label", "Place tile");
     for (const button of this.tileMenu.querySelectorAll<HTMLButtonElement>("[data-place]")) {
-      const hide = button.dataset.place === "hatch" && !hatchOk;
-      button.hidden = hide;
-      button.disabled = hide;
+      button.hidden = false;
+      button.disabled = false;
     }
+    for (const button of this.tileMenu.querySelectorAll<HTMLButtonElement>("[data-dir]")) {
+      button.hidden = true;
+      button.classList.remove("selected");
+      button.setAttribute("aria-checked", "false");
+    }
+    this.positionTileMenu(cell);
+  }
+
+  private openBoostDirMenu(point: { c: number; r: number }): void {
+    if (this.pairing()) return;
+    const cell = this.cells.get(`${point.c},${point.r}`);
+    if (!cell) return;
+    const tile = tileAt(this.draft, point.c, point.r);
+    const current = tile?.kind === "boost" ? tile.dir : this.boostDir;
+    this.tileMenuAt = point;
+    this.tileMenu.dataset.mode = "boost";
+    this.tileMenu.setAttribute("aria-label", "Boost direction");
+    for (const button of this.tileMenu.querySelectorAll<HTMLButtonElement>("[data-place]")) {
+      button.hidden = true;
+    }
+    for (const button of this.tileMenu.querySelectorAll<HTMLButtonElement>("[data-dir]")) {
+      const on = button.dataset.dir === current;
+      button.hidden = false;
+      button.disabled = false;
+      button.classList.toggle("selected", on);
+      button.setAttribute("aria-checked", String(on));
+    }
+    this.positionTileMenu(cell);
+  }
+
+  private positionTileMenu(cell: HTMLElement): void {
     this.tileMenu.hidden = false;
     this.syncMenuHighlight();
     this.tileMenu.style.left = "0px";
@@ -565,6 +618,7 @@ export class LevelEditor {
   private hideTileMenu(): void {
     this.tileMenuAt = null;
     this.tileMenu.hidden = true;
+    delete this.tileMenu.dataset.mode;
     this.syncMenuHighlight();
   }
 
@@ -586,7 +640,6 @@ export class LevelEditor {
 
   private enterPairing(kind: "switch" | "warp"): void {
     this.brush = kind;
-    this.dirs.hidden = true;
     this.hideTileMenu();
     this.syncFloors();
     this.syncPalette();
@@ -614,11 +667,17 @@ export class LevelEditor {
     this.hideTileMenu();
     if (!point) return;
     if (kind === "clear") clearFloor(this.draft, point);
-    else if (kind === "hatch") setHatch(this.tower, this.floorIndex, point);
     else if (kind === "pit") setPit(this.draft, point, true);
-    else if (kind === "boost") setBoost(this.draft, point, this.boostDir);
-    else if (kind === "ice") setIce(this.draft, point);
+    else if (kind === "boost") {
+      setBoost(this.draft, point, this.boostDir);
+      this.syncCells();
+      this.syncWalls();
+      this.refreshHint();
+      this.openBoostDirMenu(point);
+      return;
+    } else if (kind === "ice") setIce(this.draft, point);
     else if (kind === "crumble") setCrumble(this.draft, point);
+    else if (kind === "block") setBlock(this.draft, point);
     else if (kind === "switch") {
       paintSwitch(this.draft, point);
       if (pendingSwitch(this.draft)) this.enterPairing("switch");
@@ -632,23 +691,14 @@ export class LevelEditor {
     this.refreshHint();
   }
 
-  private mountDirections(): void {
-    for (const dir of DIRECTION_TOOLS) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = `glass-btn ${styles.dir}`;
-      button.setAttribute("role", "radio");
-      button.setAttribute("aria-label", dir.label);
-      button.innerHTML = iconSvg(dir.icon);
-      button.addEventListener("click", () => {
-        this.boostDir = dir.id;
-        this.syncDirections();
-        if (this.brush === "boost" && this.brushHover) this.syncCells();
-      });
-      this.dirButtons.set(dir.id, button);
-      this.dirs.append(button);
-    }
-    this.syncDirections();
+  private pickBoostDir(dir: Direction): void {
+    const point = this.tileMenuAt;
+    if (!point) return;
+    this.boostDir = dir;
+    setBoost(this.draft, point, dir);
+    this.hideTileMenu();
+    this.syncCells();
+    this.syncWalls();
   }
 
   private mountThemes(): void {
@@ -660,14 +710,6 @@ export class LevelEditor {
       this.themeSelect.append(option);
     }
     this.syncThemes();
-  }
-
-  private syncDirections(): void {
-    for (const [id, button] of this.dirButtons) {
-      const on = id === this.boostDir;
-      button.classList.toggle("selected", on);
-      button.setAttribute("aria-checked", String(on));
-    }
   }
 
   private setTheme(theme: FloorThemeId): void {
@@ -686,7 +728,6 @@ export class LevelEditor {
     if (this.pairing() && kind !== this.pairing()) return;
     this.brush = kind;
     if (this.pairing() && this.brush !== this.pairing()) this.brush = this.pairing();
-    this.dirs.hidden = this.brush !== "boost";
     if (!this.hoverBrush()) this.brushHover = null;
     this.hideTileMenu();
     this.syncPalette();
@@ -1233,20 +1274,15 @@ export class LevelEditor {
   }
 
   private syncPalette(): void {
-    const last = this.tower.floors.length - 1;
-    const hatchOk = this.floorIndex !== last;
     const pairing = this.pairing();
-    if (this.brush === "hatch" && !hatchOk) this.brush = "move";
     for (const [id, button] of this.paletteButtons) {
-      const hide = id === "hatch" && !hatchOk;
       const on = this.brush === id;
-      button.hidden = hide;
-      button.disabled = hide || pairing !== null;
+      button.hidden = false;
+      button.disabled = pairing !== null;
       button.classList.toggle("selected", on);
       button.setAttribute("aria-checked", String(on));
     }
     this.syncFloorLocks(pairing !== null);
-    this.dirs.hidden = this.brush !== "boost" || pairing !== null;
     this.board.dataset.brush = this.brush;
     if (pairing) this.board.dataset.pairing = pairing;
     else delete this.board.dataset.pairing;
@@ -1464,6 +1500,8 @@ export class LevelEditor {
     this.pointerId = event.pointerId;
     this.stroke = null;
     this.wallDrag = null;
+    this.boostMenuAt = null;
+    this.boostGesture = null;
     this.clearTileDrag();
     if (this.lineSelect) this.clearLineSelect();
     this.hideGap();
@@ -1584,10 +1622,10 @@ export class LevelEditor {
         ok: this.canBrushAt(point, { kind: "crumble" }),
       };
     }
-    if (brush === "hatch") {
+    if (brush === "block") {
       return {
-        paint: { kind: "hatch", label: `Place hatch, ${where}` },
-        ok: this.canBrushAt(point, { kind: "hatch" }),
+        paint: { kind: "block", label: `Place block, ${where}` },
+        ok: this.canBrushAt(point, { kind: "block" }),
       };
     }
     if (brush === "warp") {
@@ -1618,10 +1656,6 @@ export class LevelEditor {
   }
 
   private canBrushAt(point: { c: number; r: number }, lift: LiftedTile): boolean {
-    if (lift.kind === "hatch") {
-      if (this.floorIndex >= this.tower.floors.length - 1) return false;
-      return !samePoint(point, this.draft.start);
-    }
     return canDropLifted(this.draft, { c: -1, r: -1 }, point, lift);
   }
 
@@ -1630,9 +1664,13 @@ export class LevelEditor {
     const drag = this.tileDrag;
     const hadWallDrag = this.wallDrag !== null;
     const hadStroke = this.stroke !== null;
+    const boostMenuAt = this.boostMenuAt;
+    const boostGesture = this.boostGesture;
     this.pointerId = null;
     this.stroke = null;
     this.wallDrag = null;
+    this.boostMenuAt = null;
+    this.boostGesture = null;
     if (drag && drag.moved) {
       if (this.canDropAt(drag.over, drag.lift)) this.commitLift(drag.from, drag.over, drag.lift);
       this.clearTileDrag();
@@ -1642,6 +1680,10 @@ export class LevelEditor {
     }
     const clickAt = drag?.from ?? (!hadWallDrag && !hadStroke ? this.cellAt(event.clientX, event.clientY) : null);
     this.clearTileDrag();
+    if (boostGesture === "paint" && boostMenuAt && this.brush === "boost" && !this.pairing()) {
+      this.openBoostDirMenu(boostMenuAt);
+      return;
+    }
     if (!this.pairing() && this.brush === "move" && !hadWallDrag && !hadStroke && clickAt) {
       this.openTileMenu(clickAt);
     }
@@ -1699,12 +1741,33 @@ export class LevelEditor {
 
     const point = this.cellAt(x, y);
     if (!point) return;
+    if (brush === "boost") {
+      const existing = tileAt(this.draft, point.c, point.r);
+      if (this.boostGesture === "rotate" && existing?.kind === "boost") {
+        this.stroke = "close";
+        return;
+      }
+      if (this.boostGesture === null && existing?.kind === "boost") {
+        const next = NEXT_DIR[existing.dir];
+        this.boostDir = next;
+        setBoost(this.draft, point, next);
+        this.boostGesture = "rotate";
+        this.stroke = "close";
+      } else {
+        setBoost(this.draft, point, this.boostDir);
+        this.boostGesture = "paint";
+        this.boostMenuAt = point;
+        this.stroke = "close";
+      }
+      this.syncCells();
+      this.syncWalls();
+      return;
+    }
     if (brush === "warp" || brush === "switch") this.stroke = "close";
-    if (brush === "hatch") setHatch(this.tower, this.floorIndex, point);
-    else if (brush === "pit") setPit(this.draft, point, true);
-    else if (brush === "boost") setBoost(this.draft, point, this.boostDir);
+    if (brush === "pit") setPit(this.draft, point, true);
     else if (brush === "ice") setIce(this.draft, point);
     else if (brush === "crumble") setCrumble(this.draft, point);
+    else if (brush === "block") setBlock(this.draft, point);
     else if (brush === "switch") {
       paintSwitch(this.draft, point);
       if (pendingSwitch(this.draft)) this.enterPairing("switch");
@@ -1948,6 +2011,7 @@ function describeCell(
   if (tile?.kind === "boost") return { kind: "boost", dir: tile.dir, label: `Boost ${DIR_WORD[tile.dir]}, ${where}` };
   if (tile?.kind === "ice") return { kind: "ice", label: `Ice, ${where}` };
   if (tile?.kind === "crumble") return { kind: "crumble", label: `Crumble, ${where}` };
+  if (tile?.kind === "block") return { kind: "block", label: `Block, ${where}` };
   if (tile?.kind === "switch") {
     return {
       kind: "switch",
@@ -1978,6 +2042,7 @@ function describeLift(lift: LiftedTile, c: number, r: number, landing: boolean):
   if (lift.kind === "boost") return { kind: "boost", dir: lift.dir, label: `Boost ${DIR_WORD[lift.dir]}, ${where}` };
   if (lift.kind === "ice") return { kind: "ice", label: `Ice, ${where}` };
   if (lift.kind === "crumble") return { kind: "crumble", label: `Crumble, ${where}` };
+  if (lift.kind === "block") return { kind: "block", label: `Block, ${where}` };
   if (lift.kind === "warp") {
     return {
       kind: "warp",

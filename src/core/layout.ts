@@ -24,6 +24,7 @@ export type PieceKind =
   | "warp"
   | "ice"
   | "crumble"
+  | "block"
   | "switch"
   | "wall"
   | "frame"
@@ -139,6 +140,7 @@ export function isSolid(kind: PieceKind): boolean {
     kind === "warp" ||
     kind === "ice" ||
     kind === "crumble" ||
+    kind === "block" ||
     kind === "switch" ||
     kind === "wall" ||
     kind === "frame"
@@ -244,6 +246,10 @@ export function layoutMaze(maze: Maze, showGoal = true, hearts: GridPoint[] = []
         continue;
       }
       const tile = tileAt(maze, c, r);
+      if (tile?.kind === "block") {
+        pieces.push(blockCube(at.x, at.z));
+        continue;
+      }
       const kind = floorKind(maze, c, r, tile);
       const span = (CELL - WALL) / 2 + 0.02;
       pieces.push({
@@ -335,6 +341,13 @@ function post(x: number, z: number, frame: boolean): Piece {
   const { y, hy } = extents(frame);
   const half = WALL / 2 + 0.004;
   return { kind: frame ? "frame" : "wall", x, y, z, hx: half, hy, hz: half };
+}
+
+/** Solid cube that fills a cell's open floor area at wall height. */
+function blockCube(x: number, z: number): Piece {
+  const { y, hy } = extents(false);
+  const span = (CELL - WALL) / 2 + 0.02;
+  return { kind: "block", x, y, z, hx: span, hy, hz: span };
 }
 
 function segment(

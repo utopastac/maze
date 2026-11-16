@@ -1,6 +1,7 @@
 import {
   ArrowDown,
   ArrowLeft,
+  Box,
   CircleArrowDown,
   ArrowRight,
   ArrowUp,
@@ -65,6 +66,7 @@ export type IconName =
   | "warp"
   | "ice"
   | "crumble"
+  | "block"
   | "switch"
   | "hatch"
   | "north"
@@ -107,6 +109,7 @@ const NODES: Record<IconName, IconNode> = {
   warp: Waypoints,
   ice: Snowflake,
   crumble: Hourglass,
+  block: Box,
   switch: ToggleLeft,
   hatch: CircleArrowDown,
   north: ArrowUp,
