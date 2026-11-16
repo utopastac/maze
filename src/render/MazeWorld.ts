@@ -38,7 +38,18 @@ import {
   type Texture,
 } from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import { BALL_R, MEADOW_DROP, STORY, type MazeLayout, type Piece, type PieceKind, type TowerLayout } from "../core/layout.ts";
+import {
+  BALL_R,
+  CELL,
+  MEADOW_DROP,
+  PIT_WELL,
+  STORY,
+  WALL,
+  type MazeLayout,
+  type Piece,
+  type PieceKind,
+  type TowerLayout,
+} from "../core/layout.ts";
 import { clamp } from "../core/math.ts";
 import { DIRECTION_VECTOR, SWITCH_COLOR_COUNT, WARP_COLOR_COUNT } from "../core/maze.ts";
 import { SETTING_SPECS, type PlaySettings } from "../core/playSettings.ts";
@@ -2021,6 +2032,10 @@ export class MazeWorld {
       mesh.userData.slab = slab;
       mesh.userData.chunks = crumbleChunks(mesh, piece, chunkMat);
       mesh.userData.apart = 0;
+      const well = makeCrumbleWell(piece, this.materials.pit, this.materials.lip);
+      well.visible = false;
+      mesh.add(well);
+      mesh.userData.well = well;
       this.crumbleMeshes.push(mesh);
     }
     if (piece.gate) {
@@ -2096,6 +2111,8 @@ export class MazeWorld {
         chunk.rotation.y = this.reduceMotion ? 0 : Math.sin(time * 2.4 + tilt) * next * 0.6;
         chunk.visible = breaking && next < 0.94;
       }
+      const well = mesh.userData.well as Group | undefined;
+      if (well) well.visible = gone || next > 0.55;
     }
   }
 
@@ -3626,6 +3643,47 @@ function paintCrumble(ctx: CanvasRenderingContext2D, size: number): void {
       if (x === 0 || y === 0 || x === size - 1 || y === size - 1) px(edge, x, y);
     }
   }
+}
+
+function makeCrumbleWell(piece: Piece, pitMat: MeshToonMaterial, lipMat: MeshToonMaterial): Group {
+  const well = new Group();
+  const gap = (CELL - WALL) / 2 - 0.012;
+  const thickness = 0.05;
+  const top = -0.008;
+  const floor = -PIT_WELL;
+  const mid = (top + floor) / 2;
+  const hy = (top - floor) / 2;
+  const inset = gap - thickness / 2;
+  const sink = BALL_R * 2 + 0.06;
+  const originY = piece.y;
+  const sides: Array<[number, number, number, number, number, number]> = [
+    [0, mid - originY, -inset, gap, hy, thickness / 2],
+    [0, mid - originY, inset, gap, hy, thickness / 2],
+    [-inset, mid - originY, 0, thickness / 2, hy, inset],
+    [inset, mid - originY, 0, thickness / 2, hy, inset],
+    [0, floor - sink / 2 - originY, 0, gap - thickness, sink / 2, gap - thickness],
+  ];
+  for (const [x, y, z, hx, halfY, hz] of sides) {
+    const wall = new Mesh(new BoxGeometry(hx * 2, halfY * 2, hz * 2), pitMat);
+    wall.position.set(x, y, z);
+    well.add(wall);
+  }
+  const lipT = 0.03;
+  const lipY = 0.014 - originY;
+  const lipAlong = gap;
+  const lipInset = gap - lipT / 2;
+  const lips: Array<[number, number, number, number, number, number]> = [
+    [0, lipY, -lipInset, lipAlong, 0.012, lipT / 2],
+    [0, lipY, lipInset, lipAlong, 0.012, lipT / 2],
+    [-lipInset, lipY, 0, lipT / 2, 0.012, lipAlong],
+    [lipInset, lipY, 0, lipT / 2, 0.012, lipAlong],
+  ];
+  for (const [x, y, z, hx, halfY, hz] of lips) {
+    const lip = new Mesh(new BoxGeometry(hx * 2, halfY * 2, hz * 2), lipMat);
+    lip.position.set(x, y, z);
+    well.add(lip);
+  }
+  return well;
 }
 
 function crumbleChunks(parent: Mesh, piece: Piece, material: MeshToonMaterial): Mesh[] {

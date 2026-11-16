@@ -372,15 +372,15 @@ button.dir {
 .playFrame {
   position: absolute;
   z-index: 3;
-  left: var(--edge);
-  top: var(--edge);
-  right: var(--edge);
-  bottom: var(--edge);
+  left: calc(var(--edge) - var(--frame));
+  top: calc(var(--edge) - var(--frame));
+  right: calc(var(--edge) - var(--frame));
+  bottom: calc(var(--edge) - var(--frame));
   box-sizing: border-box;
   border: var(--frame) solid var(--maze-frame);
-  border-radius: var(--control-radius);
+  border-radius: calc(var(--control-radius) + var(--frame) * 0.35);
   pointer-events: none;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--maze-void) 25%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--maze-void) 25%, transparent);
 }
 
 .chrome {
@@ -796,19 +796,71 @@ button.deleteBtn {
   }
 
   &[data-erase="true"] .wall {
-    pointer-events: none;
-    cursor: inherit;
+    cursor: crosshair;
   }
 
-  @media (hover: hover) and (pointer: fine) {
-    &:not([data-erase="true"]) .wall:hover {
+  &[data-pairing="switch"] {
+    & .cell {
+      pointer-events: none;
+      cursor: default;
+      filter: grayscale(0.4) brightness(0.72);
+    }
+
+    & .cell[data-kind="switch"][data-open="true"] {
+      filter: none;
+      outline: 2px solid color-mix(in srgb, var(--switch-link, var(--maze-switch-0)) 80%, var(--ink));
+      outline-offset: -2px;
+      box-shadow:
+        inset 0 0 0 999px color-mix(in srgb, var(--switch-link, var(--maze-switch-0)) 16%, transparent),
+        inset -1px 0 0 color-mix(in srgb, var(--ink) 8%, transparent),
+        inset 0 -1px 0 color-mix(in srgb, var(--ink) 8%, transparent);
+    }
+
+    & .wall {
       z-index: 6;
     }
 
-    &:not([data-erase="true"]) .wall:hover::before {
+    & .wall[data-open="true"] {
+      pointer-events: none;
+    }
+
+    & .wall[data-link="true"]::before {
+      opacity: 1;
+      background: color-mix(in srgb, var(--switch-link, var(--maze-switch-0)) 55%, var(--maze-wall));
+      box-shadow:
+        0 0 0 2px color-mix(in srgb, var(--switch-link, var(--maze-switch-0)) 70%, transparent),
+        0 0 12px color-mix(in srgb, var(--switch-link, var(--maze-switch-0)) 45%, transparent);
+      animation: switch-link-pulse 1.1s ease-in-out infinite;
+    }
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    &:not([data-erase="true"]):not([data-pairing="switch"]) .wall:hover {
+      z-index: 6;
+    }
+
+    &:not([data-erase="true"]):not([data-pairing="switch"]) .wall:hover::before {
       opacity: 1;
       background: var(--seam);
     }
+
+    &[data-pairing="switch"] .wall[data-link="true"]:hover::before {
+      background: var(--switch-link, var(--maze-switch-0));
+      box-shadow:
+        0 0 0 2px color-mix(in srgb, var(--switch-link, var(--maze-switch-0)) 90%, transparent),
+        0 0 16px color-mix(in srgb, var(--switch-link, var(--maze-switch-0)) 55%, transparent);
+    }
+  }
+}
+
+@keyframes switch-link-pulse {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+
+  50% {
+    filter: brightness(1.25);
   }
 }
 

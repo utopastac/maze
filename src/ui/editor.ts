@@ -104,7 +104,7 @@ const PALETTE: readonly { id: PaletteKind; label: string; icon: IconName }[] = [
 ];
 
 const HINT_SELECT = "Click a cell for tile options. Drag tiles, walls, or row/column handles to edit.";
-const HINT_ERASE = "Erase is on. Click tiles to clear them.";
+const HINT_ERASE = "Erase is on. Click tiles or walls to clear them.";
 const HINT_BRUSH: Record<PaletteKind, string> = {
   pit: "Paint pits the ball can fall through.",
   boost: "Pick a direction, then paint boost lanes.",
@@ -187,6 +187,7 @@ export class LevelEditor {
   private stroke: Stroke | null = null;
   private wallDrag: WallDrag | null = null;
   private tileDrag: TileDrag | null = null;
+  private pairHover: { c: number; r: number } | null = null;
   private pointerId: number | null = null;
   private noticeTimer = 0;
 
@@ -365,6 +366,7 @@ export class LevelEditor {
     this.board.addEventListener("pointermove", this.onPointerMove);
     this.board.addEventListener("pointerup", this.onPointerUp);
     this.board.addEventListener("pointercancel", this.onPointerUp);
+    this.board.addEventListener("pointerleave", this.onPairHoverLeave);
     this.board.addEventListener("contextmenu", (event) => event.preventDefault());
     window.addEventListener("keydown", this.onKey, true);
     this.setErase(false);
@@ -523,7 +525,10 @@ export class LevelEditor {
     this.eraseBtn.classList.toggle("selected", false);
     this.eraseBtn.setAttribute("aria-pressed", "false");
     this.dirs.hidden = true;
+    this.hideTileMenu();
     this.syncPalette();
+    this.syncCells();
+    this.syncWalls();
     this.refreshHint();
   }
 
@@ -532,6 +537,7 @@ export class LevelEditor {
     cancelPendingPair(this.draft);
     this.brush = null;
     this.stroke = null;
+    this.pairHover = null;
     this.syncPalette();
     this.syncCells();
     this.syncWalls();
@@ -555,6 +561,7 @@ export class LevelEditor {
     } else if (kind === "warp") {
       paintWarp(this.draft, point);
       if (loneWarpPair(this.draft) !== null) this.enterPairing("warp");
+      else this.pairHover = null;
     }
     this.syncCells();
     this.syncWalls();
@@ -1131,17 +1138,29 @@ export class LevelEditor {
   private syncPalette(): void {
     const last = this.tower.floors.length - 1;
     const hatchOk = this.floorIndex !== last;
+    const pairing = this.pairing();
     if (this.brush === "hatch" && !hatchOk) this.brush = null;
     for (const [id, button] of this.paletteButtons) {
       const hide = id === "hatch" && !hatchOk;
+      const locked = pairing === "switch" && id !== "switch";
       const on = !this.erase && this.brush === id;
       button.hidden = hide;
-      button.disabled = hide;
+      button.disabled = hide || locked || pairing === "switch";
       button.classList.toggle("selected", on);
       button.setAttribute("aria-checked", String(on));
     }
-    this.dirs.hidden = this.erase || this.brush !== "boost";
+    this.eraseBtn.disabled = pairing === "switch";
+    this.dirs.hidden = this.erase || this.brush !== "boost" || pairing === "switch";
     this.board.dataset.brush = this.erase ? "erase" : (this.brush ?? "");
+    if (pairing) this.board.dataset.pairing = pairing;
+    else delete this.board.dataset.pairing;
+    if (pairing === "switch") {
+      const pending = this.draft.tiles.find((tile) => tile.kind === "switch" && tile.wall === null);
+      const tone = pending && pending.kind === "switch" ? pending.tone % 6 : 0;
+      this.board.style.setProperty("--switch-link", `var(--maze-switch-${tone})`);
+    } else {
+      this.board.style.removeProperty("--switch-link");
+    }
   }
 
   private syncSize(): void {
@@ -1241,6 +1260,9 @@ export class LevelEditor {
   private syncCells(): void {
     const openPairs = openWarpPairs(this.draft);
     const drag = this.tileDrag;
+    const pairKind = this.pairing();
+    const pairHover = pairKind === "warp" ? this.pairHover : null;
+    const loneWarp = pairKind === "warp" ? loneWarpPair(this.draft) : null;
     for (const [id, cell] of this.cells) {
       const [c, r] = id.split(",").map(Number);
       if (c === undefined || r === undefined) continue;
@@ -1248,8 +1270,22 @@ export class LevelEditor {
       let paint = describeCell(this.draft, c, r, openPairs, this.floorIndex === last, this.floorIndex > 0);
       const isSource = !!drag && drag.from.c === c && drag.from.r === r;
       const isOver = !!drag && drag.moved && drag.over.c === c && drag.over.r === r;
+      const here = tileAt(this.draft, c, r);
+      const isPairSource = loneWarp !== null && here?.kind === "warp" && here.pair === loneWarp;
+      const isPairHover = !!pairHover
+        && pairHover.c === c
+        && pairHover.r === r
+        && !isPairSource;
+      const pairOk = isPairHover && loneWarp !== null && this.canPlacePairWarp({ c, r }, loneWarp);
       if (isOver && this.canDropAt(drag.over, drag.lift)) {
         paint = describeLift(drag.lift, c, r, this.floorIndex > 0);
+      } else if (pairOk && loneWarp !== null) {
+        paint = {
+          kind: "warp",
+          pair: loneWarp % WARP_COLOR_COUNT,
+          open: true,
+          label: `Place warp ${(loneWarp % WARP_COLOR_COUNT) + 1}, column ${c + 1}, row ${r + 1}`,
+        };
       }
       cell.dataset.kind = paint.kind;
       if (paint.dir) cell.dataset.dir = paint.dir;
@@ -1258,9 +1294,10 @@ export class LevelEditor {
       else delete cell.dataset.pair;
       if (paint.open) cell.dataset.open = "true";
       else delete cell.dataset.open;
-      if (isSource) cell.dataset.dragging = "true";
+      if (isSource || isPairSource) cell.dataset.dragging = "true";
       else delete cell.dataset.dragging;
       if (isOver) cell.dataset.drop = this.canDropAt(drag.over, drag.lift) ? "ok" : "no";
+      else if (isPairHover) cell.dataset.drop = pairOk ? "ok" : "no";
       else delete cell.dataset.drop;
       const menuOn = !!this.tileMenuAt && this.tileMenuAt.c === c && this.tileMenuAt.r === r;
       if (menuOn) cell.dataset.menu = "true";
@@ -1284,6 +1321,8 @@ export class LevelEditor {
     const tone = switchTone(this.draft, axis, c, r);
     if (tone === null) delete wall.dataset.pair;
     else wall.dataset.pair = String(tone);
+    if (this.pairing() === "switch" && !open) wall.dataset.link = "true";
+    else delete wall.dataset.link;
     if (axis === "v") {
       const joinN = !open && r > 0
         && (interiorClosed(this.draft, "h", c, r - 1) || interiorClosed(this.draft, "h", c + 1, r - 1));
@@ -1327,9 +1366,11 @@ export class LevelEditor {
     const pair = this.pairing();
     if (pair === "switch") {
       const wall = elementAt(event.clientX, event.clientY, "data-wall");
-      if (wall) {
+      if (wall?.dataset.link === "true") {
         this.stroke = "close";
         this.bindSwitch(wall);
+        if (!pendingSwitch(this.draft)) this.brush = null;
+        this.syncPalette();
         this.syncCells();
         this.syncWalls();
         this.refreshHint();
@@ -1353,7 +1394,10 @@ export class LevelEditor {
   };
 
   private onPointerMove = (event: PointerEvent): void => {
-    if (event.pointerId !== this.pointerId) return;
+    if (event.pointerId !== this.pointerId) {
+      this.updatePairHover(event.clientX, event.clientY);
+      return;
+    }
     if (this.tileDrag) {
       this.extendTileDrag(event.clientX, event.clientY);
       return;
@@ -1364,6 +1408,32 @@ export class LevelEditor {
     }
     this.applyPaint(event.clientX, event.clientY);
   };
+
+  private onPairHoverLeave = (): void => {
+    if (!this.pairHover) return;
+    this.pairHover = null;
+    if (this.pairing() === "warp") this.syncCells();
+  };
+
+  private updatePairHover(x: number, y: number): void {
+    if (this.pairing() !== "warp") {
+      if (this.pairHover) {
+        this.pairHover = null;
+        this.syncCells();
+      }
+      return;
+    }
+    const point = this.cellAt(x, y);
+    if (point && this.pairHover && samePoint(point, this.pairHover)) return;
+    if (!point && !this.pairHover) return;
+    this.pairHover = point;
+    this.syncCells();
+  }
+
+  private canPlacePairWarp(point: { c: number; r: number }, pair: number): boolean {
+    if (tileAt(this.draft, point.c, point.r)?.kind === "warp") return false;
+    return canDropLifted(this.draft, { c: -1, r: -1 }, point, { kind: "warp", pair });
+  }
 
   private onPointerUp = (event: PointerEvent): void => {
     if (event.pointerId !== this.pointerId) return;
@@ -1394,11 +1464,24 @@ export class LevelEditor {
       delete cell.dataset.dragging;
       delete cell.dataset.drop;
     }
+    if (this.pairing() === "warp" && this.pairHover) this.syncCells();
   }
 
   private applyPaint(x: number, y: number): void {
     if (this.pairing() === "switch") return;
     if (this.erase) {
+      const wall = elementAt(x, y, "data-wall");
+      if (wall) {
+        const axis: WallAxis = wall.dataset.axis === "h" ? "h" : "v";
+        const c = Number(wall.dataset.c);
+        const r = Number(wall.dataset.r);
+        if (Number.isInteger(c) && Number.isInteger(r) && interiorClosed(this.draft, axis, c, r)) {
+          setInteriorWall(this.draft, axis, c, r, false);
+          this.syncCells();
+          this.syncWalls();
+        }
+        return;
+      }
       const point = this.cellAt(x, y);
       if (!point) return;
       clearFloor(this.draft, point);
@@ -1438,6 +1521,7 @@ export class LevelEditor {
     } else if (brush === "warp") {
       paintWarp(this.draft, point);
       if (loneWarpPair(this.draft) !== null) this.enterPairing("warp");
+      else this.pairHover = null;
     }
     this.syncCells();
     this.syncWalls();
