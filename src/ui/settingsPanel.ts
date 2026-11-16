@@ -127,7 +127,7 @@ export class SettingsPanel {
         input.value = String(value);
         input.disabled = pictureSlider && normal;
       }
-      if (field) field.classList.toggle(styles.dimmed, pictureSlider && normal);
+      if (field) field.classList.toggle(styles.dimmed, Boolean(pictureSlider && normal));
       if (readout) readout.textContent = spec.format(value);
     }
     if (this.invertInput) this.invertInput.checked = this.settings.invertY;

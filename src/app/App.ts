@@ -7,15 +7,17 @@ import { initPhysics, Simulation } from "../core/simulation.ts";
 import { TiltController } from "../core/tilt.ts";
 import { applyRendererLook, createRenderer } from "../render/createRenderer.ts";
 import { MazeWorld } from "../render/MazeWorld.ts";
-import { resizeMaze } from "../core/maze.ts";
+import { cloneMaze, resizeMaze } from "../core/maze.ts";
 import { DEFAULT_FLOOR_THEME } from "../core/theme.ts";
 import { LevelEditor, type EditorMode } from "../ui/editor.ts";
 import { Hud } from "../ui/hud.ts";
+import { LevelSelect } from "../ui/levelSelect.ts";
 import { Overlay } from "../ui/overlay.ts";
 import { SettingsPanel } from "../ui/settingsPanel.ts";
 import type { WebGLRenderer } from "three";
 
 const FIRST_SEED = 11;
+const LEVEL_SELECT_SEED = FIRST_SEED;
 const TILT_KEYS = ["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d"];
 const CAMERA_KEYS = new Set(["q", "e", "z", "c", "-", "_", "=", "+"]);
 const ZOOM_SPEED = 0.45;
@@ -32,10 +34,12 @@ export class App {
   private readonly overlay: Overlay;
   private readonly panel: SettingsPanel;
   private readonly editor: LevelEditor;
+  private readonly picker: LevelSelect;
   private tower: Tower | null = null;
   private authored: Tower | null = null;
   private mode: Mode = "free";
   private campaign: Campaign | null = null;
+  private pickerCampaign: Campaign | null = null;
   private lives = CAMPAIGN_LIVES;
   private shareNote = false;
   private shareTimer = 0;
@@ -58,6 +62,7 @@ export class App {
   private recallCamera = false;
   private motion = false;
   private sheetOpen = false;
+  private browsingWins = false;
   private calibrateMotion = false;
   private motionOrigin: { beta: number; gamma: number } | null = null;
   private seed = FIRST_SEED;
@@ -67,6 +72,7 @@ export class App {
     chrome: HTMLElement,
     overlay: HTMLElement,
     sheet: HTMLElement,
+    picker: HTMLElement,
     editor: HTMLElement,
   ) {
     this.canvas = canvas;
@@ -87,11 +93,16 @@ export class App {
       onClose: () => this.finishEditing(),
       onShare: (tower) => this.publish(tower),
     });
+    this.picker = new LevelSelect(picker, {
+      onPick: (index) => this.playCampaignFloor(index),
+      onClose: () => this.closeLevelSelect(),
+    });
     this.hud = new Hud(chrome, {
       onLevel: () => this.level(),
       onReset: () => this.resetBall(),
       onNew: () => this.newMaze(),
       onCampaign: () => this.startCampaign(),
+      onLevels: () => this.toggleLevelSelect(),
       onMotion: () => this.toggleMotion(),
       onSettings: () => this.toggleSettings(),
       onEdit: () => this.openEditor("share"),
@@ -100,6 +111,7 @@ export class App {
         if (!this.authored) return;
         void this.publish(this.authored).then((result) => this.noteShare(result));
       },
+      onWins: () => this.toggleWinGallery(),
     });
     this.overlay = new Overlay(overlay, {
       onAgain: () => this.replay(),
@@ -188,9 +200,11 @@ export class App {
     this.seconds = 0;
     this.drops = 0;
     this.running = false;
+    this.browsingWins = false;
     this.tilt.snap();
     this.overlay.hide();
     this.hud.setCelebrate(false);
+    this.hud.setWinsSelected(false);
     this.hud.showHint();
     this.clearShareNote();
     this.hud.setNote("");
@@ -206,11 +220,120 @@ export class App {
       this.editor.hide();
       this.finishEditing();
     }
+    this.closeLevelSelect();
     this.closeSettings();
+    this.closeWinGallery(false);
     this.lives = CAMPAIGN_LIVES;
     this.campaign = generateCampaign(Math.floor(Math.random() * 0x7fffffff));
     this.mountCampaign();
     this.resize();
+  }
+
+  private toggleLevelSelect(): void {
+    if (this.picker.isOpen()) this.closeLevelSelect();
+    else this.openLevelSelect();
+  }
+
+  private openLevelSelect(): void {
+    if (!this.view || this.picker.isOpen()) return;
+    if (this.editor.isOpen()) {
+      this.editor.hide();
+      this.finishEditing();
+    }
+    this.closeSettings();
+    this.closeWinGallery(false);
+    this.dragging = false;
+    this.dragPointer = null;
+    this.keys.clear();
+    this.hud.setHeld(this.keys);
+    this.running = false;
+    this.pickerCampaign = this.campaign ?? this.pickerCampaign ?? generateCampaign(LEVEL_SELECT_SEED);
+    this.picker.show(this.pickerCampaign);
+    this.hud.setLevelsSelected(true);
+    this.hud.hideHint();
+  }
+
+  private closeLevelSelect(): void {
+    if (!this.picker.isOpen()) return;
+    this.picker.hide();
+    this.hud.setLevelsSelected(false);
+    if (!this.running && this.phase === "play") this.hud.showHint();
+  }
+
+  private playCampaignFloor(index: number): void {
+    const campaign = this.pickerCampaign ?? this.campaign;
+    const floor = campaign?.floors[index];
+    const view = this.view;
+    if (!campaign || !floor || !view) return;
+    this.closeLevelSelect();
+    const maze = cloneMaze(floor.maze);
+    if (maze.hatch) {
+      maze.goal = { ...maze.hatch };
+      maze.hatch = null;
+    }
+    this.mode = "free";
+    this.campaign = null;
+    this.hud.setCampaign(false);
+    this.tower = { floors: [maze] };
+    this.authored = cloneTower(this.tower);
+    this.beginRun(layoutPlans([{ maze, goal: true }]), 1, 1);
+    this.hud.setFloorName(`Floor ${index + 1}`);
+    forgetLevel();
+    this.resize();
+  }
+
+  private toggleWinGallery(): void {
+    if (this.browsingWins) this.closeWinGallery();
+    else this.openWinGallery();
+  }
+
+  private openWinGallery(): void {
+    const view = this.view;
+    if (!view || this.mode === "campaign") return;
+    if (this.editor.isOpen()) {
+      this.editor.hide();
+      this.finishEditing();
+    }
+    this.closeSettings();
+    this.clearFall();
+    this.dragging = false;
+    this.dragPointer = null;
+    this.keys.clear();
+    this.hud.setHeld(this.keys);
+    this.running = false;
+    this.browsingWins = true;
+    this.phase = "won";
+    this.tilt.level();
+    this.tilt.snap();
+    this.sim?.hold();
+    this.overlay.hide();
+    this.hud.setCelebrate(true);
+    this.hud.setWinsSelected(true);
+    this.hud.hideHint();
+    this.clearShareNote();
+    view.enterWinGallery();
+    this.noteWinGallery();
+  }
+
+  private closeWinGallery(remount = true): void {
+    if (!this.browsingWins) return;
+    this.browsingWins = false;
+    this.hud.setWinsSelected(false);
+    if (!remount) return;
+    if (this.authored) {
+      this.mountTower(cloneTower(this.authored), hasLevelHash(location.hash));
+      this.resize();
+      return;
+    }
+    this.mount(this.seed);
+    this.resize();
+  }
+
+  private noteWinGallery(): void {
+    const status = this.view?.winGalleryStatus();
+    if (!status) return;
+    const name = status.name.charAt(0).toUpperCase() + status.name.slice(1);
+    this.hud.setNote(`${name} · ${status.index + 1}/${status.count} · [ ]`);
   }
 
   private frame = (now: number): void => {
@@ -408,6 +531,10 @@ export class App {
 
   private resetBall(): void {
     if (this.phase === "lost") return;
+    if (this.browsingWins) {
+      this.closeWinGallery();
+      return;
+    }
     this.clearFall();
     this.sim?.resetBall();
     this.clearShareNote();
@@ -420,6 +547,7 @@ export class App {
   }
 
   private replay(): void {
+    this.closeWinGallery(false);
     if (this.mode === "campaign" && this.campaign) {
       this.lives = CAMPAIGN_LIVES;
       this.campaign = generateCampaign(this.campaign.seed);
@@ -437,6 +565,7 @@ export class App {
   }
 
   private newMaze(): void {
+    this.closeWinGallery(false);
     this.seed = Math.floor(Math.random() * 0x7fffffff);
     this.mount(this.seed);
     this.resize();
@@ -451,7 +580,9 @@ export class App {
   private openEditor(mode: EditorMode): void {
     if (this.editor.isOpen()) return;
     if (mode === "share" && !this.authored) return;
+    this.closeLevelSelect();
     this.closeSettings();
+    this.closeWinGallery();
     this.dragging = false;
     this.dragPointer = null;
     this.keys.clear();
@@ -485,6 +616,8 @@ export class App {
   }
 
   private openSettings(): void {
+    this.closeLevelSelect();
+    this.closeWinGallery();
     this.sheetOpen = true;
     this.panel.refresh();
     this.sheet.hidden = false;
@@ -575,6 +708,7 @@ export class App {
   private onPointerDown = (event: PointerEvent): void => {
     if (
       this.editor.isOpen()
+      || this.picker.isOpen()
       || event.button !== 0
       || this.phase === "lost"
       || this.phase === "escaping"
@@ -609,10 +743,14 @@ export class App {
   };
 
   private onKeyDown = (event: KeyboardEvent): void => {
-    if (this.editor.isOpen()) return;
+    if (this.editor.isOpen() || this.picker.isOpen()) {
+      if (event.key.toLowerCase() === "escape" && this.picker.isOpen()) this.closeLevelSelect();
+      return;
+    }
     const key = event.key.toLowerCase();
     if (key === "escape") {
-      if (this.sheetOpen) this.closeSettings();
+      if (this.browsingWins) this.closeWinGallery();
+      else if (this.sheetOpen) this.closeSettings();
       return;
     }
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
@@ -629,6 +767,7 @@ export class App {
       && (key === "t" || key === "]" || key === "[")
     ) {
       this.view?.cycleWinScene(key === "[" ? -1 : 1);
+      if (this.browsingWins) this.noteWinGallery();
     }
   };
 
@@ -676,6 +815,7 @@ export class App {
   private onOrientation = (event: DeviceOrientationEvent): void => {
     if (
       this.editor.isOpen()
+      || this.picker.isOpen()
       || !this.motion
       || this.dragging
       || this.phase === "won"

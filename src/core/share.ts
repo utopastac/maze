@@ -11,10 +11,22 @@ import {
   type WallRef,
 } from "./maze.ts";
 import { DEFAULT_FLOOR_THEME, themeFromIndex, themeIndex } from "./theme.ts";
-import { FLOOR_MAX, FLOOR_MIN, cloneTower, repairTower, type Tower } from "./tower.ts";
+import {
+  DEFAULT_LEVEL_NAME,
+  FLOOR_MAX,
+  FLOOR_MIN,
+  LEVEL_NAME_MAX,
+  cloneTower,
+  levelNameOf,
+  repairTower,
+  setLevelName,
+  type Tower,
+} from "./tower.ts";
 
-const VERSION = 2;
+const VERSION = 3;
 const LEGACY_VERSION = 1;
+const NAMED_VERSION = 3;
+const LEVEL_NAME_BITS = 6;
 const LEVEL_PREFIX = "#m.";
 /** Longest base64url payload we will put in a hash. A full 16×16 tower stays under this. */
 const MAX_LEVEL_CODE = 12_000;
@@ -48,6 +60,7 @@ export function encodeLevel(tower: Tower): string | null {
   try {
     const writer = new BitWriter();
     writer.write(VERSION, 8);
+    writeLevelName(writer, levelNameOf(clean));
     writer.write(clean.floors.length, 3);
     for (const floor of clean.floors) writeFloor(writer, floor);
     const checksum = writer.checksum();
@@ -66,15 +79,19 @@ export function decodeLevel(code: string): Tower | null {
   if (!bytes) return null;
   const reader = new BitReader(bytes);
   const version = reader.read(8);
-  const floors = reader.read(3);
   if (
     version === null
-    || (version !== VERSION && version !== LEGACY_VERSION)
-    || floors === null
-    || floors < FLOOR_MIN
-    || floors > FLOOR_MAX
+    || (version !== VERSION && version !== LEGACY_VERSION && version !== 2)
   ) return null;
+  let name: string | null = null;
+  if (version >= NAMED_VERSION) {
+    name = readLevelName(reader);
+    if (name === null) return null;
+  }
+  const floors = reader.read(3);
+  if (floors === null || floors < FLOOR_MIN || floors > FLOOR_MAX) return null;
   const tower: Tower = { floors: [] };
+  if (name) setLevelName(tower, name);
   for (let i = 0; i < floors; i += 1) {
     const floor = readFloor(reader, version);
     if (!floor) return null;
@@ -145,6 +162,30 @@ export function parseLevelInput(raw: string): Tower | null {
   const bare = trimmed.match(/^[A-Za-z0-9_-]+/);
   if (bare?.[0]) return decodeLevel(bare[0]);
   return null;
+}
+
+function writeLevelName(writer: BitWriter, name: string): void {
+  const raw = name === DEFAULT_LEVEL_NAME ? "" : name.slice(0, LEVEL_NAME_MAX);
+  const bytes = new TextEncoder().encode(raw);
+  if (bytes.length > 63) throw new Error("name");
+  writer.write(bytes.length, LEVEL_NAME_BITS);
+  for (const byte of bytes) writer.write(byte, 8);
+}
+
+function readLevelName(reader: BitReader): string | null {
+  const length = reader.read(LEVEL_NAME_BITS);
+  if (length === null || length > 63) return null;
+  const bytes = new Uint8Array(length);
+  for (let i = 0; i < length; i += 1) {
+    const byte = reader.read(8);
+    if (byte === null) return null;
+    bytes[i] = byte;
+  }
+  try {
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return null;
+  }
 }
 
 function copyWithSelection(text: string): boolean {

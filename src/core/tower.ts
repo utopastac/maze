@@ -14,11 +14,25 @@ import {
 
 export interface Tower {
   floors: Maze[];
+  name?: string;
 }
 
 export const FLOOR_MIN = 1;
 export const FLOOR_MAX = 4;
 export const TOWER_FLOORS = 3;
+export const DEFAULT_LEVEL_NAME = "Untitled";
+export const LEVEL_NAME_MAX = 40;
+
+export function levelNameOf(tower: Tower): string {
+  const name = tower.name?.trim();
+  return name ? name.slice(0, LEVEL_NAME_MAX) : DEFAULT_LEVEL_NAME;
+}
+
+export function setLevelName(tower: Tower, value: string): void {
+  const next = value.replace(/\s+/g, " ").trim().slice(0, LEVEL_NAME_MAX);
+  if (!next || next === DEFAULT_LEVEL_NAME) delete tower.name;
+  else tower.name = next;
+}
 
 export function generateTower(seed: number, cols = 7, rows = 7, count = TOWER_FLOORS): Tower {
   const total = Math.min(FLOOR_MAX, Math.max(FLOOR_MIN, Math.round(count)));
@@ -36,7 +50,9 @@ export function generateTower(seed: number, cols = 7, rows = 7, count = TOWER_FL
 }
 
 export function cloneTower(tower: Tower): Tower {
-  return { floors: tower.floors.map((floor) => cloneMaze(floor)) };
+  const next: Tower = { floors: tower.floors.map((floor) => cloneMaze(floor)) };
+  if (tower.name !== undefined) next.name = tower.name;
+  return next;
 }
 
 export function resizeTower(tower: Tower, cols: number, rows: number): Tower {

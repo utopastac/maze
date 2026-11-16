@@ -6,12 +6,13 @@ async function boot(): Promise<void> {
   const chrome = document.querySelector<HTMLElement>("#chrome");
   const overlay = document.querySelector<HTMLElement>("#overlay");
   const sheet = document.querySelector<HTMLElement>("#sheet");
+  const picker = document.querySelector<HTMLElement>("#picker");
   const editor = document.querySelector<HTMLElement>("#editor");
-  if (!canvas || !chrome || !overlay || !sheet || !editor) {
+  if (!canvas || !chrome || !overlay || !sheet || !picker || !editor) {
     throw new Error("Maze shell markup is missing.");
   }
 
-  const app = new App(canvas, chrome, overlay, sheet, editor);
+  const app = new App(canvas, chrome, overlay, sheet, picker, editor);
   await app.start();
 }
 

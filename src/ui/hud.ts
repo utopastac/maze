@@ -8,11 +8,13 @@ export interface HudCallbacks {
   onReset: () => void;
   onNew: () => void;
   onCampaign: () => void;
+  onLevels: () => void;
   onMotion: () => void;
   onSettings: () => void;
   onEdit: () => void;
   onAuthor: () => void;
   onShare: () => void;
+  onWins: () => void;
 }
 
 export class Hud {
@@ -28,7 +30,9 @@ export class Hud {
   private readonly editBtn: HTMLButtonElement;
   private readonly authorBtn: HTMLButtonElement;
   private readonly shareBtn: HTMLButtonElement;
+  private readonly winsBtn: HTMLButtonElement;
   private readonly campaignBtn: HTMLButtonElement;
+  private readonly levelsBtn: HTMLButtonElement;
   private readonly livesEl: HTMLElement;
   private readonly lifeCount: HTMLElement;
   private readonly tower: TowerMap;
@@ -59,8 +63,10 @@ export class Hud {
           <button type="button" class="glass-btn" data-edit aria-label="Edit level" title="Edit & share">${iconSvg("edit")}</button>
           <button type="button" class="glass-btn" data-author aria-label="Author campaign" title="Author campaign">${iconSvg("author")}</button>
           <button type="button" class="glass-btn" data-share aria-label="Copy level link" title="Copy link">${iconSvg("share")}</button>
+          <button type="button" class="glass-btn" data-wins aria-label="Victory screens" title="Victory screens" aria-pressed="false">${iconSvg("wins")}</button>
           <button type="button" class="glass-btn" data-new aria-label="New maze" title="New maze">${iconSvg("new")}</button>
           <button type="button" class="glass-btn" data-campaign aria-label="Campaign" title="Campaign" aria-pressed="false">${iconSvg("campaign")}</button>
+          <button type="button" class="glass-btn" data-levels aria-label="Level select" title="Level select" aria-pressed="false">${iconSvg("levels")}</button>
           <button type="button" class="glass-btn" data-settings aria-label="Settings" title="Settings">${iconSvg("settings")}</button>
         </div>
       </header>
@@ -111,7 +117,9 @@ export class Hud {
     this.editBtn = this.require("[data-edit]");
     this.authorBtn = this.require("[data-author]");
     this.shareBtn = this.require("[data-share]");
+    this.winsBtn = this.require("[data-wins]");
     this.campaignBtn = this.require("[data-campaign]");
+    this.levelsBtn = this.require("[data-levels]");
     this.livesEl = this.require("[data-lives]");
     this.lifeCount = this.require("[data-life-count]");
     this.tower = new TowerMap(this.root);
@@ -123,7 +131,9 @@ export class Hud {
     this.editBtn.addEventListener("click", () => this.callbacks.onEdit());
     this.authorBtn.addEventListener("click", () => this.callbacks.onAuthor());
     this.shareBtn.addEventListener("click", () => this.callbacks.onShare());
+    this.winsBtn.addEventListener("click", () => this.callbacks.onWins());
     this.campaignBtn.addEventListener("click", () => this.callbacks.onCampaign());
+    this.levelsBtn.addEventListener("click", () => this.callbacks.onLevels());
     this.keycaps = [...this.root.querySelectorAll<HTMLElement>(`.${styles.controls} [data-key]`)];
     const coarse = window.matchMedia("(pointer: coarse)").matches;
     this.setMotionVisible(coarse);
@@ -142,6 +152,7 @@ export class Hud {
     this.editBtn.hidden = active;
     this.authorBtn.hidden = active;
     this.shareBtn.hidden = active;
+    this.winsBtn.hidden = active;
     if (active) return;
     this.livesEl.hidden = true;
     this.tower.hide();
@@ -172,6 +183,11 @@ export class Hud {
     }
     this.floorEl.hidden = false;
     this.floorEl.textContent = `Floor ${current} / ${total}`;
+  }
+
+  setFloorName(label: string): void {
+    this.floorEl.hidden = false;
+    this.floorEl.textContent = label;
   }
 
   setNote(note: string): void {
@@ -237,6 +253,18 @@ export class Hud {
   setAuthorSelected(selected: boolean): void {
     this.authorBtn.classList.toggle("selected", selected);
     this.authorBtn.setAttribute("aria-label", selected ? "Close campaign author" : "Author campaign");
+  }
+
+  setWinsSelected(selected: boolean): void {
+    this.winsBtn.classList.toggle("selected", selected);
+    this.winsBtn.setAttribute("aria-pressed", selected ? "true" : "false");
+    this.winsBtn.setAttribute("aria-label", selected ? "Close victory screens" : "Victory screens");
+  }
+
+  setLevelsSelected(selected: boolean): void {
+    this.levelsBtn.classList.toggle("selected", selected);
+    this.levelsBtn.setAttribute("aria-pressed", selected ? "true" : "false");
+    this.levelsBtn.setAttribute("aria-label", selected ? "Close level select" : "Level select");
   }
 
   private require<T extends Element>(selector: string): T {

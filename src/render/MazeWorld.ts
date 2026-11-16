@@ -139,11 +139,12 @@ export class MazeWorld {
   private glanceDOrbit = 0;
   private glanceReturn = false;
   private readonly reduceMotion: boolean;
+  private readonly voidSky = new VoidSky();
 
   constructor() {
     this.reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     this.camera = new PerspectiveCamera(30, 1, 0.1, 140);
-    this.scene.background = new Color(token("--maze-void"));
+    this.scene.background = this.voidSky.texture;
     this.scene.add(this.board);
 
     this.materials = {
@@ -405,7 +406,8 @@ export class MazeWorld {
     this.story = layout.story;
     this.raised = 0;
     this.escaped = false;
-    this.scene.background = new Color(token("--maze-void"));
+    this.ball.visible = true;
+    this.scene.background = this.voidSky.texture;
     this.board.add(this.goalLight);
     this.clearDebris();
     this.clearMeadow();
@@ -455,6 +457,34 @@ export class MazeWorld {
     this.winSceneIndex = ((this.winSceneIndex + step) % count + count) % count;
     this.applyWinScene(this.winSceneIndex);
     return true;
+  }
+
+  enterWinGallery(): void {
+    this.escaped = true;
+    this.goalAnchor = null;
+    this.goalRing = null;
+    this.goalLight.visible = false;
+    this.ball.visible = false;
+    for (const group of this.floorGroups) {
+      if (group) group.visible = false;
+    }
+    for (const frame of this.frames) {
+      if (frame) frame.visible = false;
+    }
+    this.winSceneIndex = 0;
+    this.applyWinScene(0);
+    this.restCamera();
+    this.placeCamera();
+  }
+
+  winGalleryStatus(): { index: number; count: number; name: string } {
+    const count = WIN_SCENES.length;
+    const index = ((this.winSceneIndex % count) + count) % count;
+    return {
+      index,
+      count,
+      name: WIN_SCENES[index] ?? "pasture",
+    };
   }
 
   private applyWinScene(index: number): void {
@@ -540,6 +570,7 @@ export class MazeWorld {
     }
     this.applyBallLook(normal);
     organicProps = normal;
+    this.syncVoidSky(this.lastTime);
     if (lookChanged && this.escaped) this.applyWinScene(this.winSceneIndex);
     if (!lookChanged && Math.abs(steps - paintedSteps) < 0.001) return;
     paintRamp(ramp, steps, normal);
@@ -609,6 +640,17 @@ export class MazeWorld {
     return out;
   }
 
+  private syncVoidSky(time: number): void {
+    const chunk = this.settings?.values.skyPixels ?? 4;
+    const steps = this.settings?.values.skyShade ?? 6;
+    const changed = this.voidSky.configure(chunk, steps);
+    if (this.reduceMotion) {
+      if (changed) this.voidSky.paint(0, true);
+      return;
+    }
+    this.voidSky.paint(time, changed);
+  }
+
   applyCamera(): void {
     this.restCamera();
     const field = this.settings?.values.field ?? 30;
@@ -668,6 +710,7 @@ export class MazeWorld {
     this.placeCamera();
     this.syncTiles(pose, time);
     this.tickHearts(time, dt);
+    if (!this.escaped) this.syncVoidSky(time);
     if (this.reduceMotion) return;
     if (this.goalRing) {
       const wave = Math.sin(time * 2.2);
@@ -1524,22 +1567,43 @@ export class MazeWorld {
       this.groundMats.auroraPink,
       this.groundMats.auroraBlue,
     ];
-    for (let i = 0; i < 5; i += 1) {
-      const offset = (i - 2) * span * 0.08;
+    const ribbonCount = 14;
+    for (let i = 0; i < ribbonCount; i += 1) {
       const points: Vector3[] = [];
-      for (let t = 0; t <= 12; t += 1) {
-        const u = t / 12;
-        const x = -span * 0.48 + u * span * 0.96;
-        const y = 1.4 + Math.sin(u * Math.PI * 2.2 + i * 0.9) * 0.55 + i * 0.18;
-        const z = offset + Math.sin(u * Math.PI * 1.6 + i) * span * 0.12;
-        points.push(new Vector3(x, y, z));
+      const alongDepth = i % 3 !== 1;
+      const lane = ((i % 7) - 3) * span * 0.09;
+      for (let t = 0; t <= 16; t += 1) {
+        const u = t / 16;
+        if (alongDepth) {
+          const z = -span * 0.52 + u * span * 1.04;
+          const x = lane
+            + Math.sin(u * Math.PI * 2.6 + i * 0.9) * span * 0.26
+            + Math.sin(u * Math.PI * 1.2 + i * 1.4) * span * 0.08;
+          const y = 0.55
+            + Math.sin(u * Math.PI * 2.8 + i * 0.65) * 0.7
+            + Math.cos(u * Math.PI * 1.4 + i) * 0.22
+            + (i % 5) * 0.16;
+          points.push(new Vector3(x, y, z));
+        } else {
+          const x = -span * 0.5 + u * span;
+          const z = lane * 1.15
+            + Math.sin(u * Math.PI * 2.1 + i) * span * 0.22
+            + Math.sin(u * Math.PI * 0.9 + i * 0.7) * span * 0.1;
+          const y = 0.75
+            + Math.sin(u * Math.PI * 2.4 + i * 0.55) * 0.6
+            + (i % 4) * 0.18;
+          points.push(new Vector3(x, y, z));
+        }
       }
       const curve = new CatmullRomCurve3(points);
       const ribbon = new Mesh(
-        new TubeGeometry(curve, 48, 0.08 + (i % 3) * 0.03, 6, false),
+        new TubeGeometry(curve, 56, 0.055 + (i % 4) * 0.022, 6, false),
         auroraMats[i % auroraMats.length]!,
       );
       ribbon.userData.flickerScale = false;
+      ribbon.userData.auroraRibbon = true;
+      ribbon.userData.driftPhase = i * 0.85;
+      ribbon.userData.driftSpeed = 0.28 + (i % 4) * 0.08;
       parent.add(ribbon);
       this.meadowFlames.push(ribbon);
     }
@@ -1572,16 +1636,6 @@ export class MazeWorld {
       rock.rotation.y = a * 0.4;
       parent.add(rock);
     }
-
-    const padGlow = new Mesh(
-      new CircleGeometry(span * 0.18, 20),
-      this.groundMats.auroraViolet,
-    );
-    padGlow.rotation.x = -Math.PI / 2;
-    padGlow.position.y = 0.04;
-    padGlow.userData.flickerScale = false;
-    parent.add(padGlow);
-    this.meadowFlames.push(padGlow);
 
     const light = new PointLight(token("--maze-aurora-green"), 2.8, 14, 2);
     light.position.set(0, 2.2, 0);
@@ -2489,6 +2543,136 @@ function makeFloorTexture(kind: WinSceneKind): Texture {
   tex.generateMipmaps = false;
   tex.needsUpdate = true;
   return tex;
+}
+
+type VoidBlob = {
+  x: number;
+  y: number;
+  r: number;
+  rgb: [number, number, number];
+  weight: number;
+  phase: number;
+  speed: number;
+  amp: number;
+};
+
+class VoidSky {
+  private static readonly WIDTH = 160;
+  private static readonly HEIGHT = 90;
+
+  readonly texture: CanvasTexture;
+  private readonly canvas: HTMLCanvasElement;
+  private readonly ctx: CanvasRenderingContext2D;
+  private readonly image: ImageData;
+  private readonly deep: [number, number, number];
+  private readonly blobs: VoidBlob[];
+  private chunk = 4;
+  private steps = 6;
+  private lastTime = Number.NaN;
+
+  constructor() {
+    this.canvas = document.createElement("canvas");
+    this.canvas.width = VoidSky.WIDTH;
+    this.canvas.height = VoidSky.HEIGHT;
+    const ctx = this.canvas.getContext("2d");
+    if (!ctx) throw new Error("Void sky canvas unavailable");
+    this.ctx = ctx;
+    this.image = ctx.createImageData(VoidSky.WIDTH, VoidSky.HEIGHT);
+    this.deep = srgbBytes(token("--maze-void-deep"));
+    this.blobs = [
+      { x: 0.12, y: 0.18, r: 0.58, rgb: srgbBytes(token("--maze-void-violet")), weight: 1.15, phase: 0.2, speed: 0.28, amp: 0.11 },
+      { x: 0.78, y: 0.12, r: 0.52, rgb: srgbBytes(token("--maze-void-magenta")), weight: 1.05, phase: 1.1, speed: 0.22, amp: 0.1 },
+      { x: 0.58, y: 0.48, r: 0.62, rgb: srgbBytes(token("--maze-void-cyan")), weight: 0.95, phase: 2.4, speed: 0.31, amp: 0.12 },
+      { x: 0.18, y: 0.78, r: 0.55, rgb: srgbBytes(token("--maze-void-coral")), weight: 1, phase: 3.7, speed: 0.25, amp: 0.11 },
+      { x: 0.88, y: 0.72, r: 0.48, rgb: srgbBytes(token("--maze-void-blue")), weight: 1.1, phase: 5.1, speed: 0.27, amp: 0.1 },
+      { x: 0.42, y: 0.28, r: 0.42, rgb: srgbBytes(token("--maze-void-amber")), weight: 0.7, phase: 0.8, speed: 0.35, amp: 0.09 },
+      { x: 0.5, y: 0.88, r: 0.5, rgb: srgbBytes(token("--maze-void-indigo")), weight: 1.2, phase: 4.2, speed: 0.19, amp: 0.08 },
+    ];
+    this.texture = new CanvasTexture(this.canvas);
+    this.texture.colorSpace = SRGBColorSpace;
+    this.texture.magFilter = NearestFilter;
+    this.texture.minFilter = NearestFilter;
+    this.texture.wrapS = ClampToEdgeWrapping;
+    this.texture.wrapT = ClampToEdgeWrapping;
+    this.texture.generateMipmaps = false;
+    this.configure(4, 6);
+    this.paint(0, true);
+  }
+
+  configure(chunk: number, steps: number): boolean {
+    const nextChunk = Math.max(1, Math.round(chunk));
+    const nextSteps = Math.max(6, Math.round(steps));
+    if (nextChunk === this.chunk && nextSteps === this.steps) return false;
+    this.chunk = nextChunk;
+    this.steps = nextSteps;
+    return true;
+  }
+
+  paint(time: number, force = false): void {
+    if (!force && Number.isFinite(this.lastTime) && Math.abs(time - this.lastTime) < 1 / 30) return;
+    this.lastTime = time;
+    const width = VoidSky.WIDTH;
+    const height = VoidSky.HEIGHT;
+    const block = this.chunk;
+    const cols = Math.ceil(width / block);
+    const rows = Math.ceil(height / block);
+    const data = this.image.data;
+    const deep = this.deep;
+    const steps = this.steps;
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols; col += 1) {
+        const u = (col + 0.5) / cols;
+        const v = (row + 0.5) / rows;
+        let r = deep[0] * 0.35;
+        let g = deep[1] * 0.35;
+        let b = deep[2] * 0.35;
+        let mass = 0.35;
+        for (const blob of this.blobs) {
+          const bx = blob.x + Math.sin(time * blob.speed + blob.phase) * blob.amp;
+          const by = blob.y + Math.cos(time * blob.speed * 0.85 + blob.phase * 1.3) * blob.amp;
+          const radius = blob.r * (0.92 + Math.sin(time * blob.speed * 1.4 + blob.phase) * 0.08);
+          const dx = (u - bx) / radius;
+          const dy = (v - by) / radius;
+          const falloff = Math.max(0, 1 - Math.sqrt(dx * dx + dy * dy));
+          const w = falloff * falloff * blob.weight;
+          if (w <= 0) continue;
+          r += blob.rgb[0] * w;
+          g += blob.rgb[1] * w;
+          b += blob.rgb[2] * w;
+          mass += w;
+        }
+        const inv = 1 / mass;
+        const pr = quantizeByte(r * inv, steps);
+        const pg = quantizeByte(g * inv, steps);
+        const pb = quantizeByte(b * inv, steps);
+        const x0 = col * block;
+        const y0 = row * block;
+        const x1 = Math.min(width, x0 + block);
+        const y1 = Math.min(height, y0 + block);
+        for (let y = y0; y < y1; y += 1) {
+          let i = (y * width + x0) * 4;
+          for (let x = x0; x < x1; x += 1) {
+            data[i] = pr;
+            data[i + 1] = pg;
+            data[i + 2] = pb;
+            data[i + 3] = 255;
+            i += 4;
+          }
+        }
+      }
+    }
+    this.ctx.putImageData(this.image, 0, 0);
+    this.texture.needsUpdate = true;
+  }
+}
+
+function quantizeByte(value: number, steps: number): number {
+  return Math.round((Math.round((value / 255) * steps) / steps) * 255);
+}
+
+function srgbBytes(hex: string): [number, number, number] {
+  const value = new Color(hex).getHex();
+  return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
 }
 
 function paintFloor(ctx: CanvasRenderingContext2D, size: number, kind: WinSceneKind): void {

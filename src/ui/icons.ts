@@ -18,6 +18,8 @@ import {
   Flag,
   Heart,
   Hourglass,
+  Images,
+  LayoutGrid,
   Link,
   Snowflake,
   MapPin,
@@ -45,6 +47,7 @@ export type IconName =
   | "reset"
   | "new"
   | "campaign"
+  | "levels"
   | "heart"
   | "motion"
   | "settings"
@@ -69,6 +72,7 @@ export type IconName =
   | "minus"
   | "plus"
   | "share"
+  | "wins"
   | "copy"
   | "paste"
   | "load"
@@ -82,11 +86,13 @@ const NODES: Record<IconName, IconNode> = {
   reset: RotateCcw,
   new: Shuffle,
   campaign: Castle,
+  levels: LayoutGrid,
   heart: Heart,
   motion: Smartphone,
   settings: SlidersHorizontal,
   edit: Pencil,
   author: NotebookPen,
+  wins: Images,
   wall: BrickWall,
   pit: Circle,
   start: MapPin,

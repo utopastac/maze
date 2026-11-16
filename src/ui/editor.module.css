@@ -31,10 +31,6 @@
   &[data-mode="campaign"] :is([data-share-only]) {
     display: none;
   }
-
-  &[data-mode="campaign"] .body {
-    grid-template-columns: minmax(200px, 250px) minmax(0, 1fr);
-  }
 }
 
 .scrim {
@@ -51,8 +47,8 @@
   max-height: 100%;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 16px 18px 14px;
+  gap: 0;
+  padding: 0;
   border-radius: var(--panel-radius);
   background: var(--panel-fill);
   box-shadow: var(--panel-shadow);
@@ -69,57 +65,84 @@
 
 .body {
   display: grid;
-  grid-template-columns: auto minmax(200px, 250px) minmax(0, 1fr);
-  gap: 14px;
+  grid-template-columns: minmax(360px, 460px) minmax(0, 1fr);
+  gap: 0;
   align-items: stretch;
   min-height: 0;
   flex: 1;
   overflow: hidden;
 
-  @media (max-width: 860px) {
-    grid-template-columns: auto minmax(0, 1fr);
+  @media (max-width: 960px) {
+    grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
 
     & .side {
-      grid-column: 1 / -1;
-      max-height: 34%;
-    }
-
-    & .stage {
-      grid-column: 1 / -1;
+      max-height: 44%;
+      border-right: 0;
+      border-bottom: 1px solid var(--glass-border);
     }
   }
 }
 
-.floorNav {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 72px;
-  padding: 2px 0;
-  overflow: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-}
-
-button.floorTab {
-  width: 100%;
-  min-height: 44px;
-  padding: 8px 10px;
-  font-size: 13px;
-  writing-mode: horizontal-tb;
-}
-
-button.floorStep {
-  width: 100%;
-  height: 36px;
-  flex-basis: auto;
-}
-
 .side {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--glass-border);
+  background: color-mix(in srgb, var(--panel-fill) 88%, var(--ink) 4%);
+}
+
+.sideHead {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  height: 56px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--glass-border);
+  box-sizing: border-box;
+}
+
+.levelName {
+  appearance: none;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 22px;
+  font-weight: 500;
+  line-height: 1.2;
+  outline: none;
+
+  &:focus {
+    color: var(--seam);
+  }
+
+  &::placeholder {
+    color: var(--ink-faint);
+  }
+}
+
+.sideCols {
+  grid-column: 1;
+  grid-row: 2;
+  display: grid;
+  grid-template-columns: minmax(132px, 0.85fr) minmax(200px, 1.15fr);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.panel {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
+  padding: 14px;
   min-width: 0;
   min-height: 0;
   overflow: auto;
@@ -127,37 +150,155 @@ button.floorStep {
   scrollbar-width: thin;
 }
 
-.head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
+.floorsPanel {
+  border-right: 1px solid var(--glass-border);
 }
 
-.kicker {
+.panelTitle {
   margin: 0;
   color: var(--ink-faint);
-  font-size: 13px;
-  letter-spacing: 0.16em;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
-button.close {
-  width: 40px;
+.toolsPanel {
+  gap: 12px;
+}
+
+.root[data-mode="campaign"] .sideCols {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.floorNav {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.floorRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  gap: 6px;
+  align-items: center;
+}
+
+.floorTab {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: var(--control-radius);
+  margin: 0;
+  min-height: 36px;
+  padding: 0 12px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+
+  &:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+
+  &:focus-visible {
+    outline: 1px solid var(--seam);
+    outline-offset: 1px;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    &:hover:not(:disabled):not(.floorTabActive) {
+      background: color-mix(in srgb, var(--glass) 70%, var(--ink) 6%);
+    }
+  }
+}
+
+.floorTabActive {
+  color: var(--seam);
+  border-color: color-mix(in srgb, var(--seam) 45%, transparent);
+  background: color-mix(in srgb, var(--glass) 70%, var(--seam) 10%);
+}
+
+.floorRemove,
+.floorAdd {
+  appearance: none;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--control-radius);
+  margin: 0;
+  background: var(--glass);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+
+  &:disabled {
+    opacity: 0.32;
+    cursor: default;
+  }
+
+  &:focus-visible {
+    outline: 1px solid var(--seam);
+    outline-offset: 1px;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    &:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--glass) 80%, var(--ink) 8%);
+    }
+  }
+
+  & :is(svg) {
+    width: 14px;
+    height: 14px;
+  }
+}
+
+.floorRemove {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+}
+
+.floorAdd {
+  width: 100%;
   height: 40px;
-  flex-basis: 40px;
+  margin-top: 4px;
+  font-size: 14px;
+}
+
+.headBtn {
+  height: 36px;
+  padding: 0 14px;
+  font-size: 14px;
+}
+
+button.close {
+  width: 36px;
+  height: 36px;
+  flex-basis: 36px;
 }
 
 .sizes {
   display: flex;
   flex-wrap: wrap;
-  align-items: end;
-  gap: 10px 18px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px 20px;
 }
 
 .size {
-  display: grid;
-  gap: 4px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .label {
@@ -172,9 +313,9 @@ button.close {
 }
 
 button.step {
-  width: 36px;
-  height: 36px;
-  flex-basis: 36px;
+  width: 32px;
+  height: 32px;
+  flex-basis: 32px;
 
   &:disabled {
     opacity: 0.32;
@@ -185,22 +326,77 @@ button.step {
 .count {
   min-width: 2ch;
   color: var(--ink);
-  font-size: 16px;
+  font-size: 15px;
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
 
-button.clear {
-  height: 36px;
-  padding: 0 14px;
-  font-size: 14px;
+.clear {
+  appearance: none;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--control-radius);
+  margin: 0;
+  height: 32px;
+  padding: 0 12px;
+  background: var(--glass);
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+
+  &:focus-visible {
+    outline: 1px solid var(--seam);
+    outline-offset: 1px;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    &:hover {
+      color: var(--ink);
+      background: color-mix(in srgb, var(--glass) 80%, var(--ink) 8%);
+    }
+  }
 }
 
-button.erase {
+.erase {
+  appearance: none;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--control-radius);
+  margin: 0;
+  width: 100%;
   height: 40px;
   padding: 0 14px 0 12px;
-  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
   justify-content: flex-start;
+  gap: 8px;
+  background: var(--glass);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+
+  & :is(svg) {
+    width: 18px;
+    height: 18px;
+  }
+
+  &:global(.selected),
+  &[aria-pressed="true"] {
+    color: var(--seam);
+    border-color: color-mix(in srgb, var(--seam) 50%, transparent);
+    background: color-mix(in srgb, var(--glass) 70%, var(--seam) 10%);
+  }
+
+  &:focus-visible {
+    outline: 1px solid var(--seam);
+    outline-offset: 1px;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    &:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--glass) 80%, var(--ink) 8%);
+    }
+  }
 }
 
 .palette {
@@ -214,7 +410,7 @@ button.swatch {
   border: 1px solid var(--glass-border);
   border-radius: var(--control-radius);
   margin: 0;
-  min-height: 64px;
+  min-height: 72px;
   padding: 10px 8px;
   display: flex;
   flex-direction: column;
@@ -239,7 +435,8 @@ button.swatch {
   }
 
   &:global(.selected) {
-    box-shadow: inset 0 0 0 2px var(--seam);
+    color: var(--seam);
+    border-color: color-mix(in srgb, var(--seam) 55%, transparent);
     background: color-mix(in srgb, var(--glass) 70%, var(--seam) 12%);
   }
 
@@ -263,12 +460,12 @@ button.swatch {
 }
 
 .themeField {
-  display: grid;
-  gap: 6px;
+  display: block;
 }
 
 .themeSelect {
   appearance: none;
+  width: 100%;
   height: 40px;
   padding: 0 36px 0 14px;
   border: 1px solid var(--glass-border);
@@ -307,19 +504,55 @@ button.dir {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: color-mix(in srgb, var(--maze-void) 55%, var(--panel-fill));
+}
+
+.stageBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: nowrap;
+  height: 56px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--glass-border);
+  background: var(--panel-fill);
+  box-sizing: border-box;
+}
+
+.stageActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.stageBody {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  overflow: hidden;
 }
 
 .stageTop {
-  position: relative;
+  position: absolute;
   z-index: 5;
-  flex: 0 0 auto;
+  top: 12px;
+  right: 12px;
   display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: 12px;
+  align-items: center;
+  justify-content: flex-end;
+  pointer-events: none;
+
+  & .clear {
+    pointer-events: auto;
+  }
 }
 
 .boardWrap {
@@ -332,6 +565,8 @@ button.dir {
   width: 100%;
   display: grid;
   place-items: center;
+  padding: 44px 16px 16px;
+  box-sizing: border-box;
 }
 
 .sheet {
@@ -1325,22 +1560,37 @@ button.tileMenuItem {
 }
 
 .hint {
-  margin: 0;
-  min-height: 2.6em;
-  color: var(--ink-faint);
-  font-size: 13px;
-  text-align: left;
+  margin-top: auto;
+  padding: 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--control-radius);
+  background: color-mix(in srgb, var(--glass) 80%, var(--ink) 4%);
+  display: grid;
+  gap: 6px;
 }
 
-.footer {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-start;
-  gap: 8px;
-  margin-top: auto;
+.hintTitle {
+  margin: 0;
+  color: var(--seam);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.hintBody {
+  margin: 0;
+  color: var(--ink-dim);
+  font-size: 13px;
+  line-height: 1.35;
 }
 
 .play {
-  min-width: 120px;
-  font-weight: 500;
+  min-width: 88px;
+  height: 36px;
+  padding: 0 18px;
+  font-weight: 600;
+  color: #111 !important;
+  background: var(--seam) !important;
+  box-shadow: none !important;
 }

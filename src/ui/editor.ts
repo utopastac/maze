@@ -40,18 +40,22 @@ import {
   type FloorThemeId,
 } from "../core/theme.ts";
 import {
+  DEFAULT_LEVEL_NAME,
   FLOOR_MAX,
   FLOOR_MIN,
+  LEVEL_NAME_MAX,
   addFloor,
   cloneTower,
   deleteFloorColumn,
   deleteFloorRow,
   insertFloorColumn,
   insertFloorRow,
+  levelNameOf,
   moveFloorColumn,
   moveFloorRow,
   removeFloor,
   setHatch,
+  setLevelName,
   type Tower,
 } from "../core/tower.ts";
 import { iconSvg, type IconName } from "./icons.ts";
@@ -65,10 +69,21 @@ export interface EditorCallbacks {
   onShare: (tower: Tower) => Promise<boolean | null>;
 }
 
-const SHARE_TITLE = "Share level";
-const CAMPAIGN_TITLE = "Campaign floor";
-
 type PaletteKind = "pit" | "boost" | "warp" | "ice" | "crumble" | "switch" | "hatch";
+
+const HINT_TITLE: Record<PaletteKind | "select" | "erase" | "warp-pair" | "switch-pair", string> = {
+  select: "Select",
+  erase: "Erase",
+  pit: "Pit",
+  boost: "Boost",
+  warp: "Warp",
+  ice: "Ice",
+  crumble: "Crumble",
+  switch: "Switch",
+  hatch: "Hatch",
+  "warp-pair": "Warp",
+  "switch-pair": "Switch",
+};
 type Stroke = "open" | "close";
 type CellKind = "start" | "goal" | "pit" | "floor" | "boost" | "warp" | "ice" | "crumble" | "switch" | "hatch";
 type WallDrag = {
@@ -134,6 +149,8 @@ export class LevelEditor {
   private readonly callbacks: EditorCallbacks;
   private readonly board: HTMLElement;
   private readonly hint: HTMLElement;
+  private readonly hintTitle: HTMLElement;
+  private readonly hintBody: HTMLElement;
   private readonly paletteButtons = new Map<PaletteKind, HTMLButtonElement>();
   private readonly eraseBtn: HTMLButtonElement;
   private readonly cells = new Map<string, HTMLButtonElement>();
@@ -182,7 +199,7 @@ export class LevelEditor {
   private boostDir: Direction = "n";
   private readonly dirs: HTMLElement;
   private readonly themeSelect: HTMLSelectElement;
-  private readonly titleEl: HTMLElement;
+  private readonly nameInput: HTMLInputElement;
   private readonly dirButtons = new Map<Direction, HTMLButtonElement>();
   private stroke: Stroke | null = null;
   private wallDrag: WallDrag | null = null;
@@ -198,33 +215,46 @@ export class LevelEditor {
     this.root.dataset.mode = "share";
     this.root.innerHTML = `
       <div class="${styles.scrim}" data-scrim></div>
-      <div class="${styles.card}" role="dialog" aria-modal="true" aria-labelledby="editor-title">
-        <header class="${styles.head}">
-          <p class="${styles.kicker}" id="editor-title" data-title>${SHARE_TITLE}</p>
-          <button type="button" class="glass-btn ${styles.close}" data-close aria-label="Close editor">${iconSvg("close")}</button>
-        </header>
+      <div class="${styles.card}" role="dialog" aria-modal="true" aria-labelledby="editor-level-name">
         <div class="${styles.body}">
-          <nav class="${styles.floorNav}" data-floors data-share-only role="tablist" aria-label="Floors"></nav>
-          <div class="${styles.side}">
-            <label class="${styles.themeField}">
-              <span class="${styles.label}">Theme</span>
-              <select class="${styles.themeSelect}" data-theme-select aria-label="Floor theme"></select>
-            </label>
-            <button type="button" class="glass-pill ${styles.erase}" data-erase aria-pressed="false">${iconSvg("floor")}Erase</button>
-            <div class="${styles.palette}" role="list" aria-label="Tiles" data-palette></div>
-            <div class="${styles.dirs}" data-dirs role="radiogroup" aria-label="Boost direction" hidden>
-              <span class="${styles.dirLabel}">Boost dir</span>
+          <aside class="${styles.side}">
+            <div class="${styles.sideHead}">
+              <input
+                class="${styles.levelName}"
+                id="editor-level-name"
+                data-level-name
+                type="text"
+                maxlength="${LEVEL_NAME_MAX}"
+                spellcheck="false"
+                autocomplete="off"
+                aria-label="Level name"
+                value="${DEFAULT_LEVEL_NAME}"
+              />
             </div>
-            <p class="${styles.hint}" data-hint aria-live="polite"></p>
-            <div class="${styles.footer}">
-              <button type="button" class="glass-pill" data-paste title="Paste a model into the editor">${iconSvg("paste")}Paste</button>
-              <button type="button" class="glass-pill" data-copy data-campaign-only title="Copy a paste-ready line for authoredFloors.ts">${iconSvg("copy")}Copy model</button>
-              <button type="button" class="glass-pill" data-share data-share-only>${iconSvg("share")}Share</button>
-              <button type="button" class="glass-pill metal-ring ${styles.play}" data-play>Play</button>
+            <div class="${styles.sideCols}">
+              <section class="${styles.panel} ${styles.floorsPanel}" data-share-only>
+                <h2 class="${styles.panelTitle}">Floors</h2>
+                <nav class="${styles.floorNav}" data-floors role="tablist" aria-label="Floors"></nav>
+              </section>
+              <section class="${styles.panel} ${styles.toolsPanel}">
+                <label class="${styles.themeField}">
+                  <select class="${styles.themeSelect}" data-theme-select aria-label="Floor theme"></select>
+                </label>
+                <h2 class="${styles.panelTitle}">Tools</h2>
+                <button type="button" class="${styles.erase}" data-erase aria-pressed="false">${iconSvg("floor")}Erase</button>
+                <div class="${styles.palette}" role="list" aria-label="Tiles" data-palette></div>
+                <div class="${styles.dirs}" data-dirs role="radiogroup" aria-label="Boost direction" hidden>
+                  <span class="${styles.dirLabel}">Boost dir</span>
+                </div>
+                <div class="${styles.hint}" data-hint aria-live="polite">
+                  <p class="${styles.hintTitle}" data-hint-title></p>
+                  <p class="${styles.hintBody}" data-hint-body></p>
+                </div>
+              </section>
             </div>
-          </div>
+          </aside>
           <div class="${styles.stage}">
-            <div class="${styles.stageTop}">
+            <header class="${styles.stageBar}">
               <div class="${styles.sizes}" data-sizes>
                 <div class="${styles.size}">
                   <span class="${styles.label}">Cols</span>
@@ -243,24 +273,35 @@ export class LevelEditor {
                   </div>
                 </div>
               </div>
-              <button type="button" class="glass-pill ${styles.clear}" data-clear>Clear</button>
-            </div>
-            <div class="${styles.boardWrap}" data-board-wrap>
-              <div class="${styles.sheet}" data-sheet data-theme="${DEFAULT_FLOOR_THEME}">
-                <div class="${styles.board}" data-board data-theme="${DEFAULT_FLOOR_THEME}" role="group" aria-label="Maze grid"></div>
-                <div class="${styles.playFrame}" data-play-frame aria-hidden="true"></div>
-                <div class="${styles.chrome}" data-chrome>
-                  <div class="${styles.colRail}" data-col-rail role="toolbar" aria-label="Columns"></div>
-                  <div class="${styles.rowRail}" data-row-rail role="toolbar" aria-label="Rows"></div>
-                  <div class="${styles.selectBox}" data-select-box hidden></div>
-                  <div class="${styles.gapLine}" data-gap-line hidden></div>
-                  <button type="button" class="${styles.gapBtn}" data-gap-btn hidden aria-label="Insert">${iconSvg("plus")}</button>
-                  <button type="button" class="${styles.edgePill} ${styles.edgeSouth}" data-append="row" aria-label="Add a row below">${iconSvg("plus")}</button>
-                  <button type="button" class="${styles.edgePill} ${styles.edgeEast}" data-append="col" aria-label="Add a column right">${iconSvg("plus")}</button>
-                  <button type="button" class="${styles.deleteBtn}" data-delete-line hidden aria-label="Delete">${iconSvg("minus")}</button>
-                </div>
+              <div class="${styles.stageActions}">
+                <button type="button" class="glass-pill ${styles.headBtn}" data-paste title="Paste a model into the editor">${iconSvg("paste")}Paste</button>
+                <button type="button" class="glass-pill ${styles.headBtn}" data-copy data-campaign-only title="Copy a paste-ready line for authoredFloors.ts">${iconSvg("copy")}Copy model</button>
+                <button type="button" class="glass-pill ${styles.headBtn}" data-share data-share-only>${iconSvg("share")}Share</button>
+                <button type="button" class="glass-pill metal-ring ${styles.play}" data-play>Play</button>
+                <button type="button" class="glass-btn ${styles.close}" data-close aria-label="Close editor">${iconSvg("close")}</button>
               </div>
-              <div class="${styles.tileMenu}" data-tile-menu hidden role="menu" aria-label="Place tile"></div>
+            </header>
+            <div class="${styles.stageBody}">
+              <div class="${styles.stageTop}">
+                <button type="button" class="${styles.clear}" data-clear>Clear</button>
+              </div>
+              <div class="${styles.boardWrap}" data-board-wrap>
+                <div class="${styles.sheet}" data-sheet data-theme="${DEFAULT_FLOOR_THEME}">
+                  <div class="${styles.board}" data-board data-theme="${DEFAULT_FLOOR_THEME}" role="group" aria-label="Maze grid"></div>
+                  <div class="${styles.playFrame}" data-play-frame aria-hidden="true"></div>
+                  <div class="${styles.chrome}" data-chrome>
+                    <div class="${styles.colRail}" data-col-rail role="toolbar" aria-label="Columns"></div>
+                    <div class="${styles.rowRail}" data-row-rail role="toolbar" aria-label="Rows"></div>
+                    <div class="${styles.selectBox}" data-select-box hidden></div>
+                    <div class="${styles.gapLine}" data-gap-line hidden></div>
+                    <button type="button" class="${styles.gapBtn}" data-gap-btn hidden aria-label="Insert">${iconSvg("plus")}</button>
+                    <button type="button" class="${styles.edgePill} ${styles.edgeSouth}" data-append="row" aria-label="Add a row below">${iconSvg("plus")}</button>
+                    <button type="button" class="${styles.edgePill} ${styles.edgeEast}" data-append="col" aria-label="Add a column right">${iconSvg("plus")}</button>
+                    <button type="button" class="${styles.deleteBtn}" data-delete-line hidden aria-label="Delete">${iconSvg("minus")}</button>
+                  </div>
+                </div>
+                <div class="${styles.tileMenu}" data-tile-menu hidden role="menu" aria-label="Place tile"></div>
+              </div>
             </div>
           </div>
         </div>
@@ -270,9 +311,11 @@ export class LevelEditor {
     this.board = this.require("[data-board]");
     this.boardWrap = this.require("[data-board-wrap]");
     this.hint = this.require("[data-hint]");
+    this.hintTitle = this.require("[data-hint-title]");
+    this.hintBody = this.require("[data-hint-body]");
     this.dirs = this.require("[data-dirs]");
     this.themeSelect = this.require("[data-theme-select]");
-    this.titleEl = this.require("[data-title]");
+    this.nameInput = this.require("[data-level-name]");
     this.colReadout = this.require("[data-cols]");
     this.rowReadout = this.require("[data-rows]");
     this.sheet = this.require("[data-sheet]");
@@ -314,13 +357,30 @@ export class LevelEditor {
       this.hide();
       this.callbacks.onPlay(tower);
     });
+    this.nameInput.addEventListener("input", () => {
+      setLevelName(this.tower, this.nameInput.value);
+    });
+    this.nameInput.addEventListener("blur", () => {
+      this.syncName();
+    });
+    this.nameInput.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      this.nameInput.blur();
+    });
     this.require("[data-floors]").addEventListener("click", (event) => {
       const button = (event.target as Element | null)?.closest<HTMLButtonElement>("[data-floor]");
       if (!button || button.disabled) return;
       const index = button.dataset.floor;
-      if (index === "add") this.changeFloors(1);
-      else if (index === "remove") this.changeFloors(-1);
-      else this.selectFloor(Number(index));
+      if (index === "add") {
+        this.changeFloors(1);
+        return;
+      }
+      if (index === "remove") {
+        this.removeFloorAt(Number(button.dataset.index));
+        return;
+      }
+      this.selectFloor(Number(index));
     });
     this.require("[data-sizes]").addEventListener("click", (event) => {
       const button = (event.target as Element | null)?.closest<HTMLButtonElement>("[data-delta]");
@@ -383,10 +443,11 @@ export class LevelEditor {
   open(tower: Tower, mode: EditorMode = "share"): void {
     this.mode = mode;
     this.root.dataset.mode = mode;
-    this.titleEl.textContent = mode === "campaign" ? CAMPAIGN_TITLE : SHARE_TITLE;
     this.tower = cloneTower(tower);
     if (mode === "campaign") {
+      const name = this.tower.name;
       if (this.tower.floors.length > 1) this.tower = { floors: [cloneTower(this.tower).floors[0]!] };
+      if (name !== undefined) this.tower.name = name;
       const floor = this.tower.floors[0];
       if (floor?.hatch) {
         floor.goal = { ...floor.hatch };
@@ -396,6 +457,7 @@ export class LevelEditor {
     this.floorIndex = 0;
     this.brush = null;
     this.setErase(false);
+    this.syncName();
     this.syncSize();
     this.syncFloors();
     this.syncPalette();
@@ -526,6 +588,7 @@ export class LevelEditor {
     this.eraseBtn.setAttribute("aria-pressed", "false");
     this.dirs.hidden = true;
     this.hideTileMenu();
+    this.syncFloors();
     this.syncPalette();
     this.syncCells();
     this.syncWalls();
@@ -538,6 +601,7 @@ export class LevelEditor {
     this.brush = null;
     this.stroke = null;
     this.brushHover = null;
+    this.syncFloors();
     this.syncPalette();
     this.syncCells();
     this.syncWalls();
@@ -690,6 +754,7 @@ export class LevelEditor {
     this.stroke = null;
     this.wallDrag = null;
     this.clearTileDrag();
+    this.syncName();
     this.syncSize();
     this.syncFloors();
     this.syncPalette();
@@ -698,8 +763,12 @@ export class LevelEditor {
     this.refreshHint();
   }
 
+  private syncName(): void {
+    this.nameInput.value = levelNameOf(this.tower);
+  }
+
   private flash(message: string): void {
-    this.hint.textContent = message;
+    this.setHint("", message);
     window.clearTimeout(this.noticeTimer);
     this.noticeTimer = window.setTimeout(() => {
       this.noticeTimer = 0;
@@ -712,26 +781,33 @@ export class LevelEditor {
     this.noticeTimer = 0;
   }
 
+  private setHint(title: string, body: string): void {
+    this.hintTitle.textContent = title;
+    this.hintTitle.hidden = !title;
+    this.hintBody.textContent = body;
+    this.hint.hidden = !title && !body;
+  }
+
   private refreshHint(): void {
     if (this.noticeTimer !== 0) return;
     const pair = this.pairing();
     if (pair === "warp") {
-      this.hint.textContent = "Finish the warp: click a second cell. Esc cancels.";
+      this.setHint(HINT_TITLE["warp-pair"], "Click two cells to link a warp. Click a warp to remove that end.");
       return;
     }
     if (pair === "switch") {
-      this.hint.textContent = "Finish the switch: click a wall to link. Esc cancels.";
+      this.setHint(HINT_TITLE["switch-pair"], "Click a wall to link. Esc cancels.");
       return;
     }
     if (this.erase) {
-      this.hint.textContent = HINT_ERASE;
+      this.setHint(HINT_TITLE.erase, HINT_ERASE);
       return;
     }
     if (this.brush) {
-      this.hint.textContent = HINT_BRUSH[this.brush];
+      this.setHint(HINT_TITLE[this.brush], HINT_BRUSH[this.brush]);
       return;
     }
-    this.hint.textContent = HINT_SELECT;
+    this.setHint(HINT_TITLE.select, HINT_SELECT);
   }
 
   private get draft(): Maze {
@@ -1114,32 +1190,71 @@ export class LevelEditor {
     const host = this.require("[data-floors]");
     host.replaceChildren();
     const count = this.tower.floors.length;
+    const busy = this.pairing() !== null;
+    const canRemove = count > FLOOR_MIN && !busy;
     this.tower.floors.forEach((_, index) => {
+      const row = document.createElement("div");
+      row.className = styles.floorRow;
+
       const button = document.createElement("button");
       button.type = "button";
-      button.className = `glass-pill ${styles.floorTab}`;
+      button.className = styles.floorTab;
       button.dataset.floor = String(index);
       button.setAttribute("role", "tab");
       button.setAttribute("aria-selected", String(index === this.floorIndex));
-      button.textContent = floorName(index, count);
-      if (index === this.floorIndex) button.classList.add("selected");
-      host.append(button);
+      button.textContent = floorName(index);
+      button.disabled = busy;
+      if (index === this.floorIndex) button.classList.add(styles.floorTabActive);
+
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = styles.floorRemove;
+      remove.dataset.floor = "remove";
+      remove.dataset.index = String(index);
+      remove.disabled = !canRemove;
+      remove.setAttribute("aria-label", `Remove ${floorName(index)}`);
+      remove.innerHTML = iconSvg("minus");
+
+      row.append(button, remove);
+      host.append(row);
     });
     const add = document.createElement("button");
     add.type = "button";
-    add.className = `glass-btn ${styles.floorStep}`;
+    add.className = styles.floorAdd;
     add.dataset.floor = "add";
-    add.disabled = count >= FLOOR_MAX;
-    add.setAttribute("aria-label", "Add a floor below");
-    add.innerHTML = iconSvg("plus");
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = `glass-btn ${styles.floorStep}`;
-    remove.dataset.floor = "remove";
-    remove.disabled = count <= FLOOR_MIN;
-    remove.setAttribute("aria-label", "Remove this floor");
-    remove.innerHTML = iconSvg("minus");
-    host.append(add, remove);
+    add.disabled = count >= FLOOR_MAX || busy;
+    add.innerHTML = `${iconSvg("plus")}Add floor`;
+    host.append(add);
+  }
+
+  private removeFloorAt(index: number): void {
+    if (this.mode === "campaign" || this.pairing()) return;
+    if (!Number.isInteger(index) || this.tower.floors.length <= FLOOR_MIN) return;
+    this.tower = removeFloor(this.tower, index);
+    this.floorIndex = Math.min(this.floorIndex, this.tower.floors.length - 1);
+    this.clearLineSelect();
+    this.stroke = null;
+    this.wallDrag = null;
+    this.clearTileDrag();
+    this.syncFloors();
+    this.syncPalette();
+    this.syncThemes();
+    this.renderBoard();
+    this.refreshHint();
+  }
+
+  private syncFloorLocks(busy: boolean): void {
+    const host = this.require("[data-floors]");
+    const canRemove = this.tower.floors.length > FLOOR_MIN && !busy;
+    for (const button of host.querySelectorAll<HTMLButtonElement>("[data-floor]")) {
+      if (button.dataset.floor === "add") {
+        button.disabled = this.tower.floors.length >= FLOOR_MAX || busy;
+      } else if (button.dataset.floor === "remove") {
+        button.disabled = !canRemove;
+      } else {
+        button.disabled = busy;
+      }
+    }
   }
 
   private syncPalette(): void {
@@ -1155,6 +1270,7 @@ export class LevelEditor {
       button.classList.toggle("selected", on);
       button.setAttribute("aria-checked", String(on));
     }
+    this.syncFloorLocks(pairing !== null);
     this.eraseBtn.disabled = pairing !== null;
     this.dirs.hidden = this.erase || this.brush !== "boost" || pairing !== null;
     this.board.dataset.brush = this.erase ? "erase" : (this.brush ?? "");
@@ -1753,6 +1869,14 @@ export class LevelEditor {
 
   private onKey = (event: KeyboardEvent): void => {
     if (!this.isOpen()) return;
+    if (event.target === this.nameInput || this.nameInput.contains(event.target as Node)) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        this.nameInput.blur();
+      }
+      return;
+    }
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
@@ -1894,11 +2018,8 @@ function describeLift(lift: LiftedTile, c: number, r: number, landing: boolean):
   };
 }
 
-function floorName(index: number, count: number): string {
-  if (count === 1) return "Floor";
-  if (index === 0) return "Top";
-  if (index === count - 1) return "Goal";
-  return String(index + 1);
+function floorName(index: number): string {
+  return `Floor ${index + 1}`;
 }
 
 function switchTone(maze: Maze, axis: WallAxis, c: number, r: number): number | null {

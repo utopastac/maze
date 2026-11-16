@@ -12,7 +12,9 @@ export type SettingKey =
   | "orbit"
   | "field"
   | "pixels"
-  | "shade";
+  | "shade"
+  | "skyPixels"
+  | "skyShade";
 
 export type SettingGroup = "Controls" | "Physics" | "Camera" | "Picture";
 
@@ -39,6 +41,8 @@ export const SETTING_SPECS: readonly SettingSpec[] = [
   { key: "field", label: "Field", group: "Camera", min: 20, max: 48, step: 1, format: (value) => `${value.toFixed(0)}°` },
   { key: "pixels", label: "Pixels", group: "Picture", min: 1, max: 6, step: 1, format: formatPixels },
   { key: "shade", label: "Shade", group: "Picture", min: 2, max: 6, step: 0.1, format: (value) => `${value.toFixed(1)} steps` },
+  { key: "skyPixels", label: "Sky pixels", group: "Picture", min: 1, max: 12, step: 1, format: (value) => `${value.toFixed(0)}×` },
+  { key: "skyShade", label: "Sky shade", group: "Picture", min: 6, max: 30, step: 1, format: (value) => `${value.toFixed(0)} steps` },
 ];
 
 export const SETTING_DEFAULTS: Record<SettingKey, number> = {
@@ -54,6 +58,8 @@ export const SETTING_DEFAULTS: Record<SettingKey, number> = {
   field: 30,
   pixels: 3,
   shade: 3,
+  skyPixels: 4,
+  skyShade: 6,
 };
 
 const STORAGE_KEY = "maze.settings";

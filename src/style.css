@@ -34,6 +34,14 @@
   --safe-right: env(safe-area-inset-right, 0px);
   --font: "Geist Pixel", ui-monospace, monospace;
   --maze-void: #000000;
+  --maze-void-deep: #12081f;
+  --maze-void-violet: #9a4dff;
+  --maze-void-magenta: #ff4fb8;
+  --maze-void-coral: #ff6b4a;
+  --maze-void-amber: #ffc14a;
+  --maze-void-cyan: #3af0ff;
+  --maze-void-blue: #5a7fff;
+  --maze-void-indigo: #3a2a8a;
   --maze-floor: #2c333b;
   --maze-grout: #514c47;
   --maze-start: #3a4652;
@@ -330,7 +338,7 @@ body,
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: var(--maze-void);
+  background: var(--maze-void-deep);
   user-select: none;
   -webkit-user-select: none;
   overscroll-behavior: none;
@@ -363,7 +371,8 @@ body,
 }
 
 #app:has(#overlay[data-phase="in"]) #viewport,
-#app:has(#editor[data-phase="in"]) #viewport {
+#app:has(#editor[data-phase="in"]) #viewport,
+#app:has(#picker[data-phase="in"]) #viewport {
   filter: blur(var(--page-blur));
 }
 
