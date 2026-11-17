@@ -394,6 +394,9 @@
   --maze-heart: #e2586c;
   --maze-coin: #f0c43a;
   --maze-coin-shine: #ffe9a0;
+  --maze-power: #ffe14a;
+  --maze-hover: #5ad4ff;
+  --maze-hover: #5ec8ff;
   --maze-win-neon: #ffbc61;
   --maze-fail-neon: #6a8098;
   --maze-fail-ground: #3a4048;
@@ -463,9 +466,26 @@ body,
   }
 }
 
+#play-hud {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+  z-index: 1;
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
+  filter: blur(0px);
+  transition: filter 0.45s ease-in-out;
+}
+
 #app:has(#overlay[data-phase="in"]) #viewport,
 #app:has(#editor[data-phase="in"]) #viewport,
-#app:has(#picker[data-phase="in"]) #viewport {
+#app:has(#picker[data-phase="in"]) #viewport,
+#app:has(#overlay[data-phase="in"]) #play-hud,
+#app:has(#editor[data-phase="in"]) #play-hud,
+#app:has(#picker[data-phase="in"]) #play-hud {
   filter: blur(var(--page-blur));
 }
 

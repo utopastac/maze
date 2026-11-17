@@ -439,11 +439,14 @@ button.swatch {
   }
 }
 
-.themeField {
+.themeField,
+.settingsField {
+  position: relative;
   display: block;
 }
 
-.themeSelect {
+.themeSelect,
+.settingsTrigger {
   appearance: none;
   width: 100%;
   height: 40px;
@@ -463,6 +466,187 @@ button.swatch {
     outline: 1px solid var(--seam);
     outline-offset: 1px;
   }
+}
+
+.themeSelect {
+  @supports (appearance: base-select) {
+    &,
+    &::picker(select) {
+      appearance: base-select;
+    }
+
+    padding: 0 14px;
+    background: var(--glass);
+
+    &::picker-icon {
+      color: var(--ink-faint);
+      transition: rotate 0.16s ease;
+    }
+
+    &:open {
+      color: var(--seam);
+      border-color: color-mix(in srgb, var(--seam) 55%, transparent);
+      background: color-mix(in srgb, var(--glass) 70%, var(--seam) 12%);
+    }
+
+    &:open::picker-icon {
+      color: var(--seam);
+      rotate: 180deg;
+    }
+
+    &:open::picker(select) {
+      margin-block-start: 4px;
+      padding: 6px;
+      border: 1px solid var(--glass-border);
+      border-radius: var(--control-radius);
+      background: var(--panel-fill);
+      box-shadow: var(--panel-shadow);
+      color: var(--ink);
+    }
+
+    & option {
+      padding: 10px 12px;
+      border: 1px solid transparent;
+      border-radius: var(--control-radius);
+      background: transparent;
+      color: var(--ink);
+      font: inherit;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    & option::checkmark {
+      color: var(--seam);
+      order: 1;
+      margin-inline-start: auto;
+    }
+
+    & option:checked {
+      color: var(--seam);
+      border-color: color-mix(in srgb, var(--seam) 55%, transparent);
+      background: color-mix(in srgb, var(--glass) 70%, var(--seam) 12%);
+    }
+
+    @media (hover: hover) and (pointer: fine) {
+      & option:hover {
+        background: color-mix(in srgb, var(--glass) 80%, var(--ink) 8%);
+      }
+
+      & option:checked:hover {
+        background: color-mix(in srgb, var(--glass) 70%, var(--seam) 12%);
+      }
+    }
+  }
+}
+
+.settingsTrigger {
+  display: flex;
+  align-items: center;
+  text-align: left;
+
+  &[data-open="true"] {
+    color: var(--seam);
+    border-color: color-mix(in srgb, var(--seam) 55%, transparent);
+    background:
+      linear-gradient(45deg, transparent 50%, var(--seam) 50%) calc(100% - 14px) calc(50% - 2px) / 6px 6px no-repeat,
+      linear-gradient(135deg, var(--seam) 50%, transparent 50%) calc(100% - 10px) calc(50% - 2px) / 6px 6px no-repeat,
+      color-mix(in srgb, var(--glass) 70%, var(--seam) 12%);
+  }
+}
+
+.settingsPanel {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--control-radius);
+  background: var(--panel-fill);
+  box-shadow: var(--panel-shadow);
+  color: var(--ink);
+
+  &[hidden] {
+    display: none;
+  }
+}
+
+.settingsToggle {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--ink-faint);
+  cursor: pointer;
+
+  & input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    opacity: 0;
+  }
+
+  & input:focus-visible + .switch {
+    outline: 2px solid var(--seam);
+    outline-offset: 3px;
+  }
+
+  & input:checked + .switch {
+    background: var(--seam);
+
+    &::after {
+      transform: translateX(18px);
+      background: var(--selected-ink);
+    }
+  }
+}
+
+.switch {
+  width: 44px;
+  height: 26px;
+  flex: 0 0 auto;
+  border-radius: var(--control-radius);
+  background: var(--glass);
+  box-shadow: inset 0 0 0 1px var(--glass-border);
+  position: relative;
+
+  &::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 20px;
+    height: 20px;
+    border-radius: var(--control-radius);
+    background: var(--ink);
+    transition: transform 0.16s ease;
+
+    @media (prefers-reduced-motion: reduce) {
+      transition: none;
+    }
+  }
+}
+
+.physicsFields {
+  display: grid;
+  gap: 12px;
+}
+
+.physicsFieldsDimmed {
+  opacity: 0.42;
+  pointer-events: none;
+}
+
+.physicsField {
+  min-width: 0;
 }
 
 .stage {
@@ -976,7 +1160,9 @@ button.deleteBtn {
   &[data-brush="ice"] .cell,
   &[data-brush="crumble"] .cell,
   &[data-brush="heart"] .cell,
-  &[data-brush="coin"] .cell {
+  &[data-brush="coin"] .cell,
+  &[data-brush="star"] .cell,
+  &[data-brush="wings"] .cell {
     cursor: crosshair;
   }
 
@@ -1357,8 +1543,18 @@ button.deleteBtn {
     background: color-mix(in srgb, var(--maze-coin) 24%, var(--maze-floor));
   }
 
+  &[data-kind="star"] {
+    background: color-mix(in srgb, var(--maze-power) 24%, var(--maze-floor));
+  }
+
+  &[data-kind="wings"] {
+    background: color-mix(in srgb, var(--maze-hover) 24%, var(--maze-floor));
+  }
+
   &[data-heart="true"] > .pickup,
-  &[data-coin="true"] > .pickup {
+  &[data-coin="true"] > .pickup,
+  &[data-star="true"] > .pickup,
+  &[data-wings="true"] > .pickup {
     opacity: 1;
   }
 
@@ -1369,6 +1565,38 @@ button.deleteBtn {
   &[data-coin="true"] > .pickup {
     background: var(--maze-coin);
     box-shadow: inset 0 0 0 1.5px color-mix(in srgb, #000 18%, transparent);
+  }
+
+  &[data-star="true"] > .pickup {
+    background: var(--maze-power);
+    clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  &[data-wings="true"] > .pickup {
+    background: var(--maze-hover);
+    width: 42%;
+    top: 8%;
+    right: 4%;
+    clip-path: polygon(
+      50% 18%,
+      72% 4%,
+      96% 22%,
+      88% 48%,
+      78% 42%,
+      70% 58%,
+      60% 48%,
+      50% 62%,
+      40% 48%,
+      30% 58%,
+      22% 42%,
+      12% 48%,
+      4% 22%,
+      28% 4%
+    );
+    border-radius: 0;
+    box-shadow: none;
   }
 
   &[data-kind="switch"] {

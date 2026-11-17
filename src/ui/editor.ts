@@ -9,6 +9,8 @@ import {
   clearInterior,
   hasCoin,
   hasHeart,
+  hasStar,
+  hasWings,
   interiorClosed,
   liftAt,
   loneWarpPair,
@@ -26,11 +28,21 @@ import {
   tileAt,
   toggleCoin,
   toggleHeart,
+  toggleStar,
+  toggleWings,
   type Direction,
   type LiftedTile,
   type Maze,
   type WallAxis,
 } from "../core/maze.ts";
+import {
+  PHYSICS_KEYS,
+  SETTING_DEFAULTS,
+  SETTING_SPECS,
+  clampSetting,
+  defaultFloorPhysics,
+  type PhysicsSettingKey,
+} from "../core/playSettings.ts";
 import {
   copyText,
   formatAuthoredFloorLine,
@@ -78,7 +90,7 @@ export interface EditorCallbacks {
   onShare: (tower: Tower) => Promise<boolean | null>;
 }
 
-type PaletteKind = "pit" | "boost" | "warp" | "ice" | "crumble" | "block" | "switch" | "heart" | "coin";
+type PaletteKind = "pit" | "boost" | "warp" | "ice" | "crumble" | "block" | "switch" | "heart" | "coin" | "star" | "wings";
 type EditorTool = "move" | "erase" | "wall" | PaletteKind;
 
 const HINT_TITLE: Record<EditorTool | "warp-pair" | "switch-pair", string> = {
@@ -94,11 +106,13 @@ const HINT_TITLE: Record<EditorTool | "warp-pair" | "switch-pair", string> = {
   switch: "Switch",
   heart: "Heart",
   coin: "Coin",
+  star: "Star",
+  wings: "Wings",
   "warp-pair": "Warp",
   "switch-pair": "Switch",
 };
 type Stroke = "open" | "close";
-type CellKind = "start" | "goal" | "pit" | "floor" | "boost" | "warp" | "ice" | "crumble" | "block" | "switch" | "hatch" | "heart" | "coin";
+type CellKind = "start" | "goal" | "pit" | "floor" | "boost" | "warp" | "ice" | "crumble" | "block" | "switch" | "hatch" | "heart" | "coin" | "star" | "wings";
 type WallDrag = {
   axis: WallAxis;
   anchor: number;
@@ -131,6 +145,8 @@ const PALETTE: readonly { id: PaletteKind; label: string; icon: IconName }[] = [
   { id: "switch", label: "Switch", icon: "switch" },
   { id: "heart", label: "Heart", icon: "heart" },
   { id: "coin", label: "Coin", icon: "coin" },
+  { id: "star", label: "Star", icon: "star" },
+  { id: "wings", label: "Wings", icon: "wings" },
 ];
 
 const TOOLS: readonly { id: EditorTool; label: string; icon: IconName }[] = [
@@ -153,6 +169,8 @@ const HINT_BRUSH: Record<EditorTool, string> = {
   switch: "Click a cell, then a wall. Stop on the plate to open that wall.",
   heart: "Place hearts that add a life when collected.",
   coin: "Place coins to collect while playing.",
+  star: "Place a star that grows the ball and smashes walls for a while.",
+  wings: "Place wings that let the ball hover over pits for a while.",
 };
 
 const DIR_WORD: Record<Direction, string> = {
@@ -215,6 +233,8 @@ export class LevelEditor {
           tiles: [],
           hearts: [],
           coins: [],
+          stars: [],
+          wings: [],
           start: { c: 0, r: 0 },
           goal: { c: 0, r: 0 },
           hatch: null,
@@ -232,6 +252,13 @@ export class LevelEditor {
   private brush: EditorTool = "move";
   private boostDir: Direction = "n";
   private readonly themeSelect: HTMLSelectElement;
+  private readonly settingsField: HTMLElement;
+  private readonly settingsOpen: HTMLButtonElement;
+  private readonly settingsPanel: HTMLElement;
+  private readonly physicsEnable: HTMLInputElement;
+  private readonly physicsFields: HTMLElement;
+  private readonly physicsInputs = new Map<PhysicsSettingKey, HTMLInputElement>();
+  private readonly physicsReadouts = new Map<PhysicsSettingKey, HTMLElement>();
   private readonly nameInput: HTMLInputElement;
   private stroke: Stroke | null = null;
   private wallDrag: WallDrag | null = null;
@@ -282,6 +309,31 @@ export class LevelEditor {
                 <label class="${styles.themeField}">
                   <select class="${styles.themeSelect}" data-theme-select aria-label="Floor theme"></select>
                 </label>
+                <div class="${styles.settingsField}" data-settings>
+                  <button
+                    type="button"
+                    class="${styles.settingsTrigger}"
+                    data-settings-open
+                    aria-haspopup="dialog"
+                    aria-expanded="false"
+                    aria-controls="editor-floor-settings"
+                  >Settings</button>
+                  <div
+                    class="${styles.settingsPanel}"
+                    id="editor-floor-settings"
+                    data-settings-panel
+                    hidden
+                    role="dialog"
+                    aria-label="Floor settings"
+                  >
+                    <label class="${styles.settingsToggle}">
+                      <span>Custom physics</span>
+                      <input type="checkbox" data-physics-enable aria-label="Custom physics for this floor" />
+                      <span class="${styles.switch}" aria-hidden="true"></span>
+                    </label>
+                    <div class="${styles.physicsFields}" data-physics-fields></div>
+                  </div>
+                </div>
                 <h2 class="${styles.panelTitle}">Tools</h2>
                 <div class="${styles.palette}" role="list" aria-label="Tools" data-palette></div>
                 <div class="${styles.hint}" data-hint aria-live="polite">
@@ -352,6 +404,11 @@ export class LevelEditor {
     this.hintTitle = this.require("[data-hint-title]");
     this.hintBody = this.require("[data-hint-body]");
     this.themeSelect = this.require("[data-theme-select]");
+    this.settingsField = this.require("[data-settings]");
+    this.settingsOpen = this.require("[data-settings-open]");
+    this.settingsPanel = this.require("[data-settings-panel]");
+    this.physicsEnable = this.require("[data-physics-enable]");
+    this.physicsFields = this.require("[data-physics-fields]");
     this.nameInput = this.require("[data-level-name]");
     this.colReadout = this.require("[data-cols]");
     this.rowReadout = this.require("[data-rows]");
@@ -371,6 +428,7 @@ export class LevelEditor {
     this.mountPalette();
     this.mountTileMenu();
     this.mountThemes();
+    this.mountPhysics();
     this.require("[data-scrim]").addEventListener("click", this.requestClose);
     this.require("[data-close]").addEventListener("click", this.requestClose);
     this.require("[data-clear]").addEventListener("click", () => {
@@ -470,6 +528,13 @@ export class LevelEditor {
     this.themeSelect.addEventListener("change", () => {
       this.setTheme(parseFloorTheme(this.themeSelect.value));
     });
+    this.settingsOpen.addEventListener("click", () => {
+      this.toggleSettingsPanel();
+    });
+    this.physicsEnable.addEventListener("change", () => {
+      this.setPhysicsEnabled(this.physicsEnable.checked);
+    });
+    this.root.addEventListener("pointerdown", this.onSettingsPointerDown);
     this.board.addEventListener("pointerdown", this.onPointerDown);
     this.board.addEventListener("pointermove", this.onPointerMove);
     this.board.addEventListener("pointerup", this.onPointerUp);
@@ -514,6 +579,7 @@ export class LevelEditor {
     this.syncFloors();
     this.syncPalette();
     this.syncThemes();
+    this.syncPhysics();
     this.renderBoard();
     this.root.hidden = false;
     this.root.dataset.phase = "out";
@@ -530,6 +596,7 @@ export class LevelEditor {
     this.clearTileDrag();
     this.lineSelect = null;
     this.hideTileMenu();
+    this.hideSettingsPanel();
     this.hideGap();
     this.clearNotice();
     delete this.chrome.dataset.dragging;
@@ -761,6 +828,89 @@ export class LevelEditor {
     this.themeSelect.value = theme;
   }
 
+  private mountPhysics(): void {
+    this.physicsFields.replaceChildren();
+    for (const key of PHYSICS_KEYS) {
+      const spec = SETTING_SPECS.find((item) => item.key === key);
+      if (!spec) continue;
+      const field = document.createElement("div");
+      field.className = `field ${styles.physicsField}`;
+      field.innerHTML = `
+        <label><span>${spec.label}</span><span data-readout></span></label>
+        <input type="range" min="${spec.min}" max="${spec.max}" step="${spec.step}" aria-label="${spec.label}" />
+      `;
+      const input = field.querySelector("input");
+      const readout = field.querySelector<HTMLElement>("[data-readout]");
+      if (!input || !readout) continue;
+      input.addEventListener("input", () => {
+        this.setPhysicsValue(key, Number(input.value));
+      });
+      this.physicsInputs.set(key, input);
+      this.physicsReadouts.set(key, readout);
+      this.physicsFields.append(field);
+    }
+    this.syncPhysics();
+  }
+
+  private toggleSettingsPanel(): void {
+    if (this.settingsPanel.hidden) this.showSettingsPanel();
+    else this.hideSettingsPanel();
+  }
+
+  private showSettingsPanel(): void {
+    this.settingsPanel.hidden = false;
+    this.settingsOpen.setAttribute("aria-expanded", "true");
+    this.settingsOpen.dataset.open = "true";
+    this.syncPhysics();
+  }
+
+  private hideSettingsPanel(): void {
+    this.settingsPanel.hidden = true;
+    this.settingsOpen.setAttribute("aria-expanded", "false");
+    delete this.settingsOpen.dataset.open;
+  }
+
+  private onSettingsPointerDown = (event: PointerEvent): void => {
+    if (this.settingsPanel.hidden) return;
+    const target = event.target as Node | null;
+    if (target && this.settingsField.contains(target)) return;
+    this.hideSettingsPanel();
+  };
+
+  private setPhysicsEnabled(enabled: boolean): void {
+    if (enabled) this.draft.physics = defaultFloorPhysics();
+    else delete this.draft.physics;
+    this.syncPhysics();
+  }
+
+  private setPhysicsValue(key: PhysicsSettingKey, value: number): void {
+    const next = clampSetting(key, value);
+    const physics = this.draft.physics ?? defaultFloorPhysics();
+    physics[key] = next;
+    this.draft.physics = physics;
+    if (!this.physicsEnable.checked) this.physicsEnable.checked = true;
+    this.syncPhysics();
+  }
+
+  private syncPhysics(): void {
+    const physics = this.draft.physics;
+    const enabled = Boolean(physics);
+    this.physicsEnable.checked = enabled;
+    this.physicsFields.classList.toggle(styles.physicsFieldsDimmed, !enabled);
+    for (const key of PHYSICS_KEYS) {
+      const spec = SETTING_SPECS.find((item) => item.key === key);
+      if (!spec) continue;
+      const value = physics?.[key] ?? SETTING_DEFAULTS[key];
+      const input = this.physicsInputs.get(key);
+      const readout = this.physicsReadouts.get(key);
+      if (input) {
+        input.value = String(value);
+        input.disabled = !enabled;
+      }
+      if (readout) readout.textContent = spec.format(value);
+    }
+  }
+
   private setBrush(kind: EditorTool): void {
     if (this.pairing() && kind !== this.pairing()) return;
     this.brush = kind;
@@ -820,6 +970,7 @@ export class LevelEditor {
     this.syncFloors();
     this.syncPalette();
     this.syncThemes();
+    this.syncPhysics();
     this.renderBoard();
     this.refreshHint();
   }
@@ -1213,9 +1364,11 @@ export class LevelEditor {
     this.stroke = null;
     this.wallDrag = null;
     this.clearTileDrag();
+    this.hideSettingsPanel();
     this.syncFloors();
     this.syncPalette();
     this.syncThemes();
+    this.syncPhysics();
     this.renderBoard();
     this.refreshHint();
   }
@@ -1235,6 +1388,7 @@ export class LevelEditor {
     this.syncFloors();
     this.syncPalette();
     this.syncThemes();
+    this.syncPhysics();
     this.renderBoard();
     this.refreshHint();
   }
@@ -1292,6 +1446,7 @@ export class LevelEditor {
     this.syncFloors();
     this.syncPalette();
     this.syncThemes();
+    this.syncPhysics();
     this.renderBoard();
     this.refreshHint();
   }
@@ -1483,8 +1638,14 @@ export class LevelEditor {
       else delete cell.dataset.pair;
       if (paint.open) cell.dataset.open = "true";
       else delete cell.dataset.open;
-      const showHeart = paint.kind === "heart" || (hasHeart(this.draft, { c, r }) && paint.kind !== "coin");
-      const showCoin = paint.kind === "coin" || (hasCoin(this.draft, { c, r }) && paint.kind !== "heart");
+      const showHeart = paint.kind === "heart"
+        || (hasHeart(this.draft, { c, r }) && paint.kind !== "coin" && paint.kind !== "star" && paint.kind !== "wings");
+      const showCoin = paint.kind === "coin"
+        || (hasCoin(this.draft, { c, r }) && paint.kind !== "heart" && paint.kind !== "star" && paint.kind !== "wings");
+      const showStar = paint.kind === "star"
+        || (hasStar(this.draft, { c, r }) && paint.kind !== "heart" && paint.kind !== "coin" && paint.kind !== "wings");
+      const showWings = paint.kind === "wings"
+        || (hasWings(this.draft, { c, r }) && paint.kind !== "heart" && paint.kind !== "coin" && paint.kind !== "star");
       if (isOver && drag.lift.kind === "heart") {
         if (this.canDropAt(drag.over, drag.lift)) cell.dataset.heart = "true";
         else delete cell.dataset.heart;
@@ -1495,6 +1656,16 @@ export class LevelEditor {
         else delete cell.dataset.coin;
       } else if (showCoin) cell.dataset.coin = "true";
       else delete cell.dataset.coin;
+      if (isOver && drag.lift.kind === "star") {
+        if (this.canDropAt(drag.over, drag.lift)) cell.dataset.star = "true";
+        else delete cell.dataset.star;
+      } else if (showStar) cell.dataset.star = "true";
+      else delete cell.dataset.star;
+      if (isOver && drag.lift.kind === "wings") {
+        if (this.canDropAt(drag.over, drag.lift)) cell.dataset.wings = "true";
+        else delete cell.dataset.wings;
+      } else if (showWings) cell.dataset.wings = "true";
+      else delete cell.dataset.wings;
       if (isSource || isPairSource) cell.dataset.dragging = "true";
       else delete cell.dataset.dragging;
       if (isOver) cell.dataset.drop = this.canDropAt(drag.over, drag.lift) ? "ok" : "no";
@@ -1709,6 +1880,18 @@ export class LevelEditor {
         ok: this.canBrushAt(point, { kind: "coin" }),
       };
     }
+    if (brush === "star") {
+      return {
+        paint: { kind: "star", label: `Place star, ${where}` },
+        ok: this.canBrushAt(point, { kind: "star" }),
+      };
+    }
+    if (brush === "wings") {
+      return {
+        paint: { kind: "wings", label: `Place wings, ${where}` },
+        ok: this.canBrushAt(point, { kind: "wings" }),
+      };
+    }
     if (brush === "warp") {
       const pair = loneWarpPair(this.draft) ?? previewWarpPair(this.draft);
       const color = pair % WARP_COLOR_COUNT;
@@ -1855,6 +2038,12 @@ export class LevelEditor {
       this.stroke = "close";
     } else if (brush === "coin") {
       if (this.stroke === null) toggleCoin(this.draft, point);
+      this.stroke = "close";
+    } else if (brush === "star") {
+      if (this.stroke === null) toggleStar(this.draft, point);
+      this.stroke = "close";
+    } else if (brush === "wings") {
+      if (this.stroke === null) toggleWings(this.draft, point);
       this.stroke = "close";
     } else if (brush === "switch") {
       paintSwitch(this.draft, point);
@@ -2012,6 +2201,10 @@ export class LevelEditor {
         this.hideTileMenu();
         return;
       }
+      if (!this.settingsPanel.hidden) {
+        this.hideSettingsPanel();
+        return;
+      }
       if (this.lineSelect) {
         this.clearLineSelect();
         return;
@@ -2121,6 +2314,8 @@ function describeCell(
   }
   if (hasHeart(maze, { c, r })) return { kind: "heart", label: `Heart, ${where}` };
   if (hasCoin(maze, { c, r })) return { kind: "coin", label: `Coin, ${where}` };
+  if (hasStar(maze, { c, r })) return { kind: "star", label: `Star, ${where}` };
+  if (hasWings(maze, { c, r })) return { kind: "wings", label: `Wings, ${where}` };
   return { kind: "floor", label: `Floor, ${where}` };
 }
 
@@ -2132,6 +2327,8 @@ function describeLift(lift: LiftedTile, c: number, r: number, landing: boolean):
   if (lift.kind === "pit") return { kind: "pit", label: `Pit, ${where}` };
   if (lift.kind === "heart") return { kind: "heart", label: `Heart, ${where}` };
   if (lift.kind === "coin") return { kind: "coin", label: `Coin, ${where}` };
+  if (lift.kind === "star") return { kind: "star", label: `Star, ${where}` };
+  if (lift.kind === "wings") return { kind: "wings", label: `Wings, ${where}` };
   if (lift.kind === "boost") return { kind: "boost", dir: lift.dir, label: `Boost ${DIR_WORD[lift.dir]}, ${where}` };
   if (lift.kind === "ice") return { kind: "ice", label: `Ice, ${where}` };
   if (lift.kind === "crumble") return { kind: "crumble", label: `Crumble, ${where}` };

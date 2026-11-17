@@ -87,11 +87,11 @@ export class MazeWorld {
   private bandGeoSmooth: BufferGeometry | null = null;
   private ballNormal = false;
   private readonly key: DirectionalLight;
-  private readonly goalLight: PointLight;
   private readonly materials: Record<PieceKind, MeshToonMaterial>;
   private readonly themeSurfaces: Map<FloorThemeId, ThemeSurfaces>;
   private readonly goalRingMat: MeshToonMaterial;
   private readonly startRingMat: MeshToonMaterial;
+  private readonly goalLightColor: string;
   private readonly groundMats: Record<string, MeshToonMaterial>;
   private readonly floorMats: Record<WinSceneKind, MeshToonMaterial>;
   private readonly streamMat: MeshToonMaterial;
@@ -111,21 +111,43 @@ export class MazeWorld {
   private readonly iceMarkMat: MeshToonMaterial;
   private readonly switchMats: MeshToonMaterial[];
   private readonly gateMeshes: Mesh[] = [];
+  private readonly smashWalls: Mesh[] = [];
   private readonly crumbleMeshes: Mesh[] = [];
   private readonly arrowGeometry: BufferGeometry;
   private readonly heartGeometry: BufferGeometry;
   private readonly coinGeometry: BufferGeometry;
+  private readonly starGeometry: BufferGeometry;
+  private readonly wingGeometry: BufferGeometry;
+  private readonly sparkGeometry: BufferGeometry;
   private readonly warpGateGeometry: BufferGeometry;
   private readonly heartMat: MeshToonMaterial;
   private readonly coinMat: MeshStandardMaterial;
+  private readonly starMat: MeshToonMaterial;
+  private readonly wingMat: MeshToonMaterial;
+  private readonly coinSparkColors: string[];
+  private readonly heartSparkColors: string[];
+  private readonly starSparkColors: string[];
+  private readonly wingSparkColors: string[];
+  private readonly starFlashColors: string[];
+  private readonly fireworkColors: string[];
+  private readonly ballBaseColor: string;
+  private readonly bandBaseColor: string;
+  private starFlashing = false;
+  private readonly ballAura: Mesh;
+  private readonly ballAuraMat: MeshBasicMaterial;
   private readonly hearts: PickupBit[] = [];
   private readonly coins: PickupBit[] = [];
+  private readonly stars: PickupBit[] = [];
+  private readonly wings: PickupBit[] = [];
   private readonly warpSpins: Group[] = [];
   private readonly debris: Debris[] = [];
+  private readonly sparks: Spark[] = [];
+  private readonly fireworks: FireworkBit[] = [];
+  private fireworkCooldown = 0;
   private readonly floorGroups: (Group | null)[] = [];
   private readonly frames: (Mesh | null)[] = [];
-  private goalRing: Mesh | null = null;
-  private goalAnchor: { x: number; z: number; group: Group } | null = null;
+  private readonly goalRings: Mesh[] = [];
+  private readonly goalLights: PointLight[] = [];
   private meadow: Group | null = null;
   private meadowFlowers: Mesh[] = [];
   private meadowAnimals: AnimalBit[] = [];
@@ -195,7 +217,8 @@ export class MazeWorld {
     this.materials.exit.toneMapped = false;
     this.themeSurfaces = makeThemeSurfaces(ramp);
 
-    this.goalRingMat = glow(token("--maze-goal"));
+    this.goalLightColor = token("--maze-goal");
+    this.goalRingMat = glow(this.goalLightColor);
     this.goalRingMat.emissiveIntensity = 0.85;
     this.groundMats = {
       grass: toon(token("--maze-grass")),
@@ -384,6 +407,9 @@ export class MazeWorld {
     this.arrowGeometry = arrowGeometry();
     this.heartGeometry = heartGeometry();
     this.coinGeometry = facet(new CylinderGeometry(0.28, 0.28, 0.06, 24));
+    this.starGeometry = starGeometry();
+    this.wingGeometry = wingGeometry();
+    this.sparkGeometry = facet(new BoxGeometry(0.05, 0.14, 0.05));
     this.warpGateGeometry = facet(new CylinderGeometry(WARP_GATE_R, WARP_GATE_R, WARP_GATE_H, 8, 1, true));
     this.heartMat = glow(token("--maze-heart"));
     this.heartMat.emissiveIntensity = 0.8;
@@ -394,6 +420,54 @@ export class MazeWorld {
       metalness: 0.95,
       roughness: 0.22,
     });
+    this.starMat = glow(token("--maze-power"));
+    this.starMat.emissiveIntensity = 0.95;
+    this.wingMat = glow(token("--maze-hover"));
+    this.wingMat.emissiveIntensity = 0.85;
+    this.coinSparkColors = [token("--maze-coin"), token("--maze-coin-shine"), "#ffffff"];
+    this.heartSparkColors = [token("--maze-heart"), "#ff8a9a", "#ffffff"];
+    this.starSparkColors = [
+      token("--maze-power"),
+      token("--sky-rainbow-0"),
+      token("--sky-rainbow-2"),
+      token("--sky-rainbow-4"),
+      token("--sky-rainbow-6"),
+      "#ffffff",
+    ];
+    this.wingSparkColors = [token("--maze-hover"), token("--sky-ocean-1"), "#ffffff"];
+    this.starFlashColors = [
+      token("--sky-rainbow-0"),
+      token("--sky-rainbow-1"),
+      token("--sky-rainbow-2"),
+      token("--sky-rainbow-3"),
+      token("--sky-rainbow-4"),
+      token("--sky-rainbow-5"),
+      token("--sky-rainbow-6"),
+      "#ffffff",
+    ];
+    this.ballBaseColor = token("--maze-ball");
+    this.bandBaseColor = token("--maze-mark");
+    this.ballAuraMat = new MeshBasicMaterial({
+      color: token("--maze-hover"),
+      transparent: true,
+      opacity: 0.28,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    this.ballAura = new Mesh(new SphereGeometry(BALL_R * 1.55, 16, 12), this.ballAuraMat);
+    this.ballAura.visible = false;
+    this.ballAura.renderOrder = 4;
+    this.fireworkColors = [
+      token("--maze-win-neon"),
+      token("--maze-heart"),
+      token("--maze-coin"),
+      token("--maze-coin-shine"),
+      token("--maze-warp-0"),
+      token("--maze-warp-1"),
+      token("--maze-warp-2"),
+      token("--maze-goal"),
+      "#ffffff",
+    ];
 
     const hemi = new HemisphereLight(token("--maze-sky"), token("--maze-floor"), 0.7);
     const ambient = new AmbientLight("#ffffff", 0.28);
@@ -410,9 +484,6 @@ export class MazeWorld {
     const rim = new DirectionalLight("#ffffff", 0.18);
     rim.position.set(-2.5, 7, -9);
     this.scene.add(hemi, ambient, this.key, this.key.target, fill, rim);
-
-    this.goalLight = new PointLight(token("--maze-goal"), 3.2, 4.2, 2);
-    this.board.add(this.goalLight);
 
     this.ballToonMat = toon(token("--maze-ball"));
     this.ballSmoothMat = new MeshStandardMaterial({
@@ -435,7 +506,7 @@ export class MazeWorld {
     const bandB = new Mesh(this.bandGeoPixel, this.bandPixelMat);
     bandB.rotation.x = Math.PI / 2;
     this.ballBands = [bandA, bandB];
-    this.ball.add(bandA, bandB);
+    this.ball.add(bandA, bandB, this.ballAura);
     this.scene.add(this.ball);
   }
 
@@ -449,25 +520,23 @@ export class MazeWorld {
     this.meadowCamT = 0;
     this.ball.visible = true;
     this.scene.background = this.voidSky.texture;
-    this.board.add(this.goalLight);
     this.clearDebris();
+    this.clearSparks();
     this.clearMeadow();
     this.clearGenerated();
     this.floorGroups.length = 0;
     this.frames.length = 0;
     this.focusY = 0;
-    this.goalAnchor = null;
     layout.floors.forEach((floor, index) => {
       const group = this.makeFloor(floor, -index * layout.story);
       this.frames[index] = this.addPieces(group, floor.pieces, floor.theme);
-      this.addMarkers(group, floor, floor.finale);
+      this.addMarkers(group, floor);
       this.addTileMarks(group, floor);
       this.addPickups(group, floor);
       this.board.add(group);
       this.floorGroups.push(group);
-      if (floor.finale) this.goalAnchor = { x: floor.goal.x, z: floor.goal.z, group };
     });
-    this.placeGoalLight();
+    this.setGoalLightsVisible(true);
     this.fit();
     this.syncShell(0, true);
   }
@@ -491,9 +560,7 @@ export class MazeWorld {
     this.shatterFloor(index, blast);
     this.escaped = true;
     this.failed = false;
-    this.goalAnchor = null;
-    this.goalRing = null;
-    this.goalLight.visible = false;
+    this.clearGoalMarkers();
     this.winSceneIndex = Math.floor(Math.random() * WIN_SCENES.length);
     this.applyWinScene(this.winSceneIndex);
     this.beginMeadowCamera();
@@ -511,9 +578,7 @@ export class MazeWorld {
     }
     this.escaped = true;
     this.failed = true;
-    this.goalAnchor = null;
-    this.goalRing = null;
-    this.goalLight.visible = false;
+    this.clearGoalMarkers();
     this.buildFailScene();
     this.scene.background = this.voidSky.texture;
     this.syncVoidSky(this.lastTime);
@@ -531,9 +596,7 @@ export class MazeWorld {
   enterWinGallery(): void {
     this.escaped = true;
     this.failed = false;
-    this.goalAnchor = null;
-    this.goalRing = null;
-    this.goalLight.visible = false;
+    this.clearGoalMarkers();
     this.ball.visible = false;
     for (const group of this.floorGroups) {
       if (group) group.visible = false;
@@ -573,7 +636,6 @@ export class MazeWorld {
     if (this.meadow) this.meadow.position.y += dy;
     for (const bit of this.debris) bit.mesh.position.add(up);
     this.focusY += dy;
-    this.placeGoalLight();
     this.placeCamera();
   }
 
@@ -583,15 +645,14 @@ export class MazeWorld {
     const index = this.floorGroups.length;
     const group = this.makeFloor(layout, -index * this.story + this.raised);
     this.frames[index] = this.addPieces(group, layout.pieces, layout.theme);
-    this.addMarkers(group, layout, layout.finale);
+    this.addMarkers(group, layout);
     this.addTileMarks(group, layout);
     this.addPickups(group, layout);
     this.board.add(group);
     this.floorGroups.push(group);
-    if (layout.finale) this.goalAnchor = { x: layout.goal.x, z: layout.goal.z, group };
     tower.width = Math.max(tower.width, layout.width);
     tower.depth = Math.max(tower.depth, layout.depth);
-    this.placeGoalLight();
+    this.setGoalLightsVisible(true);
     this.fit();
   }
 
@@ -601,6 +662,14 @@ export class MazeWorld {
 
   collectCoin(cell: string): void {
     this.collectPickup(this.coins, cell);
+  }
+
+  collectStar(cell: string): void {
+    this.collectPickup(this.stars, cell);
+  }
+
+  collectWings(cell: string): void {
+    this.collectPickup(this.wings, cell);
   }
 
   resize(width: number, height: number): void {
@@ -779,24 +848,32 @@ export class MazeWorld {
     this.board.quaternion.set(pose.board.x, pose.board.y, pose.board.z, pose.board.w);
     this.ball.position.set(pose.ballPosition.x, pose.ballPosition.y, pose.ballPosition.z);
     this.ball.quaternion.set(pose.ballRotation.x, pose.ballRotation.y, pose.ballRotation.z, pose.ballRotation.w);
+    this.ball.scale.setScalar(pose.ballScale);
+    this.syncStarBall(pose, time);
+    this.syncHoverAura(pose, time);
     const dt = Math.min(0.05, Math.max(0, time - this.lastTime));
     this.lastTime = time;
     this.tickDebris(dt);
+    this.tickSparks(dt);
     this.tickAim(dt);
     this.tickMeadowCamera(dt);
     this.syncShell(dt, this.reduceMotion);
-    this.placeGoalLight();
     this.placeCamera();
     this.syncVoidStars(time);
     this.syncTiles(pose, time);
     this.tickPickups(this.hearts, time, dt, 1.7, 2.4);
     this.tickPickups(this.coins, time, dt, 3.6, 2.8);
+    this.tickPickups(this.stars, time, dt, 2.8, 3.2);
+    this.tickPickups(this.wings, time, dt, 2.2, 2.6);
     this.syncVoidSky(time);
     if (this.reduceMotion) return;
-    if (this.goalRing) {
+    if (this.goalRings.length) {
       const wave = Math.sin(time * 2.2);
-      this.goalRing.scale.setScalar(1 + wave * 0.03);
-      this.goalRingMat.emissiveIntensity = 0.75 + wave * 0.25;
+      const pulse = 0.75 + wave * 0.25;
+      const scale = 1 + wave * 0.03;
+      this.goalRingMat.emissiveIntensity = pulse;
+      for (const ring of this.goalRings) ring.scale.setScalar(scale);
+      for (const light of this.goalLights) light.intensity = 2.8 + wave * 0.8;
     }
     if (this.escaped) {
       for (const [index, flower] of this.meadowFlowers.entries()) {
@@ -876,6 +953,7 @@ export class MazeWorld {
           }
         }
       }
+      if (!this.failed) this.tickFireworks(dt);
     }
     this.boostMarkMat.emissiveIntensity = 0.55 + Math.sin(time * 4.5) * 0.28;
     this.iceMarkMat.emissiveIntensity = 0.35 + Math.sin(time * 1.6) * 0.12;
@@ -940,6 +1018,7 @@ export class MazeWorld {
     this.floorGroups[index] = null;
     this.frames[index] = null;
     this.pruneSpins();
+    this.pruneGoalMarkers();
   }
 
   private shatterRoofAt(index: number): void {
@@ -1004,6 +1083,50 @@ export class MazeWorld {
         kind: "coin",
       });
     }
+    for (const star of layout.stars) {
+      const mesh = new Mesh(this.starGeometry, this.starMat);
+      mesh.position.set(star.x, 0.4, star.z);
+      mesh.castShadow = true;
+      mesh.renderOrder = 2;
+      parent.add(mesh);
+      this.stars.push({
+        root: mesh,
+        visual: mesh,
+        cell: `${star.c},${star.r}`,
+        group: parent,
+        taken: false,
+        age: 0,
+        baseY: 0.4,
+        kind: "star",
+      });
+    }
+    for (const wing of layout.wings) {
+      const root = new Group();
+      root.position.set(wing.x, 0.4, wing.z);
+      const left = new Mesh(this.wingGeometry, this.wingMat);
+      const right = new Mesh(this.wingGeometry, this.wingMat);
+      left.scale.x = -1;
+      left.position.x = -0.02;
+      right.position.x = 0.02;
+      left.rotation.y = 0.45;
+      right.rotation.y = -0.45;
+      left.castShadow = true;
+      right.castShadow = true;
+      left.renderOrder = 2;
+      right.renderOrder = 2;
+      root.add(left, right);
+      parent.add(root);
+      this.wings.push({
+        root,
+        visual: right,
+        cell: `${wing.c},${wing.r}`,
+        group: parent,
+        taken: false,
+        age: 0,
+        baseY: 0.4,
+        kind: "wings",
+      });
+    }
   }
 
   private collectPickup(list: PickupBit[], cell: string): void {
@@ -1018,6 +1141,21 @@ export class MazeWorld {
       }
       bit.taken = true;
       bit.age = 0;
+      if (bit.kind === "coin") this.spawnPickupSparks(bit, this.coinSparkColors);
+      else if (bit.kind === "star") this.spawnPickupSparks(bit, this.starSparkColors);
+      else if (bit.kind === "wings") this.spawnPickupSparks(bit, this.wingSparkColors);
+      if (bit.kind === "wings") {
+        for (const child of bit.root.children) {
+          if (!(child instanceof Mesh)) continue;
+          const source = child.material;
+          if (!(source instanceof MeshToonMaterial || source instanceof MeshStandardMaterial)) continue;
+          const mat = source.clone();
+          mat.transparent = true;
+          child.material = mat;
+          child.userData.owned = true;
+        }
+        continue;
+      }
       const source = bit.visual.material;
       if (source instanceof MeshToonMaterial || source instanceof MeshStandardMaterial) {
         const mat = source.clone();
@@ -1026,6 +1164,187 @@ export class MazeWorld {
         bit.visual.userData.owned = true;
       }
     }
+  }
+
+  private spawnPickupSparks(bit: PickupBit, colors: string[]): void {
+    const origin = bit.root.position;
+    const count = 12;
+    for (let i = 0; i < count; i += 1) {
+      const color = colors[i % colors.length] ?? colors[0]!;
+      const mat = new MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 1,
+        depthWrite: false,
+        toneMapped: false,
+      });
+      const mesh = new Mesh(this.sparkGeometry, mat);
+      mesh.position.set(origin.x, origin.y, origin.z);
+      mesh.renderOrder = 3;
+      const yaw = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.45;
+      const pitch = 0.35 + Math.random() * 1.1;
+      const speed = 1.6 + Math.random() * 2.4;
+      const vel = new Vector3(
+        Math.cos(yaw) * Math.cos(pitch) * speed,
+        Math.sin(pitch) * speed * 0.85 + 0.55,
+        Math.sin(yaw) * Math.cos(pitch) * speed,
+      );
+      mesh.scale.setScalar(0.55 + Math.random() * 0.7);
+      const dir = vel.clone().normalize();
+      if (dir.lengthSq() > 0.001) {
+        mesh.quaternion.setFromUnitVectors(new Vector3(0, 1, 0), dir);
+      }
+      bit.group.add(mesh);
+      this.sparks.push({
+        mesh,
+        parent: bit.group,
+        vel,
+        spin: new Vector3(
+          (Math.random() - 0.5) * 14,
+          (Math.random() - 0.5) * 14,
+          (Math.random() - 0.5) * 14,
+        ),
+        age: 0,
+        life: 0.32 + Math.random() * 0.22,
+      });
+    }
+  }
+
+  private tickSparks(dt: number): void {
+    for (let i = this.sparks.length - 1; i >= 0; i -= 1) {
+      const spark = this.sparks[i];
+      if (!spark) continue;
+      spark.age += dt;
+      const t = spark.age / spark.life;
+      if (!spark.mesh.parent || t >= 1) {
+        this.dropSpark(spark);
+        this.sparks.splice(i, 1);
+        continue;
+      }
+      spark.vel.y -= 7.5 * dt;
+      spark.mesh.position.addScaledVector(spark.vel, dt);
+      spark.mesh.rotateX(spark.spin.x * dt);
+      spark.mesh.rotateY(spark.spin.y * dt);
+      spark.mesh.rotateZ(spark.spin.z * dt);
+      const fade = 1 - t * t;
+      spark.mesh.scale.setScalar(Math.max(0.05, (0.55 + fade * 0.7) * (1 - t * 0.55)));
+      if (spark.mesh.material instanceof MeshBasicMaterial) spark.mesh.material.opacity = fade;
+    }
+  }
+
+  private dropSpark(spark: Spark): void {
+    spark.parent.remove(spark.mesh);
+    if (spark.mesh.material instanceof MeshBasicMaterial) spark.mesh.material.dispose();
+  }
+
+  private clearSparks(): void {
+    for (const spark of this.sparks) this.dropSpark(spark);
+    this.sparks.length = 0;
+  }
+
+  private tickFireworks(dt: number): void {
+    const meadow = this.meadow;
+    if (!meadow) {
+      this.clearFireworks();
+      return;
+    }
+    this.fireworkCooldown -= dt;
+    if (this.fireworkCooldown <= 0) {
+      const salvos = 2 + Math.floor(Math.random() * 3);
+      for (let i = 0; i < salvos; i += 1) this.launchFirework(meadow);
+      this.fireworkCooldown = 0.12 + Math.random() * 0.28;
+      if (Math.random() < 0.45) this.fireworkCooldown *= 0.35;
+    }
+    for (let i = this.fireworks.length - 1; i >= 0; i -= 1) {
+      const bit = this.fireworks[i];
+      if (!bit) continue;
+      bit.age += dt;
+      const t = bit.age / bit.life;
+      if (!bit.mesh.parent || t >= 1) {
+        this.dropFirework(bit);
+        this.fireworks.splice(i, 1);
+        continue;
+      }
+      bit.vel.y -= bit.gravity * dt;
+      bit.vel.multiplyScalar(Math.max(0, 1 - bit.drag * dt));
+      bit.mesh.position.addScaledVector(bit.vel, dt);
+      bit.mesh.rotateX(bit.spin.x * dt);
+      bit.mesh.rotateY(bit.spin.y * dt);
+      bit.mesh.rotateZ(bit.spin.z * dt);
+      const fade = 1 - t * t;
+      bit.mesh.scale.setScalar(Math.max(0.04, bit.baseScale * (0.65 + fade * 0.55)));
+      if (bit.mesh.material instanceof MeshBasicMaterial) bit.mesh.material.opacity = fade;
+    }
+  }
+
+  private launchFirework(meadow: Group): void {
+    const tower = this.tower;
+    if (!tower) return;
+    const span = Math.max(tower.width, tower.depth) * 2.8;
+    const x = (Math.random() - 0.5) * span * 1.55;
+    const y = span * (0.14 + Math.random() * 0.34);
+    const z = -span * (0.12 + Math.random() * 0.55);
+    const palette = this.fireworkColors;
+    const main = palette[Math.floor(Math.random() * Math.max(1, palette.length - 1))] ?? palette[0]!;
+    const colors = Math.random() < 0.55
+      ? [main, palette[Math.floor(Math.random() * palette.length)] ?? main, "#ffffff"]
+      : [main, main, "#ffffff"];
+    const count = 48 + Math.floor(Math.random() * 36);
+    const burst = 2.8 + Math.random() * 3.4;
+    for (let i = 0; i < count; i += 1) {
+      const color = colors[i % colors.length] ?? main;
+      const mat = new MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 1,
+        depthWrite: false,
+        toneMapped: false,
+      });
+      const mesh = new Mesh(this.sparkGeometry, mat);
+      mesh.position.set(x, y, z);
+      mesh.renderOrder = 4;
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      const speed = burst * (0.55 + Math.random() * 0.7);
+      const vel = new Vector3(
+        Math.sin(phi) * Math.cos(theta) * speed,
+        Math.cos(phi) * speed,
+        Math.sin(phi) * Math.sin(theta) * speed,
+      );
+      const baseScale = 0.7 + Math.random() * 0.9;
+      mesh.scale.setScalar(baseScale);
+      const dir = vel.clone().normalize();
+      if (dir.lengthSq() > 0.001) {
+        mesh.quaternion.setFromUnitVectors(new Vector3(0, 1, 0), dir);
+      }
+      meadow.add(mesh);
+      this.fireworks.push({
+        mesh,
+        parent: meadow,
+        vel,
+        spin: new Vector3(
+          (Math.random() - 0.5) * 10,
+          (Math.random() - 0.5) * 10,
+          (Math.random() - 0.5) * 10,
+        ),
+        age: 0,
+        life: 0.85 + Math.random() * 0.7,
+        gravity: 1.6 + Math.random() * 1.4,
+        drag: 0.55 + Math.random() * 0.7,
+        baseScale,
+      });
+    }
+  }
+
+  private dropFirework(bit: FireworkBit): void {
+    bit.parent.remove(bit.mesh);
+    if (bit.mesh.material instanceof MeshBasicMaterial) bit.mesh.material.dispose();
+  }
+
+  private clearFireworks(): void {
+    for (const bit of this.fireworks) this.dropFirework(bit);
+    this.fireworks.length = 0;
+    this.fireworkCooldown = 0;
   }
 
   private tickPickups(list: PickupBit[], time: number, dt: number, spin: number, bob: number): void {
@@ -1037,26 +1356,86 @@ export class MazeWorld {
         continue;
       }
       if (!bit.taken) {
+        if (bit.kind === "star" && bit.visual.material instanceof MeshToonMaterial) {
+          const colors = this.starFlashColors;
+          const hex = colors[Math.floor(time * 8) % colors.length] ?? this.starFlashColors[0]!;
+          bit.visual.material.color.set(hex);
+          bit.visual.material.emissive.set(hex);
+        }
         if (this.reduceMotion) continue;
         bit.root.rotation.y = time * spin;
         bit.root.position.y = bit.baseY + Math.sin(time * bob + bit.root.position.x) * 0.04;
+        if (bit.kind === "wings") {
+          const flap = Math.sin(time * 5.5) * 0.28;
+          const left = bit.root.children[0];
+          const right = bit.root.children[1];
+          if (left) left.rotation.z = flap;
+          if (right) right.rotation.z = -flap;
+        }
         continue;
       }
       bit.age += dt;
+      if (bit.kind === "heart") {
+        if (this.tickHeartPop(bit, dt)) continue;
+        this.dropPickup(bit);
+        list.splice(i, 1);
+        continue;
+      }
       const rise = Math.min(1, bit.age / 0.28);
       bit.root.position.y = bit.baseY + rise * 0.42;
       bit.root.scale.setScalar(1 + rise * 0.35);
       bit.root.rotation.y += dt * 6;
-      const mat = bit.visual.material;
-      if (mat instanceof MeshToonMaterial || mat instanceof MeshStandardMaterial) mat.opacity = 1 - rise;
+      if (bit.kind === "wings") {
+        for (const child of bit.root.children) {
+          if (!(child instanceof Mesh)) continue;
+          const mat = child.material;
+          if (mat instanceof MeshToonMaterial || mat instanceof MeshStandardMaterial) mat.opacity = 1 - rise;
+        }
+      } else {
+        const mat = bit.visual.material;
+        if (mat instanceof MeshToonMaterial || mat instanceof MeshStandardMaterial) mat.opacity = 1 - rise;
+      }
       if (rise < 1) continue;
       this.dropPickup(bit);
       list.splice(i, 1);
     }
   }
 
+  /** Grow, then pop with sparks. Returns true while the pop is still playing. */
+  private tickHeartPop(bit: PickupBit, dt: number): boolean {
+    const growFor = 0.2;
+    const popFor = 0.12;
+    const mat = bit.visual.material;
+    bit.root.rotation.y += dt * (bit.age < growFor ? 2.4 : 7);
+    if (bit.age <= growFor) {
+      const t = easeOutCubic(bit.age / growFor);
+      bit.root.scale.setScalar(1 + t * 0.95);
+      bit.root.position.y = bit.baseY + t * 0.1;
+      if (mat instanceof MeshToonMaterial || mat instanceof MeshStandardMaterial) mat.opacity = 1;
+      return true;
+    }
+    if (bit.age - dt <= growFor) this.spawnPickupSparks(bit, this.heartSparkColors);
+    const t = Math.min(1, (bit.age - growFor) / popFor);
+    const snap = t * t * (3 - 2 * t);
+    bit.root.scale.setScalar(Math.max(0.01, 1.95 * (1 - snap)));
+    bit.root.position.y = bit.baseY + 0.1 + snap * 0.06;
+    if (mat instanceof MeshToonMaterial || mat instanceof MeshStandardMaterial) {
+      mat.opacity = 1 - snap;
+    }
+    return t < 1;
+  }
+
   private dropPickup(bit: PickupBit): void {
     bit.group.remove(bit.root);
+    if (bit.kind === "wings") {
+      for (const child of bit.root.children) {
+        if (!(child instanceof Mesh) || child.userData.owned !== true) continue;
+        if (child.material instanceof MeshToonMaterial || child.material instanceof MeshStandardMaterial) {
+          child.material.dispose();
+        }
+      }
+      return;
+    }
     if (
       bit.visual.userData.owned === true
       && (bit.visual.material instanceof MeshToonMaterial || bit.visual.material instanceof MeshStandardMaterial)
@@ -1073,7 +1452,7 @@ export class MazeWorld {
         this.addVoidFloor(parent, piece);
         continue;
       }
-      if (piece.gate || piece.kind === "crumble") {
+      if (piece.gate || piece.kind === "crumble" || piece.wall) {
         this.addLoose(parent, piece, theme);
         continue;
       }
@@ -1168,18 +1547,23 @@ export class MazeWorld {
     return index;
   }
 
-  private addMarkers(parent: Group, layout: MazeLayout, showGoal: boolean): void {
+  private addMarkers(parent: Group, layout: MazeLayout): void {
     const start = new Mesh(facet(new TorusGeometry(0.26, 0.04, 4, 8)), this.startRingMat);
     start.rotation.x = Math.PI / 2;
     start.position.set(layout.start.x, 0.03, layout.start.z);
     parent.add(start);
-    if (!showGoal) return;
 
+    const goal = layout.hatch ?? layout.goal;
     const ring = new Mesh(facet(new TorusGeometry(0.34, 0.045, 4, 8)), this.goalRingMat);
     ring.rotation.x = Math.PI / 2;
-    ring.position.set(layout.goal.x, 0.045, layout.goal.z);
-    this.goalRing = ring;
+    ring.position.set(goal.x, 0.045, goal.z);
+    this.goalRings.push(ring);
     parent.add(ring);
+
+    const light = new PointLight(this.goalLightColor, 3.2, 4.2, 2);
+    light.position.set(goal.x, 0.62, goal.z);
+    this.goalLights.push(light);
+    parent.add(light);
   }
 
   private buildWinScene(kind: WinSceneKind): void {
@@ -1191,6 +1575,7 @@ export class MazeWorld {
     group.position.y = -MEADOW_DROP;
     group.visible = true;
     group.userData.generated = true;
+    this.fireworkCooldown = 0.02 + Math.random() * 0.08;
     this.addGround(group, span, kind);
     if (kind === "pasture") {
       const stream = meadowStream(span);
@@ -2208,6 +2593,7 @@ export class MazeWorld {
   }
 
   private clearMeadow(): void {
+    this.clearFireworks();
     if (this.meadow) {
       this.board.remove(this.meadow);
       this.meadow.traverse((child) => this.disposeGenerated(child));
@@ -2288,19 +2674,21 @@ export class MazeWorld {
     if (!tower) return;
     const meadowY = this.meadow?.position.y ?? -MEADOW_DROP;
     const span = Math.max(tower.width, tower.depth) * 2.8;
-    const orbit = (this.glanceDOrbit * Math.PI) / 180;
+    const yaw = (this.glanceDOrbit * Math.PI) / 180;
     const pitch = (this.glanceDAngle * Math.PI) / 180;
-    const eyeRadius = span * (0.34 - Math.sin(Math.max(0, pitch)) * 0.06);
-    const eyeHeight = 0.62 + Math.sin(pitch) * span * 0.28;
-    const lookHeight = span * 0.11 + Math.sin(pitch) * span * 0.06;
-    const lookZ = -span * 0.4;
+    // Up = out/up, down = in/down. Left/right only yaws in place.
+    const dolly = Math.sin(pitch);
+    const eyeRadius = span * (0.34 + dolly * 0.28);
+    const eyeHeight = 0.55 + dolly * span * 0.26;
+    const lookDist = span * 0.9;
+    const lookHeight = span * (0.1 + dolly * 0.08);
 
-    this.meadowCamEye.set(
-      Math.sin(orbit) * eyeRadius,
-      meadowY + eyeHeight,
-      Math.cos(orbit) * eyeRadius,
+    this.meadowCamEye.set(0, meadowY + eyeHeight, eyeRadius);
+    this.meadowCamLook.set(
+      Math.sin(yaw) * lookDist,
+      meadowY + lookHeight,
+      eyeRadius - Math.cos(yaw) * lookDist,
     );
-    this.meadowCamLook.set(0, meadowY + lookHeight, lookZ);
     this.meadowCamEye.applyQuaternion(this.board.quaternion);
     this.meadowCamLook.applyQuaternion(this.board.quaternion);
 
@@ -2443,10 +2831,41 @@ export class MazeWorld {
       }
       this.gateMeshes.push(mesh);
     }
+    if (piece.wall) {
+      mesh.userData.wall = piece.wall;
+      mesh.userData.piece = piece;
+      mesh.userData.shattered = false;
+      this.smashWalls.push(mesh);
+    }
     parent.add(mesh);
   }
 
   private syncTiles(pose: Pose, time: number): void {
+    const smashed = new Set(pose.smashed);
+    for (let i = this.smashWalls.length - 1; i >= 0; i -= 1) {
+      const mesh = this.smashWalls[i];
+      if (!mesh?.parent) {
+        this.smashWalls.splice(i, 1);
+        continue;
+      }
+      const id = mesh.userData.wall as string;
+      const gone = smashed.has(id);
+      if (gone && !mesh.userData.shattered) {
+        mesh.userData.shattered = true;
+        mesh.visible = false;
+        if (!this.reduceMotion) {
+          const piece = mesh.userData.piece as Piece;
+          const floorY = (mesh.parent as Group | null)?.position.y ?? 0;
+          this.board.updateWorldMatrix(true, true);
+          this.spawnWallBurst(piece, floorY, this.board.quaternion, mesh);
+        }
+      } else if (!gone && mesh.userData.shattered) {
+        mesh.userData.shattered = false;
+        mesh.visible = true;
+        mesh.position.y = mesh.userData.restY as number;
+      }
+    }
+
     const open = new Set(pose.gates);
     for (let i = this.gateMeshes.length - 1; i >= 0; i -= 1) {
       const mesh = this.gateMeshes[i];
@@ -2454,6 +2873,7 @@ export class MazeWorld {
         this.gateMeshes.splice(i, 1);
         continue;
       }
+      if (mesh.userData.shattered) continue;
       const rest = mesh.userData.restY as number;
       const target = open.has(mesh.userData.gate as string) ? rest - 0.86 : rest;
       const blend = this.reduceMotion ? 1 : 0.22;
@@ -2516,19 +2936,27 @@ export class MazeWorld {
       child.geometry === this.arrowGeometry
       || child.geometry === this.heartGeometry
       || child.geometry === this.coinGeometry
+      || child.geometry === this.starGeometry
+      || child.geometry === this.wingGeometry
+      || child.geometry === this.sparkGeometry
       || child.geometry === this.warpGateGeometry;
     if (!shared) child.geometry.dispose();
     if (child.userData.chunkMat instanceof MeshToonMaterial) child.userData.chunkMat.dispose();
     if (child.userData.owned === true && child.material instanceof MeshToonMaterial) child.material.dispose();
+    if (child.material instanceof MeshBasicMaterial && child.geometry === this.sparkGeometry) {
+      child.material.dispose();
+    }
   }
 
   private clearGenerated(): void {
+    this.clearSparks();
     const gone = this.board.children.filter((child) => child.userData.generated === true);
     for (const obj of gone) {
       this.board.remove(obj);
       obj.traverse((child) => this.disposeGenerated(child));
     }
-    this.goalRing = null;
+    this.goalRings.length = 0;
+    this.goalLights.length = 0;
     this.meadow = null;
     this.meadowFlowers.length = 0;
     this.meadowAnimals.length = 0;
@@ -2539,9 +2967,116 @@ export class MazeWorld {
     this.meadowWinLetters = null;
     this.hearts.length = 0;
     this.coins.length = 0;
+    this.stars.length = 0;
+    this.wings.length = 0;
     this.warpSpins.length = 0;
     this.gateMeshes.length = 0;
+    this.smashWalls.length = 0;
     this.crumbleMeshes.length = 0;
+  }
+
+  private syncHoverAura(pose: Pose, time: number): void {
+    const on = pose.hoverPower > 0;
+    this.ballAura.visible = on;
+    if (!on) return;
+    const hurry = pose.hoverPower < 0.28;
+    const pulse = this.reduceMotion
+      ? 0.3
+      : 0.22 + (0.14 + (hurry ? 0.1 : 0)) * (0.5 + 0.5 * Math.sin(time * (hurry ? 10 : 4.5)));
+    this.ballAuraMat.opacity = pulse;
+    const swell = this.reduceMotion ? 1 : 1 + 0.06 * Math.sin(time * (hurry ? 9 : 3.6));
+    this.ballAura.scale.setScalar(swell);
+  }
+
+  private syncStarBall(pose: Pose, time: number): void {
+    if (pose.starPower <= 0) {
+      if (!this.starFlashing) return;
+      this.starFlashing = false;
+      this.paintBallColor(this.ballBaseColor, this.bandBaseColor);
+      return;
+    }
+    this.starFlashing = true;
+    if (this.reduceMotion) {
+      this.paintBallColor(this.starFlashColors[0] ?? this.ballBaseColor, "#ffffff");
+      return;
+    }
+    const hurry = pose.starPower < 0.28;
+    const rate = hurry ? 16 : 8;
+    const colors = this.starFlashColors;
+    const index = Math.floor(time * rate) % colors.length;
+    const hex = colors[index] ?? this.ballBaseColor;
+    this.paintBallColor(hex, "#ffffff");
+  }
+
+  private paintBallColor(body: string, band: string): void {
+    this.ballToonMat.color.set(body);
+    this.ballSmoothMat.color.set(body);
+    this.bandPixelMat.color.set(band);
+    this.bandSmoothMat.color.set(band);
+  }
+
+  private spawnWallBurst(
+    piece: Piece,
+    floorY: number,
+    boardQuat: Quaternion,
+    from?: Mesh,
+  ): void {
+    const shared = from?.material;
+    const source = shared instanceof MeshToonMaterial
+      ? shared
+      : this.materials[piece.kind];
+    if (!(source instanceof MeshToonMaterial)) return;
+    const long = Math.max(piece.hx, piece.hz);
+    const cols = long > 0.2 ? 4 : 2;
+    const rows = 3;
+    const depth = long > 0.2 ? 2 : 2;
+    const sx = (piece.hx * 2) / cols;
+    const sy = (piece.hy * 2) / rows;
+    const sz = (piece.hz * 2) / depth;
+    const blast = this.ball.position.clone();
+    for (let ix = 0; ix < cols; ix += 1) {
+      for (let iy = 0; iy < rows; iy += 1) {
+        for (let iz = 0; iz < depth; iz += 1) {
+          const ox = (ix + 0.5) / cols - 0.5;
+          const oy = (iy + 0.5) / rows - 0.5;
+          const oz = (iz + 0.5) / depth - 0.5;
+          const geo = new BoxGeometry(sx * 0.9, sy * 0.9, sz * 0.9);
+          const mat = source.clone();
+          mat.transparent = true;
+          mat.opacity = 1;
+          const mesh = new Mesh(geo, mat);
+          const local = new Vector3(
+            piece.x + ox * piece.hx * 2,
+            piece.y + floorY + oy * piece.hy * 2,
+            piece.z + oz * piece.hz * 2,
+          );
+          mesh.position.copy(local.applyQuaternion(boardQuat));
+          mesh.quaternion.copy(boardQuat);
+          const away = mesh.position.clone().sub(blast);
+          if (away.lengthSq() < 0.0001) {
+            away.set(ox + 0.001, 0.4, oz + 0.001);
+          }
+          away.normalize();
+          const speed = 2.2 + Math.random() * 2.8;
+          const vel = away.multiplyScalar(speed);
+          vel.y += 1.4 + Math.random() * 1.8;
+          const spin = new Vector3(
+            (Math.random() - 0.5) * 14,
+            (Math.random() - 0.5) * 14,
+            (Math.random() - 0.5) * 14,
+          );
+          this.scene.add(mesh);
+          this.debris.push({
+            mesh,
+            vel,
+            spin,
+            delay: Math.random() * 0.03,
+            age: 0,
+            life: 0.9 + Math.random() * 0.4,
+          });
+        }
+      }
+    }
   }
 
   private spawnDebris(piece: Piece, floorY: number, boardQuat: Quaternion, hatch: { x: number; z: number } | null): void {
@@ -2628,11 +3163,27 @@ export class MazeWorld {
     return low;
   }
 
-  private placeGoalLight(): void {
-    const anchor = this.goalAnchor;
-    this.goalLight.visible = anchor !== null;
-    if (!anchor) return;
-    this.goalLight.position.set(anchor.x, anchor.group.position.y + 0.62, anchor.z);
+  private setGoalLightsVisible(visible: boolean): void {
+    for (const light of this.goalLights) light.visible = visible;
+  }
+
+  private clearGoalMarkers(): void {
+    for (const ring of this.goalRings) ring.removeFromParent();
+    this.goalRings.length = 0;
+    for (const light of this.goalLights) {
+      light.visible = false;
+      light.removeFromParent();
+    }
+    this.goalLights.length = 0;
+  }
+
+  private pruneGoalMarkers(): void {
+    for (let i = this.goalRings.length - 1; i >= 0; i -= 1) {
+      if (!this.goalRings[i]?.parent) this.goalRings.splice(i, 1);
+    }
+    for (let i = this.goalLights.length - 1; i >= 0; i -= 1) {
+      if (!this.goalLights[i]?.parent) this.goalLights.splice(i, 1);
+    }
   }
 
   private pruneSpins(): void {
@@ -2669,7 +3220,7 @@ interface PickupBit {
   taken: boolean;
   age: number;
   baseY: number;
-  kind: "heart" | "coin";
+  kind: "heart" | "coin" | "star" | "wings";
 }
 
 interface Debris {
@@ -2679,6 +3230,27 @@ interface Debris {
   delay: number;
   age: number;
   life: number;
+}
+
+interface Spark {
+  mesh: Mesh;
+  parent: Group;
+  vel: Vector3;
+  spin: Vector3;
+  age: number;
+  life: number;
+}
+
+interface FireworkBit {
+  mesh: Mesh;
+  parent: Group;
+  vel: Vector3;
+  spin: Vector3;
+  age: number;
+  life: number;
+  gravity: number;
+  drag: number;
+  baseScale: number;
 }
 
 type AnimalKind =
@@ -4093,6 +4665,60 @@ function heartGeometry(): BufferGeometry {
     bevelSegments: 2,
   });
   geo.center();
+  return geo;
+}
+
+function starGeometry(): BufferGeometry {
+  const shape = new Shape();
+  const spikes = 5;
+  const outer = 0.22;
+  const inner = 0.1;
+  for (let i = 0; i < spikes * 2; i += 1) {
+    const radius = i % 2 === 0 ? outer : inner;
+    const angle = (Math.PI / 2) + (i * Math.PI) / spikes;
+    const x = Math.cos(angle) * radius;
+    const y = Math.sin(angle) * radius;
+    if (i === 0) shape.moveTo(x, y);
+    else shape.lineTo(x, y);
+  }
+  shape.closePath();
+  const geo = new ExtrudeGeometry(shape, {
+    depth: 0.1,
+    bevelEnabled: true,
+    bevelThickness: 0.025,
+    bevelSize: 0.018,
+    bevelSegments: 1,
+  });
+  geo.center();
+  return geo;
+}
+
+/** One wing half (points +X). Mirrored in the pickup for a left/right pair. */
+function wingGeometry(): BufferGeometry {
+  const shape = new Shape();
+  // Root near the body, tip high and out — classic angel/bird wing.
+  shape.moveTo(0.01, 0.04);
+  shape.bezierCurveTo(0.1, 0.18, 0.22, 0.3, 0.36, 0.34);
+  shape.bezierCurveTo(0.42, 0.28, 0.44, 0.18, 0.4, 0.1);
+  // Scalloped trailing edge (feathers).
+  shape.quadraticCurveTo(0.36, 0.02, 0.34, -0.02);
+  shape.quadraticCurveTo(0.3, 0.04, 0.26, -0.04);
+  shape.quadraticCurveTo(0.22, 0.03, 0.18, -0.06);
+  shape.quadraticCurveTo(0.14, 0.02, 0.1, -0.05);
+  shape.quadraticCurveTo(0.06, 0.01, 0.03, -0.02);
+  shape.lineTo(0.01, -0.02);
+  shape.closePath();
+  const geo = new ExtrudeGeometry(shape, {
+    depth: 0.055,
+    bevelEnabled: true,
+    bevelThickness: 0.016,
+    bevelSize: 0.012,
+    bevelSegments: 1,
+  });
+  geo.translate(0, 0, -0.0275);
+  geo.center();
+  // Sit the root closer to x=0 so mirrored halves meet in the middle.
+  geo.translate(0.02, 0.02, 0);
   return geo;
 }
 

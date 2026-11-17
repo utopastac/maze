@@ -55,10 +55,10 @@ export class Hud {
           <h1 class="${styles.title}">Maze</h1>
           <p class="${styles.status}">
             <span class="${styles.story}" data-floor hidden></span>
-            <span data-time>0:00.0</span>
-            <span class="${styles.lives}" data-lives hidden title="Hearts">${iconSvg("heart", 14)}<span data-life-count>3</span></span>
-            <span class="${styles.collect}" data-hearts hidden title="Hearts">${iconSvg("heart", 14)}<span data-heart-count>0</span></span>
-            <span class="${styles.collect} ${styles.coins}" data-coins hidden title="Coins">${iconSvg("coin", 14)}<span data-coin-count>0</span></span>
+            <span class="${styles.sr}" data-time aria-live="polite">0:00.0</span>
+            <span class="${styles.sr}" data-lives hidden title="Hearts">${iconSvg("heart", 14)}<span data-life-count>3</span></span>
+            <span class="${styles.sr}" data-hearts hidden title="Hearts">${iconSvg("heart", 14)}<span data-heart-count>0</span></span>
+            <span class="${styles.sr}" data-coins hidden title="Coins">${iconSvg("coin", 14)}<span data-coin-count>0</span></span>
             <span class="${styles.note}" data-note hidden></span>
           </p>
         </div>

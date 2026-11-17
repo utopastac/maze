@@ -12,12 +12,20 @@ export type SettingKey =
   | "orbit"
   | "field"
   | "pixels"
+  | "uiPixels"
   | "shade"
   | "skyPixels"
   | "skyShade"
   | "skyTheme";
 
 export type SettingGroup = "Controls" | "Physics" | "Camera" | "Picture";
+
+export type PhysicsSettingKey = "gravity" | "grip" | "damping";
+
+export const PHYSICS_KEYS: readonly PhysicsSettingKey[] = ["gravity", "grip", "damping"];
+
+/** Optional per-floor overrides for the Physics settings group. */
+export type FloorPhysics = Partial<Record<PhysicsSettingKey, number>>;
 
 export interface SettingSpec {
   key: SettingKey;
@@ -54,6 +62,7 @@ export const SETTING_SPECS: readonly SettingSpec[] = [
   { key: "orbit", label: "Orbit", group: "Camera", min: -180, max: 180, step: 1, format: (value) => `${value.toFixed(0)}°` },
   { key: "field", label: "Field", group: "Camera", min: 20, max: 48, step: 1, format: (value) => `${value.toFixed(0)}°` },
   { key: "pixels", label: "Pixels", group: "Picture", min: 1, max: 6, step: 1, format: formatPixels },
+  { key: "uiPixels", label: "UI pixels", group: "Picture", min: 1, max: 6, step: 1, format: formatPixels },
   { key: "shade", label: "Shade", group: "Picture", min: 2, max: 6, step: 0.1, format: (value) => `${value.toFixed(1)} steps` },
   { key: "skyTheme", label: "Sky theme", group: "Picture", min: 0, max: SKY_THEMES.length - 1, step: 1, format: formatSkyTheme },
   { key: "skyPixels", label: "Sky pixels", group: "Picture", min: 0.5, max: 12, step: 0.5, format: formatSkyPixels },
@@ -72,6 +81,7 @@ export const SETTING_DEFAULTS: Record<SettingKey, number> = {
   orbit: 0,
   field: 30,
   pixels: 3,
+  uiPixels: 2,
   shade: 3,
   skyTheme: 0,
   skyPixels: 4,
@@ -205,11 +215,47 @@ function formatSkyTheme(value: number): string {
   return skyThemeAt(value).label;
 }
 
-function clampSetting(key: SettingKey, value: number): number {
+export function clampSetting(key: SettingKey, value: number): number {
   const spec = SETTING_SPECS.find((item) => item.key === key);
   if (!spec || !Number.isFinite(value)) return SETTING_DEFAULTS[key];
   const next = clamp(value, spec.min, spec.max);
-  if (key === "pixels") return snapPixels(next);
+  if (key === "pixels" || key === "uiPixels") return snapPixels(next);
   if (key === "skyPixels") return Math.round(next * 2) / 2;
   return next;
+}
+
+export function cloneFloorPhysics(physics: FloorPhysics | undefined): FloorPhysics | undefined {
+  if (!physics) return undefined;
+  const next: FloorPhysics = {};
+  for (const key of PHYSICS_KEYS) {
+    const value = physics[key];
+    if (typeof value === "number") next[key] = clampSetting(key, value);
+  }
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
+export function defaultFloorPhysics(): FloorPhysics {
+  return {
+    gravity: SETTING_DEFAULTS.gravity,
+    grip: SETTING_DEFAULTS.grip,
+    damping: SETTING_DEFAULTS.damping,
+  };
+}
+
+/** Global play settings with optional floor overrides on top. */
+export function resolveFloorPhysics(
+  settings: PlaySettings,
+  physics: FloorPhysics | undefined,
+): Record<PhysicsSettingKey, number> {
+  const resolved = {
+    gravity: settings.values.gravity,
+    grip: settings.values.grip,
+    damping: settings.values.damping,
+  };
+  if (!physics) return resolved;
+  for (const key of PHYSICS_KEYS) {
+    const value = physics[key];
+    if (typeof value === "number") resolved[key] = clampSetting(key, value);
+  }
+  return resolved;
 }

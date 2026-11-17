@@ -55,6 +55,8 @@ export function generateCampaign(seed: number): Campaign {
     maze.theme = themeForFloor(index);
     maze.hearts = furnish(maze, seed + index * 131, t, index);
     maze.coins = [];
+    maze.stars = [];
+    maze.wings = [];
     floors.push({ maze });
     landing = { ...(maze.hatch ?? maze.start) };
   }
@@ -109,6 +111,23 @@ function chainCampaignFloors(floors: CampaignFloor[]): void {
         && !maze.holes.some((hole) => same(hole, coin))
         && maze.tiles.every((tile) => tile.kind !== "block" || !same(tile, coin))
         && !maze.hearts.some((heart) => same(heart, coin)),
+    );
+    maze.stars = maze.stars.filter(
+      (star) => !same(star, maze.start) && !same(star, maze.goal)
+        && !(maze.hatch && same(star, maze.hatch))
+        && !maze.holes.some((hole) => same(hole, star))
+        && maze.tiles.every((tile) => tile.kind !== "block" || !same(tile, star))
+        && !maze.hearts.some((heart) => same(heart, star))
+        && !maze.coins.some((coin) => same(coin, star)),
+    );
+    maze.wings = maze.wings.filter(
+      (wing) => !same(wing, maze.start) && !same(wing, maze.goal)
+        && !(maze.hatch && same(wing, maze.hatch))
+        && !maze.holes.some((hole) => same(hole, wing))
+        && maze.tiles.every((tile) => tile.kind !== "block" || !same(tile, wing))
+        && !maze.hearts.some((heart) => same(heart, wing))
+        && !maze.coins.some((coin) => same(coin, wing))
+        && !maze.stars.some((star) => same(star, wing)),
     );
   }
 }

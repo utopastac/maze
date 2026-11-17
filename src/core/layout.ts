@@ -1,4 +1,5 @@
 import { Wall, tileAt, wallKey, type Direction, type FloorTile, type Maze } from "./maze.ts";
+import { cloneFloorPhysics, type FloorPhysics } from "./playSettings.ts";
 import { parseFloorTheme, type FloorThemeId } from "./theme.ts";
 import type { Tower } from "./tower.ts";
 
@@ -92,6 +93,20 @@ export interface CoinMark {
   z: number;
 }
 
+export interface StarMark {
+  c: number;
+  r: number;
+  x: number;
+  z: number;
+}
+
+export interface WingMark {
+  c: number;
+  r: number;
+  x: number;
+  z: number;
+}
+
 export interface Piece {
   kind: PieceKind;
   x: number;
@@ -101,6 +116,8 @@ export interface Piece {
   hy: number;
   hz: number;
   gate?: string;
+  /** Interior wall id used for smash / switch opening. */
+  wall?: string;
   cell?: string;
   tone?: number;
 }
@@ -115,6 +132,8 @@ export interface MazeLayout {
   switches: SwitchMark[];
   hearts: HeartMark[];
   coins: CoinMark[];
+  stars: StarMark[];
+  wings: WingMark[];
   start: { x: number; z: number };
   goal: { x: number; z: number };
   hatch: { x: number; z: number } | null;
@@ -128,6 +147,7 @@ export interface MazeLayout {
   maxZ: number;
   finale: boolean;
   theme: FloorThemeId;
+  physics?: FloorPhysics;
 }
 
 export interface FloorPlan {
@@ -195,6 +215,8 @@ export function layoutMaze(
   const switches: SwitchMark[] = [];
   const heartMarks: HeartMark[] = [];
   const coinMarks: CoinMark[] = [];
+  const starMarks: StarMark[] = [];
+  const wingMarks: WingMark[] = [];
   const switchWalls = new Map<string, number>();
   const holes = new Set(maze.holes.map((hole) => `${hole.c},${hole.r}`));
   const warpCount = new Map<number, number>();
@@ -214,22 +236,28 @@ export function layoutMaze(
       const west = vx > 0 && hasHorizontal(maze, vx - 1, vz);
       if (!south && !north && !east && !west) continue;
       const frame = vx === 0 || vx === maze.cols || vz === 0 || vz === maze.rows;
-      pieces.push(post(originX + vx * CELL, originZ + vz * CELL, frame));
+      pieces.push(post(
+        originX + vx * CELL,
+        originZ + vz * CELL,
+        frame,
+        frame ? undefined : `p:${vx},${vz}`,
+      ));
     }
   }
 
   for (let row = 0; row < maze.rows; row += 1) {
     for (let edge = 0; edge <= maze.cols; edge += 1) {
       if (!hasVertical(maze, edge, row)) continue;
-      const gate = edge > 0 && edge < maze.cols ? wallKey({ axis: "v", c: edge - 1, r: row }) : "";
+      const wall = edge > 0 && edge < maze.cols ? wallKey({ axis: "v", c: edge - 1, r: row }) : "";
       pieces.push(segment(
         originX + edge * CELL,
         originZ + (row + 0.5) * CELL,
         WALL / 2,
         (CELL - WALL) / 2 + 0.01,
         edge === 0 || edge === maze.cols,
-        switchWalls.has(gate) ? gate : undefined,
-        switchWalls.get(gate),
+        switchWalls.has(wall) ? wall : undefined,
+        switchWalls.get(wall),
+        wall || undefined,
       ));
     }
   }
@@ -237,15 +265,16 @@ export function layoutMaze(
   for (let edge = 0; edge <= maze.rows; edge += 1) {
     for (let col = 0; col < maze.cols; col += 1) {
       if (!hasHorizontal(maze, col, edge)) continue;
-      const gate = edge > 0 && edge < maze.rows ? wallKey({ axis: "h", c: col, r: edge - 1 }) : "";
+      const wall = edge > 0 && edge < maze.rows ? wallKey({ axis: "h", c: col, r: edge - 1 }) : "";
       pieces.push(segment(
         originX + (col + 0.5) * CELL,
         originZ + edge * CELL,
         (CELL - WALL) / 2 + 0.01,
         WALL / 2,
         edge === 0 || edge === maze.rows,
-        switchWalls.has(gate) ? gate : undefined,
-        switchWalls.get(gate),
+        switchWalls.has(wall) ? wall : undefined,
+        switchWalls.get(wall),
+        wall || undefined,
       ));
     }
   }
@@ -313,8 +342,18 @@ export function layoutMaze(
     const at = center(originX, originZ, coin);
     coinMarks.push({ c: coin.c, r: coin.r, x: at.x, z: at.z });
   }
+  for (const star of maze.stars) {
+    if (star.c < 0 || star.r < 0 || star.c >= maze.cols || star.r >= maze.rows) continue;
+    const at = center(originX, originZ, star);
+    starMarks.push({ c: star.c, r: star.r, x: at.x, z: at.z });
+  }
+  for (const wing of maze.wings) {
+    if (wing.c < 0 || wing.r < 0 || wing.c >= maze.cols || wing.r >= maze.rows) continue;
+    const at = center(originX, originZ, wing);
+    wingMarks.push({ c: wing.c, r: wing.r, x: at.x, z: at.z });
+  }
 
-  return {
+  const layout: MazeLayout = {
     pieces,
     boosts,
     warps,
@@ -324,6 +363,8 @@ export function layoutMaze(
     switches,
     hearts: heartMarks,
     coins: coinMarks,
+    stars: starMarks,
+    wings: wingMarks,
     start: center(originX, originZ, maze.start),
     goal: center(originX, originZ, maze.goal),
     hatch: maze.hatch ? center(originX, originZ, maze.hatch) : null,
@@ -338,6 +379,9 @@ export function layoutMaze(
     finale: showGoal,
     theme: parseFloorTheme(maze.theme),
   };
+  const physics = cloneFloorPhysics(maze.physics);
+  if (physics) layout.physics = physics;
+  return layout;
 }
 
 function floorKind(
@@ -364,10 +408,10 @@ function extents(frame: boolean): { y: number; hy: number } {
   return { y: hy - 0.04, hy };
 }
 
-function post(x: number, z: number, frame: boolean): Piece {
+function post(x: number, z: number, frame: boolean, wall?: string): Piece {
   const { y, hy } = extents(frame);
   const half = WALL / 2 + 0.004;
-  return { kind: frame ? "frame" : "wall", x, y, z, hx: half, hy, hz: half };
+  return { kind: frame ? "frame" : "wall", x, y, z, hx: half, hy, hz: half, wall };
 }
 
 /** Solid cube that fills a cell's open floor area at wall height. */
@@ -385,9 +429,10 @@ function segment(
   frame: boolean,
   gate?: string,
   tone?: number,
+  wall?: string,
 ): Piece {
   const { y, hy } = extents(frame);
-  return { kind: frame ? "frame" : "wall", x, y, z, hx, hy, hz, gate, tone };
+  return { kind: frame ? "frame" : "wall", x, y, z, hx, hy, hz, gate, tone, wall };
 }
 
 function addGrout(
@@ -401,9 +446,9 @@ function addGrout(
   const joint = WALL / 2;
   const along = CELL / 2 - joint + 0.006;
 
+  // Lay grout under open seams and under interior walls so smashed walls leave a filled joint.
   for (let row = 0; row < maze.rows; row += 1) {
     for (let edge = 1; edge < maze.cols; edge += 1) {
-      if (hasVertical(maze, edge, row)) continue;
       if (!hasFloor(maze, holes, edge - 1, row, finale) && !hasFloor(maze, holes, edge, row, finale)) continue;
       pieces.push(grout(
         originX + edge * CELL,
@@ -416,7 +461,6 @@ function addGrout(
 
   for (let edge = 1; edge < maze.rows; edge += 1) {
     for (let col = 0; col < maze.cols; col += 1) {
-      if (hasHorizontal(maze, col, edge)) continue;
       if (!hasFloor(maze, holes, col, edge - 1, finale) && !hasFloor(maze, holes, col, edge, finale)) continue;
       pieces.push(grout(
         originX + (col + 0.5) * CELL,
@@ -429,7 +473,6 @@ function addGrout(
 
   for (let vz = 1; vz < maze.rows; vz += 1) {
     for (let vx = 1; vx < maze.cols; vx += 1) {
-      if (walledVertex(maze, vx, vz)) continue;
       const touched =
         hasFloor(maze, holes, vx - 1, vz - 1, finale) ||
         hasFloor(maze, holes, vx, vz - 1, finale) ||
@@ -484,14 +527,6 @@ function hasFloor(maze: Maze, holes: Set<string>, c: number, r: number, finale: 
   if (maze.hatch && maze.hatch.c === c && maze.hatch.r === r) return false;
   if (finale && maze.goal.c === c && maze.goal.r === r) return false;
   return !holes.has(`${c},${r}`);
-}
-
-function walledVertex(maze: Maze, vx: number, vz: number): boolean {
-  const south = vz < maze.rows && hasVertical(maze, vx, vz);
-  const north = vz > 0 && hasVertical(maze, vx, vz - 1);
-  const east = vx < maze.cols && hasHorizontal(maze, vx, vz);
-  const west = vx > 0 && hasHorizontal(maze, vx - 1, vz);
-  return south || north || east || west;
 }
 
 /** Outer walls, rim, and starfield floor for one hole cell. Shared edges with other holes stay open. */

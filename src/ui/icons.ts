@@ -17,6 +17,7 @@ import {
   Download,
   Eraser,
   FastForward,
+  Feather,
   Flag,
   Heart,
   Hourglass,
@@ -35,6 +36,7 @@ import {
   Shuffle,
   SlidersHorizontal,
   Smartphone,
+  Star,
   ToggleLeft,
   Waypoints,
   X,
@@ -53,6 +55,8 @@ export type IconName =
   | "levels"
   | "heart"
   | "coin"
+  | "star"
+  | "wings"
   | "motion"
   | "settings"
   | "edit"
@@ -96,6 +100,8 @@ const NODES: Record<IconName, IconNode> = {
   levels: LayoutGrid,
   heart: Heart,
   coin: Coins,
+  star: Star,
+  wings: Feather,
   motion: Smartphone,
   settings: SlidersHorizontal,
   edit: Pencil,

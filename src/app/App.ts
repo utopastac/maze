@@ -5,6 +5,7 @@ import {
   cloneTower,
   coinTotal,
   generateTower,
+  MAX_HEARTS_CAP,
   maxHeartsOf,
   type Tower,
 } from "../core/tower.ts";
@@ -13,6 +14,7 @@ import { initPhysics, Simulation } from "../core/simulation.ts";
 import { TiltController } from "../core/tilt.ts";
 import { applyRendererLook, createRenderer } from "../render/createRenderer.ts";
 import { MazeWorld } from "../render/MazeWorld.ts";
+import { PlayHud } from "../render/playHud.ts";
 import { cloneMaze, resizeMaze } from "../core/maze.ts";
 import { DEFAULT_FLOOR_THEME } from "../core/theme.ts";
 import { LevelEditor, type EditorMode } from "../ui/editor.ts";
@@ -33,6 +35,7 @@ type Mode = "free" | "campaign";
 
 export class App {
   private readonly canvas: HTMLCanvasElement;
+  private readonly playHud: PlayHud;
   private readonly sheet: HTMLElement;
   private readonly settings = new PlaySettings();
   private readonly tilt = new TiltController(this.settings);
@@ -75,9 +78,11 @@ export class App {
   private calibrateMotion = false;
   private motionOrigin: { beta: number; gamma: number } | null = null;
   private seed = FIRST_SEED;
+  private readonly reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   constructor(
     canvas: HTMLCanvasElement,
+    playHudCanvas: HTMLCanvasElement,
     chrome: HTMLElement,
     overlay: HTMLElement,
     sheet: HTMLElement,
@@ -85,6 +90,7 @@ export class App {
     editor: HTMLElement,
   ) {
     this.canvas = canvas;
+    this.playHud = new PlayHud(playHudCanvas);
     this.sheet = sheet;
     this.panel = new SettingsPanel(sheet, this.settings, {
       onClose: () => this.closeSettings(),
@@ -205,10 +211,11 @@ export class App {
     this.coinsGot = 0;
     if (this.mode === "campaign") {
       this.livesEnabled = true;
+      this.lives = Math.min(MAX_HEARTS_CAP, this.lives);
     } else {
       const max = maxHeartsOf(this.tower ?? { floors: [] });
       this.livesEnabled = max > 0;
-      this.lives = max;
+      this.lives = Math.min(MAX_HEARTS_CAP, max);
     }
     this.coinsMax = this.tower ? coinTotal(this.tower) : layout.floors.reduce((n, f) => n + f.coins.length, 0);
     this.sim = new Simulation(layout, this.settings);
@@ -228,6 +235,8 @@ export class App {
     this.hud.setStats(0, 0);
     this.hud.setFloor(this.floorAt, this.floorCount);
     this.syncCollectHud();
+    this.playHud.setVisible(true);
+    this.syncPlayHud();
     view.update(0, this.sim.pose());
   }
 
@@ -328,6 +337,7 @@ export class App {
     this.hud.setCelebrate(true);
     this.hud.setWinsSelected(true);
     this.hud.hideHint();
+    this.playHud.setVisible(false);
     this.clearShareNote();
     view.enterWinGallery();
     this.noteWinGallery();
@@ -395,8 +405,12 @@ export class App {
     const event = sim.update(dt, pitch, roll);
     const pickedHearts = sim.takeHearts();
     const pickedCoins = sim.takeCoins();
+    const pickedStars = sim.takeStars();
+    const pickedWings = sim.takeWings();
     if (this.phase === "play" && pickedHearts.length > 0) this.pickHearts(pickedHearts);
     if (this.phase === "play" && pickedCoins.length > 0) this.pickCoins(pickedCoins);
+    if (this.phase === "play" && pickedStars.length > 0) this.pickStars(pickedStars);
+    if (this.phase === "play" && pickedWings.length > 0) this.pickWings(pickedWings);
     if (this.phase === "play" && event === "fell") this.drop();
     else if (this.phase === "play" && event === "escape") this.beginEscape();
     else if ((this.phase === "play" || this.phase === "escaping") && event === "goal") this.win();
@@ -405,11 +419,13 @@ export class App {
 
     if (this.running && this.phase !== "won" && this.phase !== "lost") this.seconds += dt;
     this.hud.setStats(this.seconds, this.drops);
+    this.syncPlayHud();
     const tiltLimit = Math.max(this.settings.tiltRad, 0.001);
     this.hud.setTilt(this.tilt.roll / tiltLimit, this.tilt.pitch / tiltLimit);
 
     view.update(now / 1000, sim.pose());
     renderer.render(view.scene, view.camera);
+    this.playHud.update(dt, this.reduceMotion);
     requestAnimationFrame(this.frame);
   };
 
@@ -438,6 +454,7 @@ export class App {
       this.view?.resize(width, height);
     }
     if (renderer) applyRendererLook(renderer, this.settings.normalLook);
+    this.playHud.resize(width, height, this.settings.values.uiPixels);
   }
 
   private beginDescend(): void {
@@ -496,22 +513,47 @@ export class App {
 
   private pickHearts(cells: string[]): void {
     for (const cell of cells) this.view?.collectHeart(cell);
+    for (let i = 0; i < cells.length; i += 1) this.playHud.shout("1-UP!", "#e2586c");
     if (!this.livesEnabled) return;
-    this.lives += cells.length;
+    this.lives = Math.min(MAX_HEARTS_CAP, this.lives + cells.length);
     this.hud.setLives(this.lives, true);
+    this.syncPlayHud({ pulseLives: true });
   }
 
   private pickCoins(cells: string[]): void {
     this.coinsGot += cells.length;
     for (const cell of cells) this.view?.collectCoin(cell);
+    for (let i = 0; i < cells.length; i += 1) this.playHud.shout("COIN!", "#f0c43a");
     this.syncCollectHud(true);
   }
 
-  private syncCollectHud(pulse = false): void {
+  private pickStars(cells: string[]): void {
+    for (const cell of cells) this.view?.collectStar(cell);
+    for (let i = 0; i < cells.length; i += 1) this.playHud.shout("STAR!", "#ffe14a");
+  }
+
+  private pickWings(cells: string[]): void {
+    for (const cell of cells) this.view?.collectWings(cell);
+    for (let i = 0; i < cells.length; i += 1) this.playHud.shout("WINGS!", "#5ec8ff");
+  }
+
+  private syncCollectHud(pulseCoins = false): void {
     this.hud.setHearts(0, 0);
     if (this.livesEnabled) this.hud.setLives(this.lives);
     else this.hud.clearLives();
-    this.hud.setCoins(this.coinsGot, this.coinsMax, pulse && this.coinsMax > 0);
+    this.hud.setCoins(this.coinsGot, this.coinsMax, pulseCoins && this.coinsMax > 0);
+    this.syncPlayHud({ pulseCoins });
+  }
+
+  private syncPlayHud(opts: { pulseLives?: boolean; pulseCoins?: boolean } = {}): void {
+    this.playHud.setStats({
+      seconds: this.seconds,
+      lives: this.livesEnabled ? this.lives : null,
+      coinsGot: this.coinsGot,
+      coinsMax: this.coinsMax,
+      pulseLives: opts.pulseLives === true,
+      pulseCoins: opts.pulseCoins === true,
+    });
   }
 
   private drop(): void {
@@ -553,6 +595,7 @@ export class App {
     this.hud.setNote("");
     this.hud.hideHint();
     this.hud.setCelebrate(true);
+    this.playHud.setVisible(false);
     this.closeSettings();
   }
 
@@ -567,6 +610,7 @@ export class App {
     this.sim?.hold();
     this.hud.hideHint();
     this.hud.setCelebrate(true);
+    this.playHud.setVisible(false);
     this.closeSettings();
     this.clearFall();
     this.fallTimer = window.setTimeout(() => {
@@ -588,6 +632,7 @@ export class App {
     this.sim?.hold();
     this.hud.hideHint();
     this.hud.setCelebrate(true);
+    this.playHud.setVisible(false);
     this.closeSettings();
     this.clearFall();
     this.fallTimer = window.setTimeout(() => {
@@ -610,6 +655,8 @@ export class App {
     if (this.phase === "won") {
       this.overlay.hide();
       this.hud.setCelebrate(false);
+      this.playHud.setVisible(true);
+      this.syncPlayHud();
     }
     if (this.phase !== "play") this.phase = "play";
   }
@@ -924,6 +971,8 @@ function blankAuthorTower(): Tower {
           tiles: [],
           hearts: [],
           coins: [],
+          stars: [],
+          wings: [],
           start: { c: 0, r: 0 },
           goal: { c: 0, r: 0 },
           hatch: null,

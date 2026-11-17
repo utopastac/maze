@@ -2,6 +2,7 @@ import RAPIER from "@dimforge/rapier3d-compat";
 import {
   BALL_R,
   CELL,
+  FLOOR_T,
   FRAME_GUARD,
   PIT_WELL,
   SPAWN_Y,
@@ -14,14 +15,13 @@ import {
 } from "./layout.ts";
 import { DIRECTION_VECTOR } from "./maze.ts";
 import { conjugate, quatFromTilt, rotateVec, type Quat, type Vec3 } from "./math.ts";
-import type { PlaySettings } from "./playSettings.ts";
+import { resolveFloorPhysics, type PlaySettings } from "./playSettings.ts";
 
 const STEP = 1 / 90;
 const MAX_STEPS = 5;
 const FALL_Y = -0.08;
 const VOID_Y = -(PIT_WELL + BALL_R);
 const HATCH_REACH = (CELL - WALL) * 0.46;
-const TILE_Y = BALL_R + 0.26;
 const BOOST_ACCEL = 34;
 const STICK_LIFT = 0.035;
 const STICK_SINK = 0.02;
@@ -29,6 +29,10 @@ const CRUMBLE_HOLD = 0.7;
 const CRUMBLE_REGEN = 5;
 const SWITCH_SPEED = 1.15;
 const ICE_DAMP = 0.08;
+const STAR_TIME = 7;
+const STAR_SCALE = 1.75;
+const HOVER_TIME = 8;
+const HOVER_GAP = 0.12;
 
 type WarpExit = { key: string; x: number; z: number };
 
@@ -38,6 +42,7 @@ type Surface = {
   floor: number;
   cell?: string;
   gate?: string;
+  wall?: string;
 };
 
 export interface CrumbleView {
@@ -50,8 +55,12 @@ export interface Pose {
   board: Quat;
   ballPosition: Vec3;
   ballRotation: Quat;
+  ballScale: number;
+  starPower: number;
+  hoverPower: number;
   crumbles: CrumbleView[];
   gates: string[];
+  smashed: string[];
 }
 
 export type SimEvent = "none" | "fell" | "goal" | "descend" | "escape" | "fail";
@@ -104,11 +113,21 @@ export class Simulation {
   private readonly crumbleGone = new Set<string>();
   private readonly switches = new Map<string, string>();
   private readonly openGates = new Set<string>();
+  private readonly smashed = new Set<string>();
   private readonly hearts = new Set<string>();
   private readonly coins = new Set<string>();
+  private readonly stars = new Set<string>();
+  private readonly wings = new Set<string>();
   private readonly pickedHearts: string[] = [];
   private readonly pickedCoins: string[] = [];
+  private readonly pickedStars: string[] = [];
+  private readonly pickedWings: string[] = [];
+  private readonly hoverPlates: RAPIER.Collider[] = [];
+  private ballR = BALL_R;
+  private starLeft = 0;
+  private hoverLeft = 0;
   private damping = 0.55;
+  private settings!: PlaySettings;
   private onIce = false;
   private warpGrace = "";
   private boosting = false;
@@ -125,10 +144,12 @@ export class Simulation {
   constructor(layout: TowerLayout, settings: PlaySettings) {
     const first = layout.floors[0];
     if (!first) throw new Error("A tower needs a floor.");
+    this.settings = settings;
     this.levels = layout.floors.slice();
     this.story = layout.story;
     this.useLayout(first);
-    this.world = new RAPIER.World({ x: 0, y: -settings.values.gravity, z: 0 });
+    const startPhysics = resolveFloorPhysics(settings, first.physics);
+    this.world = new RAPIER.World({ x: 0, y: -startPhysics.gravity, z: 0 });
     this.world.timestep = STEP;
     this.world.integrationParameters.numSolverIterations = 8;
 
@@ -155,18 +176,20 @@ export class Simulation {
     this.apply(settings);
   }
 
-  apply(settings: PlaySettings): void {
-    const values = settings.values;
-    this.world.gravity = { x: 0, y: -values.gravity, z: 0 };
-    this.grip = values.grip;
-    this.damping = values.damping;
-    this.ball.setLinearDamping(values.damping * (this.onIce ? ICE_DAMP : 1));
-    this.ball.setAngularDamping(values.damping * 0.51 * (this.onIce ? 0.25 : 1));
-    this.maxSpeed = 3.2 + values.gravity * 0.125;
-    this.ballCollider.setFriction(0.45 * values.grip);
+  apply(settings?: PlaySettings): void {
+    if (settings) this.settings = settings;
+    const active = resolveFloorPhysics(this.settings, this.levels[this.active]?.physics);
+    this.world.gravity = { x: 0, y: -active.gravity, z: 0 };
+    this.grip = active.grip;
+    this.damping = active.damping;
+    this.ball.setLinearDamping(active.damping * (this.onIce ? ICE_DAMP : 1));
+    this.ball.setAngularDamping(active.damping * 0.51 * (this.onIce ? 0.25 : 1));
+    this.maxSpeed = 3.2 + active.gravity * 0.125;
+    this.ballCollider.setFriction(0.45 * active.grip);
     this.ballCollider.setRestitution(0);
     for (const surface of this.surfaces) {
-      const material = materialFor(surface.kind, values.grip);
+      const grip = resolveFloorPhysics(this.settings, this.levels[surface.floor]?.physics).grip;
+      const material = materialFor(surface.kind, grip);
       surface.collider.setFriction(material.friction);
       surface.collider.setRestitution(0);
     }
@@ -195,6 +218,8 @@ export class Simulation {
       this.appliedRoll = fromRoll + (roll - fromRoll) * blend;
       this.board.setNextKinematicRotation(quatFromTilt(this.appliedPitch, this.appliedRoll));
       this.world.step();
+      this.tickStar();
+      this.tickHover();
       this.tickCrumble();
       if (this.dropping) {
         this.advanceDrop();
@@ -246,6 +271,9 @@ export class Simulation {
       board: { x: this.boardRot.x, y: this.boardRot.y, z: this.boardRot.z, w: this.boardRot.w },
       ballPosition: { x: this.ballPos.x, y: this.ballPos.y, z: this.ballPos.z },
       ballRotation: { x: this.ballRot.x, y: this.ballRot.y, z: this.ballRot.z, w: this.ballRot.w },
+      ballScale: this.ballR / BALL_R,
+      starPower: this.starLeft > 0 ? this.starLeft / STAR_TIME : 0,
+      hoverPower: this.hoverLeft > 0 ? this.hoverLeft / HOVER_TIME : 0,
       crumbles: [...this.crumbles].map((cell) => {
         const gone = this.crumbleGone.has(cell);
         const time = this.crumbleTime.get(cell) ?? 0;
@@ -256,6 +284,7 @@ export class Simulation {
         };
       }),
       gates: [...this.openGates],
+      smashed: [...this.smashed],
     };
   }
 
@@ -270,6 +299,20 @@ export class Simulation {
     if (this.pickedCoins.length === 0) return [];
     const got = this.pickedCoins.slice();
     this.pickedCoins.length = 0;
+    return got;
+  }
+
+  takeStars(): string[] {
+    if (this.pickedStars.length === 0) return [];
+    const got = this.pickedStars.slice();
+    this.pickedStars.length = 0;
+    return got;
+  }
+
+  takeWings(): string[] {
+    if (this.pickedWings.length === 0) return [];
+    const got = this.pickedWings.slice();
+    this.pickedWings.length = 0;
     return got;
   }
 
@@ -299,6 +342,8 @@ export class Simulation {
     this.sentDescend = false;
     this.sentEscape = false;
     this.fallShield = 0;
+    this.endStar();
+    this.endHover();
     this.restoreTiles(repairCrumble);
     this.clearDrop();
   }
@@ -318,9 +363,11 @@ export class Simulation {
       this.crumbleTime.clear();
       this.crumbleGone.clear();
       this.openGates.clear();
+      this.smashed.clear();
+      this.endStar();
+      this.endHover();
       this.onIce = false;
-      this.ball.setLinearDamping(this.damping);
-      this.ball.setAngularDamping(this.damping * 0.51);
+      this.apply();
     }
     this.goalTime = 0;
     this.warpGrace = "";
@@ -448,6 +495,10 @@ export class Simulation {
     for (const heart of layout.hearts) this.hearts.add(`${heart.c},${heart.r}`);
     this.coins.clear();
     for (const coin of layout.coins) this.coins.add(`${coin.c},${coin.r}`);
+    this.stars.clear();
+    for (const star of layout.stars) this.stars.add(`${star.c},${star.r}`);
+    this.wings.clear();
+    for (const wing of layout.wings) this.wings.add(`${wing.c},${wing.r}`);
   }
 
   private useLayout(layout: MazeLayout): void {
@@ -460,6 +511,7 @@ export class Simulation {
   }
 
   private addSolids(layout: MazeLayout, floor: number, drop: number): void {
+    const grip = resolveFloorPhysics(this.settings, layout.physics).grip;
     for (const piece of layout.pieces) {
       if (!isSolid(piece.kind)) continue;
       const guard = piece.kind === "frame" ? FRAME_GUARD : 0;
@@ -467,10 +519,17 @@ export class Simulation {
         .setTranslation(piece.x, piece.y + guard / 2 + drop, piece.z);
       const collider = this.world.createCollider(desc, this.board);
       if (piece.kind === "ice") collider.setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min);
-      const material = materialFor(piece.kind, this.grip);
+      const material = materialFor(piece.kind, grip);
       collider.setFriction(material.friction);
       collider.setRestitution(0);
-      this.surfaces.push({ collider, kind: piece.kind, floor, cell: piece.cell, gate: piece.gate });
+      this.surfaces.push({
+        collider,
+        kind: piece.kind,
+        floor,
+        cell: piece.cell,
+        gate: piece.gate,
+        wall: piece.wall,
+      });
     }
   }
 
@@ -485,8 +544,9 @@ export class Simulation {
       return;
     }
 
+    const tileY = this.ballR + 0.26;
     const dest = this.warpTo.get(id);
-    if (dest && this.warpGrace !== id && local.y < TILE_Y) {
+    if (dest && this.warpGrace !== id && local.y < tileY) {
       this.ball.setTranslation(rotateVec(this.boardRot, { x: dest.x, y: local.y, z: dest.z }), true);
       this.warpGrace = dest.key;
       local = this.localBall();
@@ -497,11 +557,13 @@ export class Simulation {
       this.warpGrace = "";
     }
 
-    if (local.y < TILE_Y) this.applyBoost(id);
+    if (local.y < tileY) this.applyBoost(id);
     this.applyIce(id, local);
     this.applySwitch(id, local);
     this.applyHeart(id, local);
     this.applyCoin(id, local);
+    this.applyStar(id, local);
+    this.applyWings(id, local);
   }
 
   private stick(): void {
@@ -510,13 +572,15 @@ export class Simulation {
     const local = this.localBall();
     if (this.canFall(local)) return;
 
-    const lift = local.y - BALL_R;
-    if (lift <= STICK_LIFT && lift >= -STICK_SINK) return;
+    const ride = this.ballR + (this.hoverLeft > 0 ? HOVER_GAP : 0.012);
+    const lift = local.y - ride;
+    if (this.hoverLeft <= 0 && lift <= STICK_LIFT && lift >= -STICK_SINK) return;
+    if (this.hoverLeft > 0 && Math.abs(lift) < 0.01) return;
 
     const up = rotateVec(this.boardRot, { x: 0, y: 1, z: 0 });
     this.ball.linvel(this.lin);
     const vn = this.lin.x * up.x + this.lin.y * up.y + this.lin.z * up.z;
-    this.ball.setTranslation(rotateVec(this.boardRot, { x: local.x, y: BALL_R + 0.012, z: local.z }), true);
+    this.ball.setTranslation(rotateVec(this.boardRot, { x: local.x, y: ride, z: local.z }), true);
     this.ball.setLinvel(
       {
         x: this.lin.x - up.x * vn,
@@ -531,11 +595,13 @@ export class Simulation {
     if (this.inPassage(local)) return true;
     const id = this.cellKeyAt(local);
     if (!id) return false;
+    if (this.hoverLeft > 0 && this.holes.has(id)) return false;
     return this.holes.has(id) || this.crumbleGone.has(id);
   }
 
   private applyIce(id: string, local: Vec3): void {
-    const on = this.ice.has(id) && local.y < TILE_Y && local.y > FALL_Y;
+    const tileY = this.ballR + 0.26;
+    const on = this.ice.has(id) && local.y < tileY && local.y > FALL_Y;
     if (on === this.onIce) return;
     this.onIce = on;
     const grip = on ? ICE_DAMP : 1;
@@ -546,7 +612,8 @@ export class Simulation {
   private tickCrumble(): void {
     if (this.crumbles.size === 0) return;
     const local = this.localBall();
-    const standing = this.ball.gravityScale() !== 0 && local.y < TILE_Y && local.y > FALL_Y;
+    const tileY = this.ballR + 0.26;
+    const standing = this.ball.gravityScale() !== 0 && local.y < tileY && local.y > FALL_Y;
     const id = standing ? this.cellKeyAt(local) : null;
     const occupied = this.cellKeyAt(local);
     for (const cell of this.crumbles) {
@@ -580,25 +647,158 @@ export class Simulation {
   }
 
   private applyHeart(id: string, local: Vec3): void {
-    if (!this.hearts.has(id) || local.y >= TILE_Y || local.y <= FALL_Y) return;
+    const tileY = this.ballR + 0.26;
+    if (!this.hearts.has(id) || local.y >= tileY || local.y <= FALL_Y) return;
     this.hearts.delete(id);
     this.pickedHearts.push(id);
   }
 
   private applyCoin(id: string, local: Vec3): void {
-    if (!this.coins.has(id) || local.y >= TILE_Y || local.y <= FALL_Y) return;
+    const tileY = this.ballR + 0.26;
+    if (!this.coins.has(id) || local.y >= tileY || local.y <= FALL_Y) return;
     this.coins.delete(id);
     this.pickedCoins.push(id);
   }
 
+  private applyStar(id: string, local: Vec3): void {
+    const tileY = this.ballR + 0.26;
+    if (!this.stars.has(id) || local.y >= tileY || local.y <= FALL_Y) return;
+    this.stars.delete(id);
+    this.pickedStars.push(id);
+    this.beginStar();
+  }
+
+  private applyWings(id: string, local: Vec3): void {
+    const tileY = this.ballR + 0.26;
+    if (!this.wings.has(id) || local.y >= tileY || local.y <= FALL_Y) return;
+    this.wings.delete(id);
+    this.pickedWings.push(id);
+    this.beginHover();
+  }
+
   private applySwitch(id: string, local: Vec3): void {
-    if (local.y >= TILE_Y || local.y <= FALL_Y) return;
+    const tileY = this.ballR + 0.26;
+    if (local.y >= tileY || local.y <= FALL_Y) return;
     const gate = this.switches.get(id);
-    if (!gate || this.openGates.has(gate)) return;
+    if (!gate || this.openGates.has(gate) || this.smashed.has(gate)) return;
     if (this.tangentSpeed() > SWITCH_SPEED) return;
     this.openGates.add(gate);
     for (const surface of this.surfaces) {
-      if (surface.floor === this.active && surface.gate === gate) surface.collider.setSensor(true);
+      if (surface.floor === this.active && (surface.gate === gate || surface.wall === gate)) {
+        surface.collider.setSensor(true);
+      }
+    }
+  }
+
+  private tickStar(): void {
+    if (this.starLeft <= 0) return;
+    this.starLeft = Math.max(0, this.starLeft - STEP);
+    this.smashContacts();
+    if (this.starLeft <= 0) this.endStar();
+  }
+
+  private tickHover(): void {
+    if (this.hoverLeft <= 0) return;
+    this.hoverLeft = Math.max(0, this.hoverLeft - STEP);
+    if (this.hoverLeft <= 0) this.endHover();
+  }
+
+  private beginStar(): void {
+    this.starLeft = STAR_TIME;
+    this.setBallRadius(BALL_R * STAR_SCALE);
+  }
+
+  private endStar(): void {
+    this.starLeft = 0;
+    this.setBallRadius(BALL_R);
+  }
+
+  private beginHover(): void {
+    this.hoverLeft = HOVER_TIME;
+    this.clearHoverPlates();
+    const span = (CELL - WALL) / 2 + 0.02;
+    const hy = FLOOR_T / 2;
+    for (const hole of this.holes) {
+      const [c, r] = hole.split(",").map(Number);
+      if (c === undefined || r === undefined || Number.isNaN(c) || Number.isNaN(r)) continue;
+      const x = this.originX + (c + 0.5) * CELL;
+      const z = this.originZ + (r + 0.5) * CELL;
+      const collider = this.world.createCollider(
+        RAPIER.ColliderDesc.cuboid(span, hy, span)
+          .setTranslation(x, -hy, z)
+          .setFriction(0.45 * this.grip)
+          .setRestitution(0),
+        this.board,
+      );
+      this.hoverPlates.push(collider);
+    }
+    this.ball.wakeUp();
+  }
+
+  private endHover(): void {
+    this.hoverLeft = 0;
+    this.clearHoverPlates();
+  }
+
+  private clearHoverPlates(): void {
+    for (const collider of this.hoverPlates) this.world.removeCollider(collider, true);
+    this.hoverPlates.length = 0;
+  }
+
+  private setBallRadius(radius: number): void {
+    if (Math.abs(this.ballR - radius) < 0.0001) return;
+    this.ballR = radius;
+    this.ballCollider.setRadius(radius);
+    if (this.dropping || this.fallingThrough || this.escaping || this.failing) return;
+    const local = this.localBall();
+    if (local.y <= FALL_Y) return;
+    this.board.rotation(this.boardRot);
+    this.ball.setTranslation(
+      rotateVec(this.boardRot, { x: local.x, y: Math.max(local.y, radius + 0.012), z: local.z }),
+      true,
+    );
+    this.ball.wakeUp();
+  }
+
+  private smashContacts(): void {
+    if (this.fallingThrough || this.escaping || this.failing || this.dropping) return;
+    const byHandle = new Map<number, Surface>();
+    for (const surface of this.surfaces) {
+      if (surface.floor !== this.active || surface.kind !== "wall" || !surface.wall) continue;
+      if (this.smashed.has(surface.wall)) continue;
+      byHandle.set(surface.collider.handle, surface);
+    }
+    if (byHandle.size === 0) return;
+
+    this.world.contactPairsWith(this.ballCollider, (other) => {
+      const surface = byHandle.get(other.handle);
+      if (surface?.wall) this.smashWall(surface.wall);
+    });
+
+    // Geometric fallback: contacts can miss after a bounce or when only a post is hit.
+    const local = this.localBall();
+    if (local.y <= FALL_Y) return;
+    const reach = this.ballR + 0.04;
+    for (const surface of byHandle.values()) {
+      if (!surface.wall || this.smashed.has(surface.wall)) continue;
+      const at = surface.collider.translationWrtParent();
+      if (!at) continue;
+      const half = surface.collider.halfExtents();
+      if (!half) continue;
+      const dx = Math.max(0, Math.abs(local.x - at.x) - half.x);
+      const dy = Math.max(0, Math.abs(local.y - at.y) - half.y);
+      const dz = Math.max(0, Math.abs(local.z - at.z) - half.z);
+      if (dx * dx + dy * dy + dz * dz <= reach * reach) this.smashWall(surface.wall);
+    }
+  }
+
+  private smashWall(id: string): void {
+    if (this.smashed.has(id)) return;
+    this.smashed.add(id);
+    this.openGates.delete(id);
+    for (const surface of this.surfaces) {
+      if (surface.floor !== this.active) continue;
+      if (surface.wall === id || surface.gate === id) surface.collider.setSensor(true);
     }
   }
 
@@ -607,12 +807,14 @@ export class Simulation {
       if (surface.floor !== this.active) continue;
       if (repairCrumble && surface.cell && this.crumbleGone.has(surface.cell)) surface.collider.setSensor(false);
       if (surface.gate && this.openGates.has(surface.gate)) surface.collider.setSensor(false);
+      if (surface.wall && this.smashed.has(surface.wall)) surface.collider.setSensor(false);
     }
     if (repairCrumble) {
       this.crumbleTime.clear();
       this.crumbleGone.clear();
     }
     this.openGates.clear();
+    this.smashed.clear();
     this.onIce = false;
     this.ball.setLinearDamping(this.damping);
     this.ball.setAngularDamping(this.damping * 0.51);
@@ -775,7 +977,7 @@ export class Simulation {
   private contain(): void {
     if (this.fallingThrough || this.escaping || this.failing) return;
     const local = this.localBall();
-    const inset = WALL / 2 + BALL_R - 0.02;
+    const inset = WALL / 2 + this.ballR - 0.02;
     const minX = this.layout.minX + inset;
     const maxX = this.layout.maxX - inset;
     const minZ = this.layout.minZ + inset;

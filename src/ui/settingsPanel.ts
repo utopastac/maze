@@ -57,7 +57,7 @@ export class SettingsPanel {
       const input = field.querySelector("input");
       const readout = field.querySelector<HTMLElement>("[data-readout]");
       if (!input || !readout) continue;
-      if (spec.key === "pixels") input.step = String(pixelStep());
+      if (spec.key === "pixels" || spec.key === "uiPixels") input.step = String(pixelStep());
       input.addEventListener("input", () => {
         this.settings.set(spec.key, Number(input.value));
         readout.textContent = spec.format(this.settings.values[spec.key]);
@@ -123,7 +123,7 @@ export class SettingsPanel {
       const value = this.settings.values[spec.key];
       const pictureSlider = spec.key === "pixels" || spec.key === "shade";
       if (input) {
-        if (spec.key === "pixels") input.step = String(pixelStep());
+        if (spec.key === "pixels" || spec.key === "uiPixels") input.step = String(pixelStep());
         input.value = String(value);
         input.disabled = pictureSlider && normal;
       }

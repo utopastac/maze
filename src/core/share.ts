@@ -10,6 +10,14 @@ import {
   type WallAxis,
   type WallRef,
 } from "./maze.ts";
+import {
+  PHYSICS_KEYS,
+  SETTING_SPECS,
+  clampSetting,
+  cloneFloorPhysics,
+  type FloorPhysics,
+  type PhysicsSettingKey,
+} from "./playSettings.ts";
 import { DEFAULT_FLOOR_THEME, themeFromIndex, themeIndex } from "./theme.ts";
 import {
   DEFAULT_LEVEL_NAME,
@@ -26,11 +34,19 @@ import {
   type Tower,
 } from "./tower.ts";
 
-const VERSION = 4;
+const VERSION = 7;
 const LEGACY_VERSION = 1;
 const THEME_VERSION = 3;
 const NAMED_VERSION = 3;
 const COLLECTIBLE_VERSION = 4;
+const PHYSICS_VERSION = 5;
+const STAR_VERSION = 6;
+const WINGS_VERSION = 7;
+const PHYSICS_BITS: Record<PhysicsSettingKey, number> = {
+  gravity: 7,
+  grip: 6,
+  damping: 8,
+};
 const LEVEL_NAME_BITS = 6;
 const LEVEL_PREFIX = "#m.";
 /** Longest base64url payload we will put in a hash. A full 16×16 tower stays under this. */
@@ -87,10 +103,7 @@ export function decodeLevel(code: string): Tower | null {
   if (!bytes) return null;
   const reader = new BitReader(bytes);
   const version = reader.read(8);
-  if (
-    version === null
-    || (version !== VERSION && version !== LEGACY_VERSION && version !== 2 && version !== 3)
-  ) return null;
+  if (version === null || version < LEGACY_VERSION || version > VERSION) return null;
   let name: string | null = null;
   if (version >= NAMED_VERSION) {
     name = readLevelName(reader);
@@ -99,8 +112,9 @@ export function decodeLevel(code: string): Tower | null {
   let maxHearts = 0;
   if (version >= COLLECTIBLE_VERSION) {
     const lives = reader.read(MAX_HEARTS_BITS);
-    if (lives === null || lives > MAX_HEARTS_CAP) return null;
-    maxHearts = lives;
+    if (lives === null) return null;
+    // Older shares may encode >5; clamp to the current cap.
+    maxHearts = Math.min(lives, MAX_HEARTS_CAP);
   }
   const floors = reader.read(3);
   if (floors === null || floors < FLOOR_MIN || floors > FLOOR_MAX) return null;
@@ -226,6 +240,7 @@ function copyWithSelection(text: string): boolean {
 
 function writeFloor(writer: BitWriter, maze: Maze): void {
   writer.write(themeIndex(maze.theme ?? DEFAULT_FLOOR_THEME), 3);
+  writePhysics(writer, maze.physics);
   writer.write(maze.cols, COORD_BITS);
   writer.write(maze.rows, COORD_BITS);
   writer.write(maze.start.c, COORD_BITS);
@@ -254,6 +269,8 @@ function writeFloor(writer: BitWriter, maze: Maze): void {
   for (const feature of features) writeFeature(writer, feature);
   writeCollectibles(writer, maze.hearts, maze);
   writeCollectibles(writer, maze.coins, maze);
+  writeCollectibles(writer, maze.stars, maze);
+  writeCollectibles(writer, maze.wings, maze);
 }
 
 function writeFeature(writer: BitWriter, feature: Feature): void {
@@ -339,12 +356,64 @@ function linkedWall(maze: Maze, wall: WallRef | null): WallRef | null {
   return { axis: wall.axis, c: wall.c, r: wall.r };
 }
 
+function writePhysics(writer: BitWriter, physics: FloorPhysics | undefined): void {
+  const clean = cloneFloorPhysics(physics);
+  if (!clean) {
+    writer.write(0, 1);
+    return;
+  }
+  writer.write(1, 1);
+  let mask = 0;
+  for (let i = 0; i < PHYSICS_KEYS.length; i += 1) {
+    if (typeof clean[PHYSICS_KEYS[i]] === "number") mask |= 1 << i;
+  }
+  writer.write(mask, 3);
+  for (let i = 0; i < PHYSICS_KEYS.length; i += 1) {
+    if ((mask & (1 << i)) === 0) continue;
+    const key = PHYSICS_KEYS[i];
+    const spec = SETTING_SPECS.find((item) => item.key === key);
+    const raw = clean[key];
+    if (!spec || typeof raw !== "number") throw new Error("physics");
+    const value = clampSetting(key, raw);
+    const steps = Math.round((value - spec.min) / spec.step);
+    const maxSteps = Math.round((spec.max - spec.min) / spec.step);
+    writer.write(Math.min(maxSteps, Math.max(0, steps)), PHYSICS_BITS[key]);
+  }
+}
+
+function readPhysics(reader: BitReader): FloorPhysics | undefined | null {
+  const has = reader.read(1);
+  if (has === null) return null;
+  if (has === 0) return undefined;
+  const mask = reader.read(3);
+  if (mask === null || mask === 0) return null;
+  const physics: FloorPhysics = {};
+  for (let i = 0; i < PHYSICS_KEYS.length; i += 1) {
+    if ((mask & (1 << i)) === 0) continue;
+    const key = PHYSICS_KEYS[i];
+    const spec = SETTING_SPECS.find((item) => item.key === key);
+    if (!spec) return null;
+    const steps = reader.read(PHYSICS_BITS[key]);
+    if (steps === null) return null;
+    const maxSteps = Math.round((spec.max - spec.min) / spec.step);
+    if (steps > maxSteps) return null;
+    physics[key] = clampSetting(key, spec.min + steps * spec.step);
+  }
+  return physics;
+}
+
 function readFloor(reader: BitReader, version: number): Maze | null {
   let theme = DEFAULT_FLOOR_THEME;
   if (version >= THEME_VERSION) {
     const themeBits = reader.read(3);
     if (themeBits === null) return null;
     theme = themeFromIndex(themeBits);
+  }
+  let physics: FloorPhysics | undefined;
+  if (version >= PHYSICS_VERSION) {
+    const decoded = readPhysics(reader);
+    if (decoded === null) return null;
+    physics = decoded;
   }
   const cols = reader.read(COORD_BITS);
   const rows = reader.read(COORD_BITS);
@@ -376,11 +445,14 @@ function readFloor(reader: BitReader, version: number): Maze | null {
     tiles: [],
     hearts: [],
     coins: [],
+    stars: [],
+    wings: [],
     start: { c: startC, r: startR },
     goal: { c: goalC, r: goalR },
     hatch,
     theme,
   };
+  if (physics) maze.physics = physics;
   for (let r = 0; r < rows; r += 1) {
     for (let c = 0; c < cols - 1; c += 1) {
       const closed = reader.read(1);
@@ -407,6 +479,12 @@ function readFloor(reader: BitReader, version: number): Maze | null {
     const taken = new Set<string>();
     if (!readCollectibles(reader, maze, maze.hearts, taken)) return null;
     if (!readCollectibles(reader, maze, maze.coins, taken)) return null;
+    if (version >= STAR_VERSION) {
+      if (!readCollectibles(reader, maze, maze.stars, taken)) return null;
+    }
+    if (version >= WINGS_VERSION) {
+      if (!readCollectibles(reader, maze, maze.wings, taken)) return null;
+    }
   }
   return maze;
 }

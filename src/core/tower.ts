@@ -21,7 +21,7 @@ export interface Tower {
 
 export const FLOOR_MIN = 1;
 export const FLOOR_MAX = 5;
-export const MAX_HEARTS_CAP = 99;
+export const MAX_HEARTS_CAP = 5;
 export const DEFAULT_MAX_HEARTS = 3;
 export const TOWER_FLOORS = 3;
 export const DEFAULT_LEVEL_NAME = "Untitled";
@@ -146,6 +146,8 @@ export function addFloor(tower: Tower): Tower {
   above.tiles = above.tiles.filter((tile) => !same(tile, landing));
   above.hearts = above.hearts.filter((heart) => !same(heart, landing));
   above.coins = above.coins.filter((coin) => !same(coin, landing));
+  above.stars = above.stars.filter((star) => !same(star, landing));
+  above.wings = above.wings.filter((wing) => !same(wing, landing));
   const seed = Math.floor(Math.random() * 0x7fffffff);
   next.floors.push(carveFloor(seed, above.cols, above.rows, landing));
   repairTower(next);
@@ -172,6 +174,8 @@ export function setHatch(tower: Tower, floorIndex: number, cell: GridPoint): voi
   floor.tiles = floor.tiles.filter((tile) => !same(tile, cell));
   floor.hearts = floor.hearts.filter((heart) => !same(heart, cell));
   floor.coins = floor.coins.filter((coin) => !same(coin, cell));
+  floor.stars = floor.stars.filter((star) => !same(star, cell));
+  floor.wings = floor.wings.filter((wing) => !same(wing, cell));
   repairTower(tower);
 }
 
@@ -213,6 +217,23 @@ export function repairTower(tower: Tower): void {
         && !floor.holes.some((hole) => same(hole, coin))
         && floor.tiles.every((tile) => tile.kind !== "block" || !same(tile, coin))
         && !floor.hearts.some((heart) => same(heart, coin)),
+    );
+    floor.stars = floor.stars.filter(
+      (star) => !same(star, floor.start) && !same(star, floor.goal)
+        && !(floor.hatch && same(star, floor.hatch))
+        && !floor.holes.some((hole) => same(hole, star))
+        && floor.tiles.every((tile) => tile.kind !== "block" || !same(tile, star))
+        && !floor.hearts.some((heart) => same(heart, star))
+        && !floor.coins.some((coin) => same(coin, star)),
+    );
+    floor.wings = floor.wings.filter(
+      (wing) => !same(wing, floor.start) && !same(wing, floor.goal)
+        && !(floor.hatch && same(wing, floor.hatch))
+        && !floor.holes.some((hole) => same(hole, wing))
+        && floor.tiles.every((tile) => tile.kind !== "block" || !same(tile, wing))
+        && !floor.hearts.some((heart) => same(heart, wing))
+        && !floor.coins.some((coin) => same(coin, wing))
+        && !floor.stars.some((star) => same(star, wing)),
     );
   }
   setMaxHearts(tower, tower.maxHearts ?? 0);
