@@ -1,7 +1,6 @@
 import { formatTime } from "../core/format.ts";
 import { iconSvg } from "./icons.ts";
 import styles from "./hud.module.css";
-import { TowerMap } from "./towerMap.ts";
 
 export interface HudCallbacks {
   onLevel: () => void;
@@ -9,12 +8,14 @@ export interface HudCallbacks {
   onNew: () => void;
   onCampaign: () => void;
   onLevels: () => void;
+  onSaved: () => void;
   onMotion: () => void;
   onSettings: () => void;
   onEdit: () => void;
   onAuthor: () => void;
   onShare: () => void;
   onWins: () => void;
+  onPause: () => void;
 }
 
 export class Hud {
@@ -34,13 +35,13 @@ export class Hud {
   private readonly winsBtn: HTMLButtonElement;
   private readonly campaignBtn: HTMLButtonElement;
   private readonly levelsBtn: HTMLButtonElement;
+  private readonly savedBtn: HTMLButtonElement;
+  private readonly pauseBtn: HTMLButtonElement;
   private readonly livesEl: HTMLElement;
   private readonly lifeCount: HTMLElement;
   private readonly heartsEl: HTMLElement;
-  private readonly heartCount: HTMLElement;
   private readonly coinsEl: HTMLElement;
   private readonly coinCount: HTMLElement;
-  private readonly tower: TowerMap;
   private readonly keycaps: HTMLElement[];
 
   constructor(root: HTMLElement, callbacks: HudCallbacks) {
@@ -75,41 +76,59 @@ export class Hud {
         <button type="button" class="glass-btn" data-edit aria-label="Edit level" title="Edit & share">${iconSvg("edit")}</button>
         <button type="button" class="glass-btn" data-author aria-label="Author campaign" title="Author campaign">${iconSvg("author")}</button>
         <button type="button" class="glass-btn" data-share aria-label="Copy level link" title="Copy link">${iconSvg("share")}</button>
+        <button type="button" class="glass-btn" data-saved aria-label="Saved levels" title="Saved levels" aria-pressed="false">${iconSvg("saved")}</button>
         <button type="button" class="glass-btn" data-wins aria-label="Victory screens" title="Victory screens" aria-pressed="false">${iconSvg("wins")}</button>
         <button type="button" class="glass-btn" data-new aria-label="New maze" title="New maze">${iconSvg("new")}</button>
         <button type="button" class="glass-btn" data-campaign aria-label="Campaign" title="Campaign" aria-pressed="false">${iconSvg("campaign")}</button>
+        <button type="button" class="glass-btn" data-pause hidden aria-label="Pause" title="Pause">${iconSvg("pause")}</button>
         <button type="button" class="glass-btn" data-levels aria-label="Level select" title="Level select" aria-pressed="false">${iconSvg("levels")}</button>
         <button type="button" class="glass-btn" data-settings aria-label="Settings" title="Settings">${iconSvg("settings")}</button>
       </div>
-      <div class="${styles.controls}" aria-label="Keyboard controls">
-        <div class="${styles.cluster}">
-          <p class="${styles.controlLabel}">move</p>
-          <div class="${styles.pad}">
-            <kbd class="${styles.key}" data-key="arrowup">↑</kbd>
-            <kbd class="${styles.key}" data-key="arrowleft">←</kbd>
-            <kbd class="${styles.key}" data-key="arrowdown">↓</kbd>
-            <kbd class="${styles.key}" data-key="arrowright">→</kbd>
+      <div class="${styles.controlsDock}">
+        <button
+          type="button"
+          class="glass-btn ${styles.controlsBtn}"
+          data-controls-trigger
+          aria-label="Keyboard controls"
+          aria-expanded="false"
+          aria-controls="hud-keyboard-controls"
+          title="Keyboard controls"
+        >${iconSvg("keyboard")}</button>
+        <div
+          class="${styles.controls}"
+          id="hud-keyboard-controls"
+          data-controls-panel
+          aria-label="Keyboard controls"
+        >
+          <div class="${styles.cluster}">
+            <p class="${styles.controlLabel}">move</p>
+            <div class="${styles.pad}">
+              <kbd class="${styles.key}" data-key="arrowup">↑</kbd>
+              <kbd class="${styles.key}" data-key="arrowleft">←</kbd>
+              <kbd class="${styles.key}" data-key="arrowdown">↓</kbd>
+              <kbd class="${styles.key}" data-key="arrowright">→</kbd>
+            </div>
           </div>
-        </div>
-        <div class="${styles.cluster}">
-          <p class="${styles.controlLabel}">rotate</p>
-          <div class="${styles.orbitRow}">
-            <kbd class="${styles.key} ${styles.orbit}" data-key="q">${iconSvg("angleDown", 10)}<span>Q</span></kbd>
-            <kbd class="${styles.key} ${styles.orbit}" data-key="e">${iconSvg("angleUp", 10)}<span>E</span></kbd>
+          <div class="${styles.cluster}">
+            <p class="${styles.controlLabel}">rotate</p>
+            <div class="${styles.orbitRow}">
+              <kbd class="${styles.key} ${styles.orbit}" data-key="q">${iconSvg("angleDown", 10)}<span>Q</span></kbd>
+              <kbd class="${styles.key} ${styles.orbit}" data-key="e">${iconSvg("angleUp", 10)}<span>E</span></kbd>
+            </div>
           </div>
-        </div>
-        <div class="${styles.cluster}">
-          <p class="${styles.controlLabel}">orbit</p>
-          <div class="${styles.orbitRow}">
-            <kbd class="${styles.key} ${styles.orbit}" data-key="z">${iconSvg("orbitLeft", 10)}<span>Z</span></kbd>
-            <kbd class="${styles.key} ${styles.orbit}" data-key="c">${iconSvg("orbitRight", 10)}<span>C</span></kbd>
+          <div class="${styles.cluster}">
+            <p class="${styles.controlLabel}">orbit</p>
+            <div class="${styles.orbitRow}">
+              <kbd class="${styles.key} ${styles.orbit}" data-key="z">${iconSvg("orbitLeft", 10)}<span>Z</span></kbd>
+              <kbd class="${styles.key} ${styles.orbit}" data-key="c">${iconSvg("orbitRight", 10)}<span>C</span></kbd>
+            </div>
           </div>
-        </div>
-        <div class="${styles.cluster}">
-          <p class="${styles.controlLabel}">zoom</p>
-          <div class="${styles.orbitRow}">
-            <kbd class="${styles.key} ${styles.orbit}" data-key="-">${iconSvg("minus", 10)}<span>-</span></kbd>
-            <kbd class="${styles.key} ${styles.orbit}" data-key="=">${iconSvg("plus", 10)}<span>+</span></kbd>
+          <div class="${styles.cluster}">
+            <p class="${styles.controlLabel}">zoom</p>
+            <div class="${styles.orbitRow}">
+              <kbd class="${styles.key} ${styles.orbit}" data-key="-">${iconSvg("minus", 10)}<span>-</span></kbd>
+              <kbd class="${styles.key} ${styles.orbit}" data-key="=">${iconSvg("plus", 10)}<span>+</span></kbd>
+            </div>
           </div>
         </div>
       </div>
@@ -128,25 +147,41 @@ export class Hud {
     this.winsBtn = this.require("[data-wins]");
     this.campaignBtn = this.require("[data-campaign]");
     this.levelsBtn = this.require("[data-levels]");
+    this.savedBtn = this.require("[data-saved]");
+    this.pauseBtn = this.require("[data-pause]");
     this.livesEl = this.require("[data-lives]");
     this.lifeCount = this.require("[data-life-count]");
     this.heartsEl = this.require("[data-hearts]");
-    this.heartCount = this.require("[data-heart-count]");
     this.coinsEl = this.require("[data-coins]");
     this.coinCount = this.require("[data-coin-count]");
-    this.tower = new TowerMap(this.root);
     this.require<HTMLButtonElement>("[data-level]").addEventListener("click", () => this.callbacks.onLevel());
     this.require<HTMLButtonElement>("[data-reset]").addEventListener("click", () => this.callbacks.onReset());
     this.require<HTMLButtonElement>("[data-new]").addEventListener("click", () => this.callbacks.onNew());
+    this.pauseBtn.addEventListener("click", () => this.callbacks.onPause());
     this.motionBtn.addEventListener("click", () => this.callbacks.onMotion());
     this.settingsBtn.addEventListener("click", () => this.callbacks.onSettings());
     this.editBtn.addEventListener("click", () => this.callbacks.onEdit());
     this.authorBtn.addEventListener("click", () => this.callbacks.onAuthor());
     this.shareBtn.addEventListener("click", () => this.callbacks.onShare());
+    this.savedBtn.addEventListener("click", () => this.callbacks.onSaved());
     this.winsBtn.addEventListener("click", () => this.callbacks.onWins());
     this.campaignBtn.addEventListener("click", () => this.callbacks.onCampaign());
     this.levelsBtn.addEventListener("click", () => this.callbacks.onLevels());
     this.keycaps = [...this.root.querySelectorAll<HTMLElement>(`.${styles.controls} [data-key]`)];
+    const controlsDock = this.require<HTMLElement>(`.${styles.controlsDock}`);
+    const controlsTrigger = this.require<HTMLButtonElement>("[data-controls-trigger]");
+    const syncControlsOpen = (open: boolean): void => {
+      controlsTrigger.setAttribute("aria-expanded", String(open));
+      controlsDock.dataset.open = open ? "true" : "";
+    };
+    controlsDock.addEventListener("pointerenter", () => syncControlsOpen(true));
+    controlsDock.addEventListener("pointerleave", () => syncControlsOpen(false));
+    controlsDock.addEventListener("focusin", () => syncControlsOpen(true));
+    controlsDock.addEventListener("focusout", (event) => {
+      const next = event.relatedTarget as Node | null;
+      if (next && controlsDock.contains(next)) return;
+      syncControlsOpen(false);
+    });
     const coarse = window.matchMedia("(pointer: coarse)").matches;
     this.setMotionVisible(coarse);
   }
@@ -165,8 +200,7 @@ export class Hud {
     this.authorBtn.hidden = active;
     this.shareBtn.hidden = active;
     this.winsBtn.hidden = active;
-    if (active) return;
-    this.tower.hide();
+    this.pauseBtn.hidden = !active;
   }
 
   setLives(count: number, pulse = false): void {
@@ -203,14 +237,6 @@ export class Hud {
     el.dataset.pulse = "in";
   }
 
-  setTower(sizes: number[], current: number): void {
-    this.tower.setRun(sizes, current);
-  }
-
-  setTowerFloor(current: number): void {
-    this.tower.setCurrent(current);
-  }
-
   setTitle(label: string): void {
     this.titleEl.textContent = label;
   }
@@ -221,7 +247,7 @@ export class Hud {
       return;
     }
     this.floorEl.hidden = false;
-    this.floorEl.textContent = `Floor ${current} / ${total}`;
+    this.floorEl.textContent = `Floor ${current} of ${total}`;
   }
 
   setFloorName(label: string): void {
@@ -267,7 +293,6 @@ export class Hud {
   setCelebrate(on: boolean): void {
     if (on) this.root.dataset.celebrate = "";
     else delete this.root.dataset.celebrate;
-    this.tower.setSuppressed(on);
   }
 
   setMotionVisible(visible: boolean): void {
@@ -304,6 +329,12 @@ export class Hud {
     this.levelsBtn.classList.toggle("selected", selected);
     this.levelsBtn.setAttribute("aria-pressed", selected ? "true" : "false");
     this.levelsBtn.setAttribute("aria-label", selected ? "Close level select" : "Level select");
+  }
+
+  setSavedSelected(selected: boolean): void {
+    this.savedBtn.classList.toggle("selected", selected);
+    this.savedBtn.setAttribute("aria-pressed", selected ? "true" : "false");
+    this.savedBtn.setAttribute("aria-label", selected ? "Close saved levels" : "Saved levels");
   }
 
   private require<T extends Element>(selector: string): T {

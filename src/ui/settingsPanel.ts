@@ -121,7 +121,8 @@ export class SettingsPanel {
       const readout = this.readouts.get(spec.key);
       const field = this.fields.get(spec.key);
       const value = this.settings.values[spec.key];
-      const pictureSlider = spec.key === "pixels" || spec.key === "shade";
+      const pictureSlider =
+        spec.key === "pixels" || spec.key === "uiPixels" || spec.key === "shade";
       if (input) {
         if (spec.key === "pixels" || spec.key === "uiPixels") input.step = String(pixelStep());
         input.value = String(value);

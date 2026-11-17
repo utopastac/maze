@@ -478,14 +478,22 @@ body,
   image-rendering: pixelated;
   filter: blur(0px);
   transition: filter 0.45s ease-in-out;
+
+  &[data-look="normal"] {
+    image-rendering: auto;
+  }
 }
 
 #app:has(#overlay[data-phase="in"]) #viewport,
 #app:has(#editor[data-phase="in"]) #viewport,
 #app:has(#picker[data-phase="in"]) #viewport,
+#app:has(#pause[data-phase="in"]) #viewport,
+#app:has(#tower-intro[data-phase="in"]) #viewport,
 #app:has(#overlay[data-phase="in"]) #play-hud,
 #app:has(#editor[data-phase="in"]) #play-hud,
-#app:has(#picker[data-phase="in"]) #play-hud {
+#app:has(#picker[data-phase="in"]) #play-hud,
+#app:has(#pause[data-phase="in"]) #play-hud,
+#app:has(#tower-intro[data-phase="in"]) #play-hud {
   filter: blur(var(--page-blur));
 }
 

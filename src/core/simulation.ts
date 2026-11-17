@@ -344,8 +344,19 @@ export class Simulation {
     this.fallShield = 0;
     this.endStar();
     this.endHover();
+    this.restorePowerUps();
     this.restoreTiles(repairCrumble);
     this.clearDrop();
+  }
+
+  /** Put stars/wings back on the active floor after a retry. */
+  private restorePowerUps(): void {
+    this.stars.clear();
+    for (const star of this.layout.stars) this.stars.add(`${star.c},${star.r}`);
+    this.wings.clear();
+    for (const wing of this.layout.wings) this.wings.add(`${wing.c},${wing.r}`);
+    this.pickedStars.length = 0;
+    this.pickedWings.length = 0;
   }
 
   dropTop(): void {

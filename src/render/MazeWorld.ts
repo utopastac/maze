@@ -47,7 +47,6 @@ import {
   MEADOW_DROP,
   PIT_WELL,
   STORY,
-  WALL,
   type MazeLayout,
   type Piece,
   type PieceKind,
@@ -58,9 +57,18 @@ import { DIRECTION_VECTOR, SWITCH_COLOR_COUNT, WARP_COLOR_COUNT } from "../core/
 import { SETTING_SPECS, skyThemeAt, type PlaySettings } from "../core/playSettings.ts";
 import type { Pose } from "../core/simulation.ts";
 import { DEFAULT_FLOOR_THEME, type FloorThemeId } from "../core/theme.ts";
+import {
+  makeCoinGeo,
+  makeCoinMaterial,
+  makeHeartGeo,
+  makeHeartIcon,
+  makeHeartMaterials,
+} from "./collectibleMeshes.ts";
 import { makeThemeSurfaces, type ThemeSurfaces } from "./themeMaterials.ts";
 
 const SHELL_ALPHA = 0.18;
+/** Match HUD heart/coin proportions at maze-cell scale. */
+const PICKUP_ICON_SCALE = 0.55;
 const WARP_GATE_R = 0.3;
 const WARP_GATE_H = 0.58;
 const WARP_GATE_ALPHA = 0.38;
@@ -121,7 +129,8 @@ export class MazeWorld {
   private readonly wingGeometry: BufferGeometry;
   private readonly sparkGeometry: BufferGeometry;
   private readonly warpGateGeometry: BufferGeometry;
-  private readonly heartMat: MeshToonMaterial;
+  private readonly heartBodyMat: MeshStandardMaterial;
+  private readonly heartShadeMat: MeshStandardMaterial;
   private readonly coinMat: MeshStandardMaterial;
   private readonly starMat: MeshToonMaterial;
   private readonly wingMat: MeshToonMaterial;
@@ -410,22 +419,18 @@ export class MazeWorld {
     this.iceMarkMat = glow(token("--maze-ice-mark"));
     this.switchMats = Array.from({ length: SWITCH_COLOR_COUNT }, (_, index) => glow(token(`--maze-switch-${index}`)));
     this.arrowGeometry = arrowGeometry();
-    this.heartGeometry = heartGeometry();
-    this.coinGeometry = facet(new CylinderGeometry(0.28, 0.28, 0.06, 24));
+    this.heartGeometry = makeHeartGeo();
+    this.coinGeometry = makeCoinGeo();
     this.starGeometry = starGeometry();
     this.wingGeometry = wingGeometry();
     this.sparkGeometry = facet(new BoxGeometry(0.05, 0.14, 0.05));
     this.rainGeometry = facet(new BoxGeometry(0.028, 0.42, 0.028));
     this.warpGateGeometry = facet(new CylinderGeometry(WARP_GATE_R, WARP_GATE_R, WARP_GATE_H, 8, 1, true));
-    this.heartMat = glow(token("--maze-heart"));
-    this.heartMat.emissiveIntensity = 0.8;
-    this.coinMat = new MeshStandardMaterial({
-      color: token("--maze-coin"),
-      emissive: token("--maze-coin-shine"),
-      emissiveIntensity: 0.28,
-      metalness: 0.95,
-      roughness: 0.22,
-    });
+    const heartMats = makeHeartMaterials(token("--maze-heart"));
+    heartMats.outline.dispose();
+    this.heartBodyMat = heartMats.body;
+    this.heartShadeMat = heartMats.shade;
+    this.coinMat = makeCoinMaterial(token("--maze-coin"), token("--maze-coin-shine"));
     this.starMat = glow(token("--maze-power"));
     this.starMat.emissiveIntensity = 0.95;
     this.wingMat = glow(token("--maze-hover"));
@@ -683,6 +688,18 @@ export class MazeWorld {
 
   collectWings(cell: string): void {
     this.collectPickup(this.wings, cell);
+  }
+
+  /** Respawn stars/wings on the active floor after a ball reset / retry. */
+  restorePowerUps(): void {
+    const tower = this.tower;
+    if (!tower) return;
+    const index = this.currentFloor();
+    const group = this.floorGroups[index];
+    const layout = tower.floors[index];
+    if (!group || !layout) return;
+    this.clearPowerUpsOn(group);
+    this.addPowerUps(group, layout);
   }
 
   resize(width: number, height: number): void {
@@ -1060,14 +1077,26 @@ export class MazeWorld {
 
   private addPickups(parent: Group, layout: MazeLayout): void {
     for (const heart of layout.hearts) {
-      const mesh = new Mesh(this.heartGeometry, this.heartMat);
-      mesh.position.set(heart.x, 0.38, heart.z);
-      mesh.castShadow = true;
-      mesh.renderOrder = 2;
-      parent.add(mesh);
+      const icon = makeHeartIcon(
+        this.heartGeometry,
+        // Same red as the body so spinning sides/back stay uniform (HUD keeps the dark rim).
+        this.heartBodyMat,
+        this.heartBodyMat,
+        this.heartShadeMat,
+      );
+      icon.scale.setScalar(PICKUP_ICON_SCALE);
+      icon.position.set(heart.x, 0.38, heart.z);
+      icon.renderOrder = 2;
+      for (const child of icon.children) {
+        if (!(child instanceof Mesh)) continue;
+        child.castShadow = true;
+        child.renderOrder = 2;
+      }
+      const body = icon.children[1];
+      parent.add(icon);
       this.hearts.push({
-        root: mesh,
-        visual: mesh,
+        root: icon,
+        visual: body instanceof Mesh ? body : icon.children[0] as Mesh,
         cell: `${heart.c},${heart.r}`,
         group: parent,
         taken: false,
@@ -1079,9 +1108,9 @@ export class MazeWorld {
     for (const coin of layout.coins) {
       const root = new Group();
       root.position.set(coin.x, 0.42, coin.z);
+      root.scale.setScalar(PICKUP_ICON_SCALE);
       const visual = new Mesh(this.coinGeometry, this.coinMat);
-      // Stand the disc on edge; the parent group spins around world Y.
-      visual.rotation.x = Math.PI / 2;
+      // makeCoinGeo already faces ±Z (disc in XY); parent spins around world Y.
       visual.castShadow = true;
       visual.renderOrder = 2;
       root.add(visual);
@@ -1097,6 +1126,10 @@ export class MazeWorld {
         kind: "coin",
       });
     }
+    this.addPowerUps(parent, layout);
+  }
+
+  private addPowerUps(parent: Group, layout: MazeLayout): void {
     for (const star of layout.stars) {
       const mesh = new Mesh(this.starGeometry, this.starMat);
       mesh.position.set(star.x, 0.4, star.z);
@@ -1143,6 +1176,17 @@ export class MazeWorld {
     }
   }
 
+  private clearPowerUpsOn(group: Group): void {
+    for (const list of [this.stars, this.wings]) {
+      for (let i = list.length - 1; i >= 0; i -= 1) {
+        const bit = list[i];
+        if (!bit || bit.group !== group) continue;
+        this.dropPickup(bit);
+        list.splice(i, 1);
+      }
+    }
+  }
+
   private collectPickup(list: PickupBit[], cell: string): void {
     const group = this.floorGroups[this.currentFloor()];
     for (let i = list.length - 1; i >= 0; i -= 1) {
@@ -1158,15 +1202,22 @@ export class MazeWorld {
       if (bit.kind === "coin") this.spawnPickupSparks(bit, this.coinSparkColors);
       else if (bit.kind === "star") this.spawnPickupSparks(bit, this.starSparkColors);
       else if (bit.kind === "wings") this.spawnPickupSparks(bit, this.wingSparkColors);
-      if (bit.kind === "wings") {
+      if (bit.kind === "heart" || bit.kind === "wings") {
         for (const child of bit.root.children) {
           if (!(child instanceof Mesh)) continue;
           const source = child.material;
-          if (!(source instanceof MeshToonMaterial || source instanceof MeshStandardMaterial)) continue;
+          if (
+            !(source instanceof MeshToonMaterial
+              || source instanceof MeshStandardMaterial
+              || source instanceof MeshBasicMaterial)
+          ) {
+            continue;
+          }
           const mat = source.clone();
           mat.transparent = true;
           child.material = mat;
           child.userData.owned = true;
+          child.userData.baseOpacity = source.opacity;
         }
         continue;
       }
@@ -1482,7 +1533,8 @@ export class MazeWorld {
       }
       const rise = Math.min(1, bit.age / 0.28);
       bit.root.position.y = bit.baseY + rise * 0.42;
-      bit.root.scale.setScalar(1 + rise * 0.35);
+      const baseScale = bit.kind === "coin" ? PICKUP_ICON_SCALE : 1;
+      bit.root.scale.setScalar(baseScale * (1 + rise * 0.35));
       bit.root.rotation.y += dt * 6;
       if (bit.kind === "wings") {
         for (const child of bit.root.children) {
@@ -1504,32 +1556,54 @@ export class MazeWorld {
   private tickHeartPop(bit: PickupBit, dt: number): boolean {
     const growFor = 0.2;
     const popFor = 0.12;
-    const mat = bit.visual.material;
     bit.root.rotation.y += dt * (bit.age < growFor ? 2.4 : 7);
     if (bit.age <= growFor) {
       const t = easeOutCubic(bit.age / growFor);
-      bit.root.scale.setScalar(1 + t * 0.95);
+      bit.root.scale.setScalar(PICKUP_ICON_SCALE * (1 + t * 0.95));
       bit.root.position.y = bit.baseY + t * 0.1;
-      if (mat instanceof MeshToonMaterial || mat instanceof MeshStandardMaterial) mat.opacity = 1;
+      this.setPickupOpacity(bit, 1);
       return true;
     }
     if (bit.age - dt <= growFor) this.spawnPickupSparks(bit, this.heartSparkColors);
     const t = Math.min(1, (bit.age - growFor) / popFor);
     const snap = t * t * (3 - 2 * t);
-    bit.root.scale.setScalar(Math.max(0.01, 1.95 * (1 - snap)));
+    bit.root.scale.setScalar(PICKUP_ICON_SCALE * Math.max(0.01, 1.95 * (1 - snap)));
     bit.root.position.y = bit.baseY + 0.1 + snap * 0.06;
-    if (mat instanceof MeshToonMaterial || mat instanceof MeshStandardMaterial) {
-      mat.opacity = 1 - snap;
-    }
+    this.setPickupOpacity(bit, 1 - snap);
     return t < 1;
+  }
+
+  private setPickupOpacity(bit: PickupBit, opacity: number): void {
+    if (bit.kind === "heart" || bit.kind === "wings") {
+      for (const child of bit.root.children) {
+        if (!(child instanceof Mesh)) continue;
+        const mat = child.material;
+        if (
+          mat instanceof MeshToonMaterial
+          || mat instanceof MeshStandardMaterial
+          || mat instanceof MeshBasicMaterial
+        ) {
+          const base = typeof child.userData.baseOpacity === "number" ? child.userData.baseOpacity : 1;
+          mat.opacity = base * opacity;
+        }
+      }
+      return;
+    }
+    const mat = bit.visual.material;
+    if (mat instanceof MeshToonMaterial || mat instanceof MeshStandardMaterial) mat.opacity = opacity;
   }
 
   private dropPickup(bit: PickupBit): void {
     bit.group.remove(bit.root);
-    if (bit.kind === "wings") {
+    if (bit.kind === "heart" || bit.kind === "wings") {
       for (const child of bit.root.children) {
-        if (!(child instanceof Mesh) || child.userData.owned !== true) continue;
-        if (child.material instanceof MeshToonMaterial || child.material instanceof MeshStandardMaterial) {
+        if (!(child instanceof Mesh)) continue;
+        if (
+          child.userData.owned === true
+          && (child.material instanceof MeshToonMaterial
+            || child.material instanceof MeshStandardMaterial
+            || child.material instanceof MeshBasicMaterial)
+        ) {
           child.material.dispose();
         }
       }
@@ -3057,7 +3131,14 @@ export class MazeWorld {
       || child.geometry === this.warpGateGeometry;
     if (!shared) child.geometry.dispose();
     if (child.userData.chunkMat instanceof MeshToonMaterial) child.userData.chunkMat.dispose();
-    if (child.userData.owned === true && child.material instanceof MeshToonMaterial) child.material.dispose();
+    if (
+      child.userData.owned === true
+      && (child.material instanceof MeshToonMaterial
+        || child.material instanceof MeshStandardMaterial
+        || child.material instanceof MeshBasicMaterial)
+    ) {
+      child.material.dispose();
+    }
     if (
       child.material instanceof MeshBasicMaterial
       && (child.geometry === this.sparkGeometry || child.geometry === this.rainGeometry)
@@ -4772,29 +4853,6 @@ function buildMonkey(group: Group, mats: AnimalMats): void {
   for (const [x, z] of [[-0.06, 0.06], [-0.06, -0.06], [0.06, 0.06], [0.06, -0.06]] as const) {
     voxel(group, mats.monkey, 0.025, 0.1, 0.025, x, 0.1, z);
   }
-}
-
-function heartGeometry(): BufferGeometry {
-  const shape = new Shape();
-  const s = 0.026;
-  const x = (value: number) => (value - 12) * s;
-  const y = (value: number) => (16 - value) * s;
-  shape.moveTo(x(12), y(21));
-  shape.bezierCurveTo(x(12), y(21), x(4), y(14), x(4), y(9));
-  shape.bezierCurveTo(x(4), y(5.5), x(6.5), y(3), x(9.5), y(3));
-  shape.bezierCurveTo(x(11), y(3), x(12), y(4), x(12), y(4));
-  shape.bezierCurveTo(x(12), y(4), x(13), y(3), x(14.5), y(3));
-  shape.bezierCurveTo(x(17.5), y(3), x(20), y(5.5), x(20), y(9));
-  shape.bezierCurveTo(x(20), y(14), x(12), y(21), x(12), y(21));
-  const geo = new ExtrudeGeometry(shape, {
-    depth: 0.12,
-    bevelEnabled: true,
-    bevelThickness: 0.03,
-    bevelSize: 0.02,
-    bevelSegments: 2,
-  });
-  geo.center();
-  return geo;
 }
 
 function starGeometry(): BufferGeometry {

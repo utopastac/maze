@@ -5,6 +5,7 @@ import {
   bindSwitchWall,
   canDropLifted,
   cancelPendingPair,
+  carveFloor,
   clearFloor,
   clearInterior,
   hasCoin,
@@ -40,9 +41,11 @@ import {
   SETTING_DEFAULTS,
   SETTING_SPECS,
   clampSetting,
+  cloneFloorPhysics,
   defaultFloorPhysics,
   type PhysicsSettingKey,
 } from "../core/playSettings.ts";
+import { saveLevel } from "../core/savedLevels.ts";
 import {
   copyText,
   formatAuthoredFloorLine,
@@ -74,12 +77,13 @@ import {
   moveFloorColumn,
   moveFloorRow,
   removeFloor,
+  repairTower,
   setHatch,
   setLevelName,
   setMaxHearts,
   type Tower,
 } from "../core/tower.ts";
-import { iconSvg, type IconName } from "./icons.ts";
+import { iconSvg, setPickupIcon, type IconName, type PickupIcon } from "./icons.ts";
 import styles from "./editor.module.css";
 
 export type EditorMode = "share" | "campaign";
@@ -134,6 +138,8 @@ type LineDrag = {
   moved: boolean;
   pointerId: number;
 };
+
+type BoardConfirm = "clear" | "random";
 
 const PALETTE: readonly { id: PaletteKind; label: string; icon: IconName }[] = [
   { id: "pit", label: "Pit", icon: "pit" },
@@ -264,10 +270,15 @@ export class LevelEditor {
   private wallDrag: WallDrag | null = null;
   private tileDrag: TileDrag | null = null;
   private brushHover: { c: number; r: number } | null = null;
+  private toolPeek: PaletteKind | null = null;
   private boostMenuAt: { c: number; r: number } | null = null;
   private boostGesture: "rotate" | "paint" | null = null;
   private pointerId: number | null = null;
   private noticeTimer = 0;
+  private readonly confirmRoot: HTMLElement;
+  private readonly confirmTitle: HTMLElement;
+  private readonly confirmOk: HTMLButtonElement;
+  private boardConfirm: BoardConfirm | null = null;
 
   constructor(root: HTMLElement, callbacks: EditorCallbacks) {
     this.root = root;
@@ -366,6 +377,7 @@ export class LevelEditor {
               <div class="${styles.stageActions}">
                 <button type="button" class="glass-pill ${styles.headBtn}" data-paste title="Paste a model into the editor">${iconSvg("paste")}Paste</button>
                 <button type="button" class="glass-pill ${styles.headBtn}" data-copy data-campaign-only title="Copy a paste-ready line for authoredFloors.ts">${iconSvg("copy")}Copy model</button>
+                <button type="button" class="glass-pill ${styles.headBtn}" data-save title="Save this level to this device">${iconSvg("save")}Save</button>
                 <button type="button" class="glass-pill ${styles.headBtn}" data-share data-share-only>${iconSvg("share")}Share</button>
                 <button type="button" class="glass-pill metal-ring ${styles.play}" data-play>Play</button>
                 <button type="button" class="glass-btn ${styles.close}" data-close aria-label="Close editor">${iconSvg("close")}</button>
@@ -373,7 +385,8 @@ export class LevelEditor {
             </header>
             <div class="${styles.stageBody}">
               <div class="${styles.stageTop}">
-                <button type="button" class="${styles.clear}" data-clear>Clear</button>
+                <button type="button" class="${styles.stageBtn}" data-random>Random</button>
+                <button type="button" class="${styles.stageBtn}" data-clear>Clear</button>
               </div>
               <div class="${styles.boardWrap}" data-board-wrap>
                 <div class="${styles.sheet}" data-sheet data-theme="${DEFAULT_FLOOR_THEME}">
@@ -393,6 +406,23 @@ export class LevelEditor {
                 <div class="${styles.tileMenu}" data-tile-menu hidden role="menu" aria-label="Place tile"></div>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+      <div class="${styles.confirm}" data-confirm hidden>
+        <div class="${styles.confirmScrim}" data-confirm-scrim></div>
+        <div
+          class="${styles.confirmCard}"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="editor-confirm-title"
+          aria-describedby="editor-confirm-body"
+        >
+          <p class="${styles.confirmTitle}" id="editor-confirm-title" data-confirm-title></p>
+          <p class="${styles.confirmBody}" id="editor-confirm-body">This will clear all changes to the board.</p>
+          <div class="${styles.confirmActions}">
+            <button type="button" class="glass-pill ${styles.confirmCancel}" data-confirm-cancel>Cancel</button>
+            <button type="button" class="glass-pill metal-ring ${styles.confirmOk}" data-confirm-ok>Confirm</button>
           </div>
         </div>
       </div>
@@ -425,6 +455,9 @@ export class LevelEditor {
     this.deleteBtn = this.require("[data-delete-line]");
     this.selectBox = this.require("[data-select-box]");
     this.tileMenu = this.require("[data-tile-menu]");
+    this.confirmRoot = this.require("[data-confirm]");
+    this.confirmTitle = this.require("[data-confirm-title]");
+    this.confirmOk = this.require("[data-confirm-ok]");
     this.mountPalette();
     this.mountTileMenu();
     this.mountThemes();
@@ -432,9 +465,19 @@ export class LevelEditor {
     this.require("[data-scrim]").addEventListener("click", this.requestClose);
     this.require("[data-close]").addEventListener("click", this.requestClose);
     this.require("[data-clear]").addEventListener("click", () => {
-      if (this.pairing()) return;
-      clearInterior(this.draft);
-      this.renderBoard();
+      this.openBoardConfirm("clear");
+    });
+    this.require("[data-random]").addEventListener("click", () => {
+      this.openBoardConfirm("random");
+    });
+    this.require("[data-confirm-scrim]").addEventListener("click", () => {
+      this.hideBoardConfirm();
+    });
+    this.require("[data-confirm-cancel]").addEventListener("click", () => {
+      this.hideBoardConfirm();
+    });
+    this.confirmOk.addEventListener("click", () => {
+      this.commitBoardConfirm();
     });
     this.require("[data-copy]").addEventListener("click", () => {
       void this.copyModel();
@@ -445,7 +488,13 @@ export class LevelEditor {
     this.require("[data-share]").addEventListener("click", () => {
       void this.share();
     });
+    this.require("[data-save]").addEventListener("click", () => {
+      this.save();
+    });
     this.require("[data-play]").addEventListener("click", () => {
+      this.commitName();
+      // Persist before leaving the editor — same path as Save, best-effort.
+      saveLevel(this.tower);
       const tower = cloneTower(this.tower);
       this.hide();
       this.callbacks.onPlay(tower);
@@ -597,6 +646,7 @@ export class LevelEditor {
     this.lineSelect = null;
     this.hideTileMenu();
     this.hideSettingsPanel();
+    this.hideBoardConfirm();
     this.hideGap();
     this.clearNotice();
     delete this.chrome.dataset.dragging;
@@ -606,9 +656,68 @@ export class LevelEditor {
 
   private requestClose = (): void => {
     if (!this.isOpen()) return;
+    if (this.boardConfirm) {
+      this.hideBoardConfirm();
+      return;
+    }
     this.hide();
     this.callbacks.onClose();
   };
+
+  private openBoardConfirm(kind: BoardConfirm): void {
+    if (this.pairing()) return;
+    this.boardConfirm = kind;
+    this.confirmTitle.textContent = kind === "clear" ? "Clear the board?" : "Randomize the board?";
+    this.confirmOk.textContent = kind === "clear" ? "Clear" : "Random";
+    this.confirmRoot.hidden = false;
+    this.confirmOk.focus();
+  }
+
+  private hideBoardConfirm(): void {
+    this.boardConfirm = null;
+    this.confirmRoot.hidden = true;
+  }
+
+  private commitBoardConfirm(): void {
+    const kind = this.boardConfirm;
+    this.hideBoardConfirm();
+    if (kind === "clear") this.clearBoard();
+    else if (kind === "random") this.randomizeBoard();
+  }
+
+  private clearBoard(): void {
+    if (this.pairing()) return;
+    clearInterior(this.draft);
+    this.hideTileMenu();
+    this.clearLineSelect();
+    this.renderBoard();
+  }
+
+  private randomizeBoard(): void {
+    if (this.pairing()) return;
+    const draft = this.draft;
+    const theme = draft.theme;
+    const physics = cloneFloorPhysics(draft.physics);
+    const seed = Math.floor(Math.random() * 0x7fffffff);
+    const generated = carveFloor(seed, draft.cols, draft.rows, { ...draft.start });
+    generated.theme = theme;
+    if (physics) generated.physics = physics;
+    this.tower.floors[this.floorIndex] = generated;
+    repairTower(this.tower);
+    this.stroke = null;
+    this.wallDrag = null;
+    this.clearTileDrag();
+    this.hideTileMenu();
+    this.clearLineSelect();
+    this.brush = "move";
+    this.syncSize();
+    this.syncFloors();
+    this.syncPalette();
+    this.syncThemes();
+    this.syncPhysics();
+    this.renderBoard();
+    this.refreshHint();
+  }
 
   private mountPalette(): void {
     const host = this.require("[data-palette]");
@@ -912,9 +1021,10 @@ export class LevelEditor {
   }
 
   private setBrush(kind: EditorTool): void {
-    if (this.pairing() && kind !== this.pairing()) return;
+    const pair = this.pairing();
+    if (pair && kind !== pair) return;
     this.brush = kind;
-    if (this.pairing() && this.brush !== this.pairing()) this.brush = this.pairing();
+    if (pair && this.brush !== pair) this.brush = pair;
     if (!this.hoverBrush()) this.brushHover = null;
     this.hideTileMenu();
     this.syncPalette();
@@ -922,12 +1032,28 @@ export class LevelEditor {
     this.refreshHint();
   }
 
+  private commitName(): void {
+    setLevelName(this.tower, this.nameInput.value);
+    this.syncName();
+  }
+
   private async share(): Promise<void> {
+    this.commitName();
     const result = await this.callbacks.onShare(cloneTower(this.tower));
     if (!this.isOpen()) return;
     if (result === null) this.flash("This level is too big to fit in a link.");
     else if (result) this.flash("Link copied.");
     else this.flash("Couldn't copy. The address bar has the link.");
+  }
+
+  private save(): void {
+    this.commitName();
+    const saved = saveLevel(this.tower);
+    if (!saved) {
+      this.flash("This level is too big to save.");
+      return;
+    }
+    this.flash("Saved to this device.");
   }
 
   private async copyModel(): Promise<void> {
@@ -1469,9 +1595,11 @@ export class LevelEditor {
     const pairing = this.pairing();
     for (const [id, button] of this.paletteButtons) {
       const on = this.brush === id;
+      const peek = this.toolPeek === id;
       button.hidden = false;
       button.disabled = pairing !== null;
       button.classList.toggle("selected", on);
+      button.classList.toggle("peek", peek);
       button.setAttribute("aria-checked", String(on));
     }
     this.syncFloorLocks(pairing !== null);
@@ -1666,6 +1794,17 @@ export class LevelEditor {
         else delete cell.dataset.wings;
       } else if (showWings) cell.dataset.wings = "true";
       else delete cell.dataset.wings;
+      const pickupKind: PickupIcon | null = cell.dataset.heart
+        ? "heart"
+        : cell.dataset.coin
+          ? "coin"
+          : cell.dataset.star
+            ? "star"
+            : cell.dataset.wings
+              ? "wings"
+              : null;
+      const pickup = cell.firstElementChild as HTMLElement | null;
+      if (pickup) setPickupIcon(pickup, pickupKind);
       if (isSource || isPairSource) cell.dataset.dragging = "true";
       else delete cell.dataset.dragging;
       if (isOver) cell.dataset.drop = this.canDropAt(drag.over, drag.lift) ? "ok" : "no";
@@ -1804,6 +1943,7 @@ export class LevelEditor {
   };
 
   private onPairHoverLeave = (): void => {
+    this.setToolPeek(null);
     if (!this.brushHover) return;
     this.brushHover = null;
     if (this.hoverBrush() || this.selectHoverActive()) this.syncCells();
@@ -1820,7 +1960,36 @@ export class LevelEditor {
     return this.brush === "move" && !this.pairing() && !this.tileDrag;
   }
 
+  private setToolPeek(kind: PaletteKind | null): void {
+    if (this.toolPeek === kind) return;
+    this.toolPeek = kind;
+    this.syncPalette();
+  }
+
+  private paletteKindAt(c: number, r: number): PaletteKind | null {
+    const point = { c, r };
+    if (hasHeart(this.draft, point)) return "heart";
+    if (hasCoin(this.draft, point)) return "coin";
+    if (hasStar(this.draft, point)) return "star";
+    if (hasWings(this.draft, point)) return "wings";
+    if (this.draft.holes.some((hole) => hole.c === c && hole.r === r)) return "pit";
+    const tile = tileAt(this.draft, c, r);
+    if (
+      tile?.kind === "boost"
+      || tile?.kind === "warp"
+      || tile?.kind === "ice"
+      || tile?.kind === "crumble"
+      || tile?.kind === "block"
+      || tile?.kind === "switch"
+    ) {
+      return tile.kind;
+    }
+    return null;
+  }
+
   private updateBrushHover(x: number, y: number): void {
+    const point = this.cellAt(x, y);
+    this.setToolPeek(point ? this.paletteKindAt(point.c, point.r) : null);
     if (!this.hoverBrush() && !this.selectHoverActive()) {
       if (this.brushHover) {
         this.brushHover = null;
@@ -1828,7 +1997,6 @@ export class LevelEditor {
       }
       return;
     }
-    const point = this.cellAt(x, y);
     if (point && this.brushHover && samePoint(point, this.brushHover)) return;
     if (!point && !this.brushHover) return;
     this.brushHover = point;
@@ -2196,6 +2364,10 @@ export class LevelEditor {
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
+      if (this.boardConfirm) {
+        this.hideBoardConfirm();
+        return;
+      }
       if (this.cancelPairing()) return;
       if (this.tileMenuAt) {
         this.hideTileMenu();

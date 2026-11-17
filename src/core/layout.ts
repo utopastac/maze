@@ -1,4 +1,12 @@
-import { Wall, tileAt, wallKey, type Direction, type FloorTile, type Maze } from "./maze.ts";
+import {
+  Wall,
+  tileAt,
+  wallKey,
+  type Direction,
+  type FloorTile,
+  type GridPoint,
+  type Maze,
+} from "./maze.ts";
 import { cloneFloorPhysics, type FloorPhysics } from "./playSettings.ts";
 import { parseFloorTheme, type FloorThemeId } from "./theme.ts";
 import type { Tower } from "./tower.ts";

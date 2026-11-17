@@ -1,6 +1,7 @@
 import {
   ArrowDown,
   ArrowLeft,
+  Bookmark,
   Box,
   CircleArrowDown,
   ArrowRight,
@@ -22,6 +23,7 @@ import {
   Heart,
   Hourglass,
   Images,
+  Keyboard,
   LayoutGrid,
   Link,
   Snowflake,
@@ -29,10 +31,12 @@ import {
   Minus,
   MousePointer2,
   NotebookPen,
+  Pause,
   Pencil,
   Plus,
   RotateCcw,
   RotateCw,
+  Save,
   Shuffle,
   SlidersHorizontal,
   Smartphone,
@@ -83,6 +87,9 @@ export type IconName =
   | "minus"
   | "plus"
   | "share"
+  | "save"
+  | "saved"
+  | "keyboard"
   | "wins"
   | "copy"
   | "paste"
@@ -90,13 +97,15 @@ export type IconName =
   | "angleDown"
   | "angleUp"
   | "orbitLeft"
-  | "orbitRight";
+  | "orbitRight"
+  | "pause";
 
 const NODES: Record<IconName, IconNode> = {
   level: Compass,
   reset: RotateCcw,
   new: Shuffle,
   campaign: Castle,
+  pause: Pause,
   levels: LayoutGrid,
   heart: Heart,
   coin: Coins,
@@ -129,6 +138,9 @@ const NODES: Record<IconName, IconNode> = {
   minus: Minus,
   plus: Plus,
   share: Link,
+  save: Save,
+  saved: Bookmark,
+  keyboard: Keyboard,
   copy: ClipboardCopy,
   paste: ClipboardPaste,
   load: Download,
@@ -147,4 +159,14 @@ export function iconSvg(name: IconName, size = ICON_SIZE): string {
     "aria-hidden": "true",
   });
   return el.outerHTML;
+}
+
+export type PickupIcon = "heart" | "coin" | "star" | "wings";
+
+/** Swap the collectible glyph in an editor/preview pickup slot when the kind changes. */
+export function setPickupIcon(pickup: HTMLElement, kind: PickupIcon | null): void {
+  const next = kind ?? "";
+  if (pickup.dataset.icon === next) return;
+  pickup.dataset.icon = next;
+  pickup.innerHTML = kind ? iconSvg(kind) : "";
 }

@@ -8,7 +8,7 @@
   &[data-celebrate] {
     & .bottom,
     & .debug,
-    & .controls {
+    & .controlsDock {
       display: none;
     }
   }
@@ -179,12 +179,37 @@
   }
 }
 
+.controlsDock {
+  --controls-inset: 20px;
+  position: absolute;
+  right: calc(var(--safe-right) + var(--controls-inset));
+  bottom: calc(var(--safe-bottom) + var(--controls-inset));
+  z-index: 3;
+  pointer-events: none;
+
+  @media (max-width: 720px), (pointer: coarse) {
+    display: none;
+  }
+
+  &[data-open="true"] .controls,
+  &:hover .controls,
+  &:focus-within .controls {
+    opacity: 1;
+    visibility: visible;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.controlsBtn {
+  pointer-events: auto;
+}
+
 .controls {
   --key: 22px;
   --key-gap: 3px;
   position: absolute;
-  right: calc(var(--safe-right) + var(--chrome-edge));
-  bottom: calc(var(--safe-bottom) + 88px);
+  right: 0;
+  bottom: calc(100% + 10px);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -194,9 +219,16 @@
   background: color-mix(in srgb, var(--panel-fill) 72%, transparent);
   box-shadow: inset 0 0 0 2px var(--glass-border);
   border-radius: var(--panel-radius);
+  opacity: 0;
+  visibility: hidden;
+  transform: translate3d(0, 6px, 0);
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease,
+    visibility 0.16s ease;
 
-  @media (max-width: 720px), (pointer: coarse) {
-    display: none;
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
   }
 }
 

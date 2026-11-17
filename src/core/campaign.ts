@@ -12,7 +12,7 @@ import {
   type Maze,
 } from "./maze.ts";
 import { decodeLevel } from "./share.ts";
-import { themeForFloor } from "./theme.ts";
+import { parseFloorTheme, themeForFloor, type FloorThemeId } from "./theme.ts";
 
 export const CAMPAIGN_FLOORS = 100;
 export const CAMPAIGN_LIVES = 3;
@@ -157,6 +157,10 @@ function insideMaze(maze: Maze, cell: GridPoint): boolean {
 
 export function campaignSizes(campaign: Campaign): number[] {
   return campaign.floors.map((floor) => floor.maze.cols);
+}
+
+export function campaignThemes(campaign: Campaign): FloorThemeId[] {
+  return campaign.floors.map((floor, index) => parseFloorTheme(floor.maze.theme ?? themeForFloor(index)));
 }
 
 function gridSize(t: number): number {

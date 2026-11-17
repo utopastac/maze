@@ -280,7 +280,3 @@ function inside(maze: Maze, cell: GridPoint): boolean {
 function same(a: GridPoint, b: GridPoint): boolean {
   return a.c === b.c && a.r === b.r;
 }
-
-function isPoint(value: GridPoint | null): value is GridPoint {
-  return value !== null;
-}

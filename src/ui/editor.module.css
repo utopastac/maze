@@ -360,7 +360,7 @@ button.step {
   text-align: center;
 }
 
-.clear {
+.stageBtn {
   appearance: none;
   border: 1px solid var(--glass-border);
   border-radius: var(--control-radius);
@@ -427,6 +427,12 @@ button.swatch {
     background: color-mix(in srgb, var(--glass) 70%, var(--seam) 12%);
   }
 
+  &:global(.peek):not(.selected) {
+    color: var(--seam);
+    border-color: color-mix(in srgb, var(--seam) 38%, transparent);
+    background: color-mix(in srgb, var(--glass) 82%, var(--seam) 8%);
+  }
+
   &:focus-visible {
     outline: 1px solid var(--seam);
     outline-offset: 1px;
@@ -435,6 +441,10 @@ button.swatch {
   @media (hover: hover) and (pointer: fine) {
     &:hover:not(:disabled) {
       background: color-mix(in srgb, var(--glass) 80%, var(--ink) 8%);
+    }
+
+    &:global(.peek):not(.selected):hover:not(:disabled) {
+      background: color-mix(in srgb, var(--glass) 76%, var(--seam) 10%);
     }
   }
 }
@@ -448,6 +458,8 @@ button.swatch {
 .themeSelect,
 .settingsTrigger {
   appearance: none;
+  display: flex;
+  align-items: center;
   width: 100%;
   height: 40px;
   padding: 0 36px 0 14px;
@@ -460,6 +472,7 @@ button.swatch {
   color: var(--ink);
   font: inherit;
   font-size: 14px;
+  line-height: 1;
   cursor: pointer;
 
   &:focus {
@@ -480,6 +493,8 @@ button.swatch {
 
     &::picker-icon {
       color: var(--ink-faint);
+      align-self: center;
+      margin-inline-start: auto;
       transition: rotate 0.16s ease;
     }
 
@@ -700,11 +715,83 @@ button.swatch {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  gap: 8px;
   pointer-events: none;
 
-  & .clear {
+  & .stageBtn {
     pointer-events: auto;
   }
+}
+
+.confirm {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  pointer-events: auto;
+
+  &[hidden] {
+    display: none;
+  }
+}
+
+.confirmScrim {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--maze-void) 55%, transparent);
+}
+
+.confirmCard {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 320px);
+  display: grid;
+  gap: 12px;
+  padding: 22px 20px 18px;
+  border-radius: var(--panel-radius);
+  background: var(--panel-fill);
+  box-shadow: var(--panel-shadow);
+  color: var(--ink);
+  text-align: center;
+}
+
+.confirmTitle {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.confirmBody {
+  margin: 0;
+  color: var(--ink-dim);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.confirmActions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.confirmCancel,
+.confirmOk {
+  min-width: 88px;
+  height: 36px;
+  padding: 0 16px;
+  font-size: 14px;
+}
+
+.confirmOk {
+  color: #111 !important;
+  background: var(--seam) !important;
+  box-shadow: none !important;
 }
 
 .boardWrap {
@@ -786,6 +873,7 @@ button.swatch {
 .rowRail {
   position: absolute;
   display: grid;
+  overflow: visible;
   pointer-events: none;
 }
 
@@ -819,6 +907,7 @@ button.handle {
   color: var(--ink);
   cursor: grab;
   opacity: 0;
+  overflow: visible;
   pointer-events: auto;
   display: grid;
   place-items: center;
@@ -870,17 +959,23 @@ button.handle {
 }
 
 .colRail button.handle {
-  width: calc(100% - 24px);
+  width: calc(100% - 16px);
   max-width: 100%;
-  height: 100%;
+  height: auto;
+  min-height: 28px;
+  padding-block: 4px;
   margin-inline: auto;
+  align-self: center;
 }
 
 .rowRail button.handle {
-  width: 100%;
-  height: calc(100% - 24px);
+  width: auto;
+  height: calc(100% - 16px);
   max-height: 100%;
+  min-width: 28px;
+  padding-inline: 4px;
   margin-block: auto;
+  justify-self: center;
 }
 
 .sheet[data-gap] button.handle {
@@ -888,33 +983,48 @@ button.handle {
 }
 
 .handleBars {
-  display: block;
-  opacity: 0.9;
-  border-radius: 4px;
+  box-sizing: border-box;
+  display: grid;
+  place-content: center;
+  gap: 3px;
+  padding: 4px 6px;
+  border-radius: 999px;
   background-color: color-mix(in srgb, var(--accent) 55%, transparent);
   transition: background-color 0.14s ease;
+  overflow: visible;
+
+  &::before,
+  &::after {
+    content: "";
+    background: currentColor;
+    border-radius: 1px;
+    opacity: 0.92;
+  }
 }
 
 .colRail .handleBars {
-  width: 18px;
-  height: 10px;
-  background-image:
-    linear-gradient(currentColor, currentColor),
-    linear-gradient(currentColor, currentColor);
-  background-size: 100% 1.5px, 100% 1.5px;
-  background-position: 0 2.5px, 0 6px;
-  background-repeat: no-repeat;
+  width: 22px;
+  height: 14px;
+  grid-template-rows: 1.5px 1.5px;
+
+  &::before,
+  &::after {
+    width: 100%;
+    height: 1.5px;
+  }
 }
 
 .rowRail .handleBars {
-  width: 10px;
-  height: 18px;
-  background-image:
-    linear-gradient(currentColor, currentColor),
-    linear-gradient(currentColor, currentColor);
-  background-size: 1.5px 100%, 1.5px 100%;
-  background-position: 2.5px 0, 6px 0;
-  background-repeat: no-repeat;
+  width: 14px;
+  height: 22px;
+  grid-template-columns: 1.5px 1.5px;
+  padding: 6px 4px;
+
+  &::before,
+  &::after {
+    width: 1.5px;
+    height: 100%;
+  }
 }
 
 .selectBox {
@@ -1559,44 +1669,39 @@ button.deleteBtn {
   }
 
   &[data-heart="true"] > .pickup {
-    background: var(--maze-heart);
+    color: var(--maze-heart);
+
+    & :is(svg) {
+      stroke: var(--maze-heart);
+      fill: var(--maze-heart);
+    }
   }
 
   &[data-coin="true"] > .pickup {
-    background: var(--maze-coin);
-    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, #000 18%, transparent);
+    color: var(--maze-coin);
+
+    & :is(svg) {
+      stroke: var(--maze-coin);
+      fill: var(--maze-coin);
+    }
   }
 
   &[data-star="true"] > .pickup {
-    background: var(--maze-power);
-    clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
-    border-radius: 0;
-    box-shadow: none;
+    color: var(--maze-power);
+
+    & :is(svg) {
+      stroke: var(--maze-power);
+      fill: var(--maze-power);
+    }
   }
 
   &[data-wings="true"] > .pickup {
-    background: var(--maze-hover);
-    width: 42%;
-    top: 8%;
-    right: 4%;
-    clip-path: polygon(
-      50% 18%,
-      72% 4%,
-      96% 22%,
-      88% 48%,
-      78% 42%,
-      70% 58%,
-      60% 48%,
-      50% 62%,
-      40% 48%,
-      30% 58%,
-      22% 42%,
-      12% 48%,
-      4% 22%,
-      28% 4%
-    );
-    border-radius: 0;
-    box-shadow: none;
+    color: var(--maze-hover);
+
+    & :is(svg) {
+      stroke: var(--maze-hover);
+      fill: var(--maze-hover);
+    }
   }
 
   &[data-kind="switch"] {
@@ -1644,14 +1749,21 @@ button.deleteBtn {
 
 .pickup {
   position: absolute;
-  top: 10%;
-  right: 10%;
-  width: 28%;
-  aspect-ratio: 1;
-  border-radius: 50%;
+  inset: 0;
+  display: grid;
+  place-items: center;
   opacity: 0;
   pointer-events: none;
   z-index: 1;
+
+  & :is(svg) {
+    width: 58%;
+    height: 58%;
+    display: block;
+    stroke-width: 1.75;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
 }
 
 .wall {

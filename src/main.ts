@@ -6,14 +6,39 @@ async function boot(): Promise<void> {
   const playHud = document.querySelector<HTMLCanvasElement>("#play-hud");
   const chrome = document.querySelector<HTMLElement>("#chrome");
   const overlay = document.querySelector<HTMLElement>("#overlay");
+  const pause = document.querySelector<HTMLElement>("#pause");
+  const intro = document.querySelector<HTMLElement>("#tower-intro");
   const sheet = document.querySelector<HTMLElement>("#sheet");
   const picker = document.querySelector<HTMLElement>("#picker");
+  const library = document.querySelector<HTMLElement>("#library");
   const editor = document.querySelector<HTMLElement>("#editor");
-  if (!canvas || !playHud || !chrome || !overlay || !sheet || !picker || !editor) {
-    throw new Error("Maze shell markup is missing.");
+  if (
+    !canvas
+    || !playHud
+    || !chrome
+    || !overlay
+    || !pause
+    || !intro
+    || !sheet
+    || !picker
+    || !library
+    || !editor
+  ) {
+    throw new Error("Mazespire shell markup is missing.");
   }
 
-  const app = new App(canvas, playHud, chrome, overlay, sheet, picker, editor);
+  const app = new App(
+    canvas,
+    playHud,
+    chrome,
+    overlay,
+    pause,
+    intro,
+    sheet,
+    picker,
+    library,
+    editor,
+  );
   await app.start();
 }
 

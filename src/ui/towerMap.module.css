@@ -1,59 +1,162 @@
 .tower {
-  position: absolute;
-  top: calc(var(--safe-top) + 108px);
-  bottom: calc(var(--safe-bottom) + 178px);
-  left: calc(var(--safe-left) + var(--chrome-edge));
-  width: 64px;
+  position: relative;
+  width: 118px;
+  height: 100%;
+  min-height: 0;
   pointer-events: none;
 
   @media (max-width: 720px) {
-    top: calc(var(--safe-top) + 168px);
-    left: calc(var(--safe-left) + 10px);
-    width: 46px;
+    width: 92px;
+  }
+
+  &.interactive {
+    pointer-events: auto;
+    cursor: pointer;
+    touch-action: manipulation;
+
+    &:focus-visible {
+      outline: 2px solid var(--seam);
+      outline-offset: 2px;
+    }
+  }
+
+  &.full {
+    width: 100%;
+
+    & .bars {
+      right: 32px;
+      gap: 3px;
+      padding: 10px 14px;
+    }
+
+    & .step {
+      min-height: 8px;
+      border-radius: 8px;
+    }
+
+    & .mark {
+      left: auto;
+      right: 2px;
+      font-size: 13px;
+    }
   }
 }
 
 .bars {
-  position: relative;
+  position: absolute;
+  inset: 0;
+  right: 26px;
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  height: 100%;
+  gap: 2px;
   min-height: 0;
-  padding: 6px;
+  padding: 8px;
   border-radius: var(--control-radius);
   background: color-mix(in srgb, var(--ink) 6%, transparent);
 
   @media (max-height: 760px) {
-    gap: 0;
+    gap: 1px;
+  }
+
+  &[data-fade="above"] {
+    mask-image: linear-gradient(to bottom, transparent 0%, #000 12%, #000 100%);
+  }
+
+  &[data-fade="below"] {
+    mask-image: linear-gradient(to bottom, #000 0%, #000 88%, transparent 100%);
+  }
+
+  &[data-fade="both"] {
+    mask-image: linear-gradient(
+      to bottom,
+      transparent 0%,
+      #000 10%,
+      #000 90%,
+      transparent 100%
+    );
   }
 }
 
 .step {
   flex: 1 1 0;
-  min-height: 1px;
+  min-height: 2px;
   margin-inline: auto;
   border-radius: 99px;
-  background: color-mix(in srgb, var(--ink) 16%, transparent);
+  --floor-theme: var(--ink);
+  background: color-mix(in srgb, var(--floor-theme) 38%, transparent);
+
+  &[data-theme="futuristic"] {
+    --floor-theme: var(--theme-futuristic-frame);
+  }
+
+  &[data-theme="desert"] {
+    --floor-theme: var(--theme-desert-frame);
+  }
+
+  &[data-theme="castle"] {
+    --floor-theme: var(--theme-castle-frame);
+  }
+
+  &[data-theme="tomb"] {
+    --floor-theme: var(--theme-tomb-frame);
+  }
+
+  &[data-theme="office"] {
+    --floor-theme: var(--theme-office-frame);
+  }
+
+  &[data-theme="suburbia"] {
+    --floor-theme: var(--theme-suburbia-frame);
+  }
 
   &[data-state="done"] {
-    background: color-mix(in srgb, var(--maze-hatch) 70%, transparent);
+    background: color-mix(in srgb, var(--floor-theme) 78%, transparent);
   }
 
   &[data-state="now"] {
-    background: var(--seam);
-    box-shadow: 0 0 10px var(--seam);
+    background: var(--floor-theme);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--floor-theme) 80%, transparent);
+  }
+
+  &[data-state="next"] {
+    background: color-mix(in srgb, var(--floor-theme) 48%, transparent);
   }
 }
 
 .mark {
   position: absolute;
-  left: calc(100% + 8px);
+  left: calc(100% - 22px);
   z-index: 1;
   transform: translateY(-50%);
-  color: var(--seam);
-  font-size: 12px;
+  --floor-theme: var(--seam);
+  color: var(--floor-theme);
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
   text-shadow: var(--type-shadow);
+  pointer-events: none;
+
+  &[data-theme="futuristic"] {
+    --floor-theme: var(--theme-futuristic-frame);
+  }
+
+  &[data-theme="desert"] {
+    --floor-theme: var(--theme-desert-frame);
+  }
+
+  &[data-theme="castle"] {
+    --floor-theme: var(--theme-castle-frame);
+  }
+
+  &[data-theme="tomb"] {
+    --floor-theme: var(--theme-tomb-frame);
+  }
+
+  &[data-theme="office"] {
+    --floor-theme: var(--theme-office-frame);
+  }
+
+  &[data-theme="suburbia"] {
+    --floor-theme: var(--theme-suburbia-frame);
+  }
 }

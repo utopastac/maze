@@ -7,9 +7,16 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
     <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Mazespire" />
+    <meta name="application-name" content="Mazespire" />
     <meta name="theme-color" content="#000000" />
+    <meta
+      name="description"
+      content="Tilt the maze. Climb the spire. A 3D marble labyrinth with stacked floors, hazards, and a 100-floor campaign."
+    />
+    <link rel="canonical" href="https://mazespire.f-90.co.uk/" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <title>Maze</title>
+    <title>Mazespire</title>
   </head>
   <body>
     <div id="app">
@@ -17,8 +24,11 @@
       <canvas id="play-hud" hidden aria-hidden="true"></canvas>
       <div id="chrome"></div>
       <div id="overlay" hidden></div>
+      <div id="pause" hidden></div>
+      <div id="tower-intro" hidden></div>
       <div id="sheet" hidden></div>
       <div id="picker" hidden></div>
+      <div id="library" hidden></div>
       <div id="editor" hidden></div>
     </div>
     <script type="module" src="/src/main.ts"></script>
