@@ -70,22 +70,22 @@ export const SETTING_SPECS: readonly SettingSpec[] = [
 ];
 
 export const SETTING_DEFAULTS: Record<SettingKey, number> = {
-  tilt: 11.5,
-  sensitivity: 1,
-  response: 8,
-  gravity: 24,
-  grip: 1,
+  tilt: 15,
+  sensitivity: 2.4,
+  response: 12,
+  gravity: 48,
+  grip: 2,
   damping: 0.55,
   zoom: 1,
-  angle: 46.5,
+  angle: 60,
   orbit: 0,
-  field: 30,
-  pixels: 3,
+  field: 40,
+  pixels: 1.5,
   uiPixels: 2,
-  shade: 3,
+  shade: 6,
   skyTheme: 0,
-  skyPixels: 4,
-  skyShade: 6,
+  skyPixels: 0.5,
+  skyShade: 20,
 };
 
 export function skyThemeAt(index: number): (typeof SKY_THEMES)[number] {
@@ -97,7 +97,7 @@ const STORAGE_KEY = "maze.settings";
 
 export class PlaySettings {
   readonly values: Record<SettingKey, number> = { ...SETTING_DEFAULTS };
-  invertY = false;
+  invertY = true;
   normalLook = false;
   private readonly listeners = new Set<() => void>();
 
@@ -137,7 +137,7 @@ export class PlaySettings {
 
   reset(): void {
     for (const spec of SETTING_SPECS) this.values[spec.key] = SETTING_DEFAULTS[spec.key];
-    this.invertY = false;
+    this.invertY = true;
     this.normalLook = false;
     this.save();
     this.emit();

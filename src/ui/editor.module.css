@@ -1034,6 +1034,15 @@ button.handle {
   border-radius: 4px;
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--maze-void) 35%, transparent);
   pointer-events: none;
+  transition:
+    opacity 0.12s ease,
+    border-color 0.12s ease;
+
+  &[data-peek="true"] {
+    border-color: color-mix(in srgb, var(--accent) 85%, transparent);
+    box-shadow: none;
+    opacity: 0.92;
+  }
 }
 
 .gapLine {

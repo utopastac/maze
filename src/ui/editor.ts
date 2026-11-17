@@ -224,6 +224,7 @@ export class LevelEditor {
   private readonly deleteBtn: HTMLButtonElement;
   private readonly selectBox: HTMLElement;
   private lineSelect: { kind: "col" | "row"; index: number } | null = null;
+  private railHover: { col: number | null; row: number | null } = { col: null, row: null };
   private lineDrag: LineDrag | null = null;
   private tileMenuAt: { c: number; r: number } | null = null;
   private readonly tileMenu: HTMLElement;
@@ -644,6 +645,7 @@ export class LevelEditor {
     this.lineDrag = null;
     this.clearTileDrag();
     this.lineSelect = null;
+    this.railHover = { col: null, row: null };
     this.hideTileMenu();
     this.hideSettingsPanel();
     this.hideBoardConfirm();
@@ -1354,6 +1356,8 @@ export class LevelEditor {
   };
 
   private setRailHover(col: number | null, row: number | null): void {
+    if (this.railHover.col === col && this.railHover.row === row) return;
+    this.railHover = { col, row };
     for (const handle of this.colRail.querySelectorAll<HTMLButtonElement>("[data-handle]")) {
       const index = Number(handle.dataset.index);
       handle.dataset.hot = col === index ? "true" : "";
@@ -1362,10 +1366,81 @@ export class LevelEditor {
       const index = Number(handle.dataset.index);
       handle.dataset.hot = row === index ? "true" : "";
     }
+    this.syncLineHighlight();
   }
 
   private clearRailHover(): void {
     this.setRailHover(null, null);
+  }
+
+  /** Selected line, or a single-axis rail hover (about to drag). */
+  private activeLine(): { kind: "col" | "row"; index: number; peek: boolean } | null {
+    if (this.lineSelect) return { ...this.lineSelect, peek: false };
+    const { col, row } = this.railHover;
+    if (col !== null && row === null) return { kind: "col", index: col, peek: true };
+    if (row !== null && col === null) return { kind: "row", index: row, peek: true };
+    return null;
+  }
+
+  private syncLineHighlight(): void {
+    const { cols, rows } = this.draft;
+    const canDeleteCol = cols > MAZE_MIN;
+    const canDeleteRow = rows > MAZE_MIN;
+    const line = this.activeLine();
+
+    for (const cell of this.cells.values()) delete cell.dataset.line;
+
+    if (!line || (line.kind === "col" && line.index >= cols) || (line.kind === "row" && line.index >= rows)) {
+      this.selectBox.hidden = true;
+      delete this.selectBox.dataset.peek;
+      if (!this.lineSelect) this.deleteBtn.hidden = true;
+      return;
+    }
+
+    const { kind, index, peek } = line;
+    this.selectBox.hidden = false;
+    if (peek) this.selectBox.dataset.peek = "true";
+    else delete this.selectBox.dataset.peek;
+    this.selectBox.dataset.kind = kind;
+
+    if (kind === "col") {
+      this.selectBox.style.left = `calc(${index} / var(--cols) * 100%)`;
+      this.selectBox.style.top = "0";
+      this.selectBox.style.width = `calc(100% / var(--cols))`;
+      this.selectBox.style.height = "100%";
+    } else {
+      this.selectBox.style.left = "0";
+      this.selectBox.style.top = `calc(${index} / var(--rows) * 100%)`;
+      this.selectBox.style.width = "100%";
+      this.selectBox.style.height = `calc(100% / var(--rows))`;
+    }
+
+    if (peek) {
+      this.deleteBtn.hidden = true;
+    } else {
+      this.deleteBtn.hidden = false;
+      this.deleteBtn.disabled = kind === "col" ? !canDeleteCol : !canDeleteRow;
+      this.deleteBtn.setAttribute(
+        "aria-label",
+        kind === "col" ? `Delete column ${index + 1}` : `Delete row ${index + 1}`,
+      );
+      if (kind === "col") {
+        this.deleteBtn.style.left = `calc((${index} + 0.5) / var(--cols) * 100%)`;
+        this.deleteBtn.style.top = "0";
+        this.deleteBtn.style.transform = "translate(-50%, calc(-100% - 8px))";
+      } else {
+        this.deleteBtn.style.left = "0";
+        this.deleteBtn.style.top = `calc((${index} + 0.5) / var(--rows) * 100%)`;
+        this.deleteBtn.style.transform = "translate(calc(-100% - 8px), -50%)";
+      }
+    }
+
+    for (const cell of this.cells.values()) {
+      const match = kind === "col"
+        ? Number(cell.dataset.c) === index
+        : Number(cell.dataset.r) === index;
+      if (match) cell.dataset.line = "true";
+    }
   }
 
   private showGap(
@@ -1424,62 +1499,28 @@ export class LevelEditor {
     this.edgeSouth.disabled = rows >= MAZE_MAX;
     this.edgeEast.disabled = cols >= MAZE_MAX;
 
-    const canDeleteCol = cols > MAZE_MIN;
-    const canDeleteRow = rows > MAZE_MIN;
+    if (
+      this.lineSelect
+      && (
+        (this.lineSelect.kind === "col" && this.lineSelect.index >= cols)
+        || (this.lineSelect.kind === "row" && this.lineSelect.index >= rows)
+      )
+    ) {
+      this.lineSelect = null;
+    }
+
     for (const handle of this.colRail.querySelectorAll<HTMLButtonElement>("[data-handle]")) {
       const index = Number(handle.dataset.index);
       handle.dataset.selected = this.lineSelect?.kind === "col" && this.lineSelect.index === index ? "true" : "";
+      handle.dataset.hot = this.railHover.col === index ? "true" : "";
     }
     for (const handle of this.rowRail.querySelectorAll<HTMLButtonElement>("[data-handle]")) {
       const index = Number(handle.dataset.index);
       handle.dataset.selected = this.lineSelect?.kind === "row" && this.lineSelect.index === index ? "true" : "";
+      handle.dataset.hot = this.railHover.row === index ? "true" : "";
     }
 
-    for (const cell of this.cells.values()) delete cell.dataset.line;
-
-    if (!this.lineSelect) {
-      this.selectBox.hidden = true;
-      this.deleteBtn.hidden = true;
-      return;
-    }
-
-    const { kind, index } = this.lineSelect;
-    if ((kind === "col" && index >= cols) || (kind === "row" && index >= rows)) {
-      this.lineSelect = null;
-      this.selectBox.hidden = true;
-      this.deleteBtn.hidden = true;
-      return;
-    }
-
-    this.selectBox.hidden = false;
-    this.deleteBtn.hidden = false;
-    this.deleteBtn.disabled = kind === "col" ? !canDeleteCol : !canDeleteRow;
-    this.deleteBtn.setAttribute("aria-label", kind === "col" ? `Delete column ${index + 1}` : `Delete row ${index + 1}`);
-    this.selectBox.dataset.kind = kind;
-    if (kind === "col") {
-      this.selectBox.style.left = `calc(${index} / var(--cols) * 100%)`;
-      this.selectBox.style.top = "0";
-      this.selectBox.style.width = `calc(100% / var(--cols))`;
-      this.selectBox.style.height = "100%";
-      this.deleteBtn.style.left = `calc((${index} + 0.5) / var(--cols) * 100%)`;
-      this.deleteBtn.style.top = "0";
-      this.deleteBtn.style.transform = "translate(-50%, calc(-100% - 8px))";
-    } else {
-      this.selectBox.style.left = "0";
-      this.selectBox.style.top = `calc(${index} / var(--rows) * 100%)`;
-      this.selectBox.style.width = "100%";
-      this.selectBox.style.height = `calc(100% / var(--rows))`;
-      this.deleteBtn.style.left = "0";
-      this.deleteBtn.style.top = `calc((${index} + 0.5) / var(--rows) * 100%)`;
-      this.deleteBtn.style.transform = "translate(calc(-100% - 8px), -50%)";
-    }
-
-    for (const cell of this.cells.values()) {
-      const match = kind === "col"
-        ? Number(cell.dataset.c) === index
-        : Number(cell.dataset.r) === index;
-      if (match) cell.dataset.line = "true";
-    }
+    this.syncLineHighlight();
   }
 
   private selectFloor(index: number): void {

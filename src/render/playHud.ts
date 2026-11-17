@@ -40,7 +40,11 @@ const START_TITLE_PX = 36;
 const START_FLOOR_PX = 22;
 const START_BTN_PX = 36;
 const START_ICON = 18;
-const START_GAP = 18;
+const START_GAP = 10;
+const START_TITLE_FLOOR_GAP = 2;
+const START_COLLECT_GAP = 0.55;
+/** Show individual coin meshes up to this many; beyond that, one coin + count. */
+const MAX_COIN_ICONS = 5;
 const START_BTN_FONT = `700 72px "Arial Black", "Arial Bold", Impact, sans-serif`;
 const PULSE_SECS = 0.35;
 const SHOUT_LIFE = 1.05;
@@ -134,6 +138,8 @@ export class PlayHud {
   private readonly coinMeshes: Mesh[] = [];
   private readonly startHeartIcons: Group[] = [];
   private readonly startCoinMeshes: Mesh[] = [];
+  private coinCountPlate: TextPlate | null = null;
+  private startCoinCountPlate: StartLabel | null = null;
   private timerPlate: TextPlate | null = null;
   private titlePlate: TextPlate | null = null;
   private floorPlate: TextPlate | null = null;
@@ -371,6 +377,7 @@ export class PlayHud {
     this.timerPlate?.setSoft(soft);
     this.titlePlate?.setSoft(soft);
     this.floorPlate?.setSoft(soft);
+    this.coinCountPlate?.setSoft(soft);
     for (const shout of this.shouts) {
       const map = shout.faceMat.map;
       if (!map) continue;
@@ -711,7 +718,7 @@ export class PlayHud {
     this.startScrim.scale.set(viewW * 1.1, viewH * 1.1, 1);
     this.startScrim.position.set(viewW * 0.5, viewH * 0.5, -2);
 
-    const rows: { height: number; place: (y: number) => void }[] = [];
+    const rows: { height: number; after: number; place: (y: number) => void }[] = [];
 
     const title = this.startTitle.trim() || "Untitled";
     const titleH = START_TITLE_PX * s;
@@ -723,16 +730,18 @@ export class PlayHud {
     }
     this.startTitlePlate.root.rotation.x = -0.08;
     this.startTitlePlate.root.rotation.y = 0.04;
+    const floorLabel = this.startFloors === 1 ? "1 floor" : `${this.startFloors} floors`;
+    const floorH = START_FLOOR_PX * s;
+    // StartLabel canvases include transparent pad; pull the pair together optically.
+    const titleFloorAfter = START_TITLE_FLOOR_GAP * s - titleH * 0.2 - floorH * 0.12;
     rows.push({
       height: titleH,
+      after: titleFloorAfter,
       place: (y) => {
         if (!this.startTitlePlate) return;
         this.startTitlePlate.root.position.set(cx, y, 2);
       },
     });
-
-    const floorLabel = this.startFloors === 1 ? "1 floor" : `${this.startFloors} floors`;
-    const floorH = START_FLOOR_PX * s;
     if (!this.startFloorPlate) {
       this.startFloorPlate = new StartLabel(floorLabel, "#ffffff", floorH, false);
       this.startLayer.add(this.startFloorPlate.root);
@@ -743,6 +752,7 @@ export class PlayHud {
     this.startFloorPlate.root.rotation.y = 0.04;
     rows.push({
       height: floorH,
+      after: gap,
       place: (y) => {
         if (!this.startFloorPlate) return;
         this.startFloorPlate.root.position.set(cx, y, 2);
@@ -752,22 +762,15 @@ export class PlayHud {
     const heartCount = this.startLives === null
       ? 0
       : Math.max(0, Math.min(MAX_HEARTS_CAP, Math.round(this.startLives)));
-    if (heartCount > 0) {
+    const coinCount = Math.max(0, Math.round(this.startCoins));
+    if (heartCount > 0 || coinCount > 0) {
       rows.push({
         height: icon,
-        place: (y) => this.syncStartHearts(cx, y, icon, heartCount),
+        after: gap,
+        place: (y) => this.syncStartCollectibles(cx, y, icon, heartCount, coinCount),
       });
     } else {
       this.startHeartsRow.visible = false;
-    }
-
-    const coinCount = Math.max(0, Math.round(this.startCoins));
-    if (coinCount > 0) {
-      rows.push({
-        height: icon,
-        place: (y) => this.syncStartCoins(cx, y, icon, coinCount),
-      });
-    } else {
       this.startCoinsRow.visible = false;
     }
 
@@ -785,6 +788,7 @@ export class PlayHud {
     this.startBtnRow.rotation.x = -0.08;
     rows.push({
       height: btnH,
+      after: 0,
       place: (y) => {
         this.startBtnRow.visible = true;
         this.startBtnRow.userData.baseY = y;
@@ -800,21 +804,50 @@ export class PlayHud {
       },
     });
 
-    const totalH = rows.reduce((sum, row) => sum + row.height, 0) + gap * Math.max(0, rows.length - 1);
+    const totalH = rows.reduce((sum, row, i) => {
+      const after = i < rows.length - 1 ? row.after : 0;
+      return sum + row.height + after;
+    }, 0);
     let y = viewH * 0.55 + totalH * 0.5;
     for (let i = 0; i < rows.length; i += 1) {
       const row = rows[i];
       if (!row) continue;
       y -= row.height * 0.5;
       row.place(y);
-      y -= row.height * 0.5 + gap;
+      y -= row.height * 0.5 + (i < rows.length - 1 ? row.after : 0);
     }
   }
 
-  private syncStartHearts(centerX: number, y: number, icon: number, count: number): void {
-    this.startHeartsRow.visible = true;
-    this.startHeartsRow.position.set(centerX, y, 1);
-    const gap = icon * 1.3;
+  private syncStartCollectibles(
+    centerX: number,
+    y: number,
+    icon: number,
+    heartCount: number,
+    coinCount: number,
+  ): void {
+    const heartW = heartCount > 0 ? this.layoutStartHearts(icon, heartCount) : 0;
+    const coinW = coinCount > 0 ? this.layoutStartCoins(icon, coinCount) : 0;
+    const groupGap = heartCount > 0 && coinCount > 0 ? icon * START_COLLECT_GAP : 0;
+    const span = heartW + groupGap + coinW;
+    let x = centerX - span * 0.5;
+    if (heartCount > 0) {
+      this.startHeartsRow.visible = true;
+      this.startHeartsRow.position.set(x + heartW * 0.5, y, 1);
+      x += heartW + groupGap;
+    } else {
+      this.startHeartsRow.visible = false;
+    }
+    if (coinCount > 0) {
+      this.startCoinsRow.visible = true;
+      this.startCoinsRow.position.set(x + coinW * 0.5, y, 1);
+    } else {
+      this.startCoinsRow.visible = false;
+    }
+  }
+
+  /** Layout hearts around local origin; returns the row width. */
+  private layoutStartHearts(icon: number, count: number): number {
+    const gap = icon * 1.08;
     while (this.startHeartIcons.length < count) {
       const iconGroup = makeHeartIcon(
         this.heartGeo,
@@ -835,13 +868,15 @@ export class PlayHud {
       iconGroup.position.set((i - (count - 1) * 0.5) * gap, 0, 0);
       iconGroup.rotation.x = -0.18;
     }
+    return count <= 1 ? icon : (count - 1) * gap + icon;
   }
 
-  private syncStartCoins(centerX: number, y: number, icon: number, total: number): void {
-    this.startCoinsRow.visible = true;
-    this.startCoinsRow.position.set(centerX, y, 1);
-    const gap = icon * 1.25;
-    while (this.startCoinMeshes.length < total) {
+  /** Layout coins around local origin; returns the row width. */
+  private layoutStartCoins(icon: number, total: number): number {
+    const compact = total > MAX_COIN_ICONS;
+    const shown = compact ? 1 : total;
+    const gap = icon * 1.1;
+    while (this.startCoinMeshes.length < shown) {
       const mesh = new Mesh(this.coinGeo, this.coinMat);
       this.startCoinMeshes.push(mesh);
       this.startCoinsRow.add(mesh);
@@ -849,15 +884,40 @@ export class PlayHud {
     for (let i = 0; i < this.startCoinMeshes.length; i += 1) {
       const mesh = this.startCoinMeshes[i];
       if (!mesh) continue;
-      const on = i < total;
+      const on = i < shown;
       mesh.visible = on;
       if (!on) continue;
       mesh.geometry = this.coinGeo;
       mesh.material = this.coinMat;
       mesh.scale.setScalar(icon);
-      mesh.position.set((i - (total - 1) * 0.5) * gap, 0, 0);
       mesh.rotation.x = -0.2;
+      if (!compact) {
+        mesh.position.set((i - (shown - 1) * 0.5) * gap, 0, 0);
+      }
     }
+    if (compact) {
+      const fill = tokenColor("--maze-coin", "#f0c43a");
+      const countH = icon * 1.15;
+      const label = String(total);
+      if (!this.startCoinCountPlate) {
+        this.startCoinCountPlate = new StartLabel(label, fill, countH, true);
+        this.startCoinsRow.add(this.startCoinCountPlate.root);
+      } else {
+        this.startCoinCountPlate.set(label, fill, countH);
+      }
+      const countW = this.startCoinCountPlate.width;
+      const pairGap = icon * 0.28;
+      const span = icon + pairGap + countW;
+      const coin = this.startCoinMeshes[0];
+      if (coin) coin.position.set(-span * 0.5 + icon * 0.5, 0, 0);
+      this.startCoinCountPlate.root.visible = true;
+      this.startCoinCountPlate.root.position.set(-span * 0.5 + icon + pairGap + countW * 0.5, 0, 0);
+      this.startCoinCountPlate.root.rotation.x = -0.1;
+      this.startCoinCountPlate.root.rotation.y = 0.04;
+      return span;
+    }
+    if (this.startCoinCountPlate) this.startCoinCountPlate.root.visible = false;
+    return shown <= 1 ? icon : (shown - 1) * gap + icon;
   }
 
   private syncTitle(force = false): void {
@@ -938,8 +998,14 @@ export class PlayHud {
     const got = Math.max(0, Math.min(total, Math.round(this.coinsGot)));
     this.coinsRow.visible = total > 0;
     this.coinsRow.position.set(centerX, y, 0);
+    if (total <= 0) {
+      if (this.coinCountPlate) this.coinCountPlate.root.visible = false;
+      return;
+    }
+    const compact = total > MAX_COIN_ICONS;
+    const shown = compact ? 1 : total;
     const gap = icon * 1.25;
-    while (this.coinMeshes.length < total) {
+    while (this.coinMeshes.length < shown) {
       const mesh = new Mesh(this.coinGeo, this.coinMat);
       this.coinMeshes.push(mesh);
       this.coinsRow.add(mesh);
@@ -947,16 +1013,42 @@ export class PlayHud {
     for (let i = 0; i < this.coinMeshes.length; i += 1) {
       const mesh = this.coinMeshes[i];
       if (!mesh) continue;
-      const on = i < total;
+      const on = i < shown;
       mesh.visible = on;
       if (!on) continue;
-      const filled = i < got;
+      const filled = compact || i < got;
       mesh.geometry = this.coinGeo;
       mesh.material = filled ? this.coinMat : this.emptyCoinMat;
       mesh.scale.setScalar(icon);
-      mesh.position.set((i - (total - 1) * 0.5) * gap, 0, 0);
       mesh.rotation.x = -0.2;
       if (!filled) mesh.rotation.y = 0.35;
+      if (!compact) {
+        mesh.position.set((i - (shown - 1) * 0.5) * gap, 0, 0);
+      }
+    }
+    if (compact) {
+      const fill = tokenColor("--maze-coin", "#f0c43a");
+      const countH = icon * 1.35;
+      const label = `${got}/${total}`;
+      if (!this.coinCountPlate) {
+        this.coinCountPlate = new TextPlate(label, fill, countH);
+        this.coinCountPlate.setSoft(this.normalLook);
+        this.coinsRow.add(this.coinCountPlate.root);
+      } else {
+        this.coinCountPlate.set(label, fill, countH);
+      }
+      this.coinCountPlate.setSoft(this.normalLook);
+      const countW = this.coinCountPlate.width;
+      const pairGap = icon * 0.4;
+      const span = icon + pairGap + countW;
+      const coin = this.coinMeshes[0];
+      if (coin) coin.position.set(-span * 0.5 + icon * 0.5, 0, 0);
+      this.coinCountPlate.root.visible = true;
+      this.coinCountPlate.root.position.set(-span * 0.5 + icon + pairGap + countW * 0.5, 0, 0);
+      this.coinCountPlate.root.rotation.x = -0.1;
+      this.coinCountPlate.root.rotation.y = 0.08;
+    } else if (this.coinCountPlate) {
+      this.coinCountPlate.root.visible = false;
     }
   }
 
