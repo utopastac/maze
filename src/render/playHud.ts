@@ -25,8 +25,8 @@ import { formatTime } from "../core/format.ts";
 import { snapPixels } from "../core/playSettings.ts";
 import { MAX_HEARTS_CAP } from "../core/tower.ts";
 
-const PAD_X = 18;
-const PAD_Y = 28;
+const PAD_X = 10;
+const PAD_Y = 20;
 const ROW = 24;
 const TITLE_FLOOR_GAP = 12;
 const ICON = 14;
@@ -158,13 +158,10 @@ export class PlayHud {
     this.coinMat = stdMat(coin, shine, 0.4);
     this.coinMat.metalness = 0.7;
     this.coinMat.roughness = 0.25;
-    // Same disc as filled coins — translucent “unfilled” shell.
-    this.emptyCoinMat = stdMat(coin, shine, 0.08);
-    this.emptyCoinMat.transparent = true;
-    this.emptyCoinMat.opacity = 0.28;
-    this.emptyCoinMat.metalness = 0.45;
-    this.emptyCoinMat.roughness = 0.4;
-    this.emptyCoinMat.depthWrite = false;
+    // Uncollected slots: solid dull grey, no glow.
+    this.emptyCoinMat = stdMat("#6a6d74", "#2e3036", 0.02);
+    this.emptyCoinMat.metalness = 0.15;
+    this.emptyCoinMat.roughness = 0.85;
 
     this.heartGeo = makeHeartGeo();
     this.coinGeo = makeCoinGeo();
@@ -283,7 +280,7 @@ export class PlayHud {
     this.pulseCoin = Math.max(0, this.pulseCoin - dt);
     if (!reduceMotion) {
       for (const mesh of this.coinMeshes) {
-        if (!mesh.visible) continue;
+        if (!mesh.visible || mesh.material !== this.coinMat) continue;
         mesh.rotation.y += dt * 3.6;
       }
       for (const heart of this.heartIcons) {
@@ -449,10 +446,10 @@ export class PlayHud {
   private paint(force: boolean): void {
     if (!this.shown) return;
     if (this.layoutDirty || force) {
-      this.layoutRows();
       this.syncTitle(true);
       this.syncFloor(true);
       this.syncTimer(true);
+      this.layoutRows();
       this.layoutDirty = false;
     }
     this.renderer.render(this.scene, this.camera);
@@ -467,14 +464,19 @@ export class PlayHud {
     const viewW = this.bufferW * s;
     let y = padY;
 
-    this.titleRow.visible = this.titleText.length > 0;
-    this.titleRow.position.set(padX, y, 0);
-    if (this.titleText.length > 0) y -= row * 1.15;
-
+    const showTitle = this.titleText.length > 0;
     const showFloor = this.floorText !== null && this.floorText.length > 0;
+    this.titleRow.visible = showTitle;
+    this.titleRow.position.set(padX, y, 0);
+
+    let floorX = padX;
+    if (showTitle && this.titlePlate) {
+      floorX = padX + this.titlePlate.width + TITLE_FLOOR_GAP * s;
+    }
     this.floorRow.visible = showFloor;
-    this.floorRow.position.set(padX, y, 0);
-    if (showFloor) y -= row * 0.9;
+    this.floorRow.position.set(floorX, y, 0);
+
+    if (showTitle || showFloor) y -= row * 1.05;
     this.timerRow.position.set(padX, y, 0);
 
     this.syncCoins(viewW * 0.5, padY, icon);
@@ -575,6 +577,7 @@ export class PlayHud {
       mesh.scale.setScalar(icon);
       mesh.position.set((i - (total - 1) * 0.5) * gap, 0, 0);
       mesh.rotation.x = -0.2;
+      if (!filled) mesh.rotation.y = 0.35;
     }
   }
 
