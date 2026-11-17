@@ -69,7 +69,8 @@ const ANGLE_MIN = ANGLE_SPEC?.min ?? 22;
 const ANGLE_MAX = ANGLE_SPEC?.max ?? 80;
 const MEADOW_CAM_SECS = 1.25;
 const MEADOW_GLANCE_PITCH_MIN = -28;
-const MEADOW_GLANCE_PITCH_MAX = 55;
+const MEADOW_GLANCE_PITCH_MAX = 88;
+const MEADOW_EYE_MIN = 0.55;
 
 export class MazeWorld {
   readonly scene = new Scene();
@@ -144,6 +145,10 @@ export class MazeWorld {
   private readonly sparks: Spark[] = [];
   private readonly fireworks: FireworkBit[] = [];
   private fireworkCooldown = 0;
+  private readonly raindrops: RainBit[] = [];
+  private rainCooldown = 0;
+  private readonly rainGeometry: BufferGeometry;
+  private readonly rainColors: string[];
   private readonly floorGroups: (Group | null)[] = [];
   private readonly frames: (Mesh | null)[] = [];
   private readonly goalRings: Mesh[] = [];
@@ -410,6 +415,7 @@ export class MazeWorld {
     this.starGeometry = starGeometry();
     this.wingGeometry = wingGeometry();
     this.sparkGeometry = facet(new BoxGeometry(0.05, 0.14, 0.05));
+    this.rainGeometry = facet(new BoxGeometry(0.028, 0.42, 0.028));
     this.warpGateGeometry = facet(new CylinderGeometry(WARP_GATE_R, WARP_GATE_R, WARP_GATE_H, 8, 1, true));
     this.heartMat = glow(token("--maze-heart"));
     this.heartMat.emissiveIntensity = 0.8;
@@ -467,6 +473,13 @@ export class MazeWorld {
       token("--maze-warp-2"),
       token("--maze-goal"),
       "#ffffff",
+    ];
+    this.rainColors = [
+      token("--maze-fail-neon"),
+      token("--sky-ocean-3"),
+      token("--sky-ocean-5"),
+      "#9eb0c4",
+      "#c8d6e4",
     ];
 
     const hemi = new HemisphereLight(token("--maze-sky"), token("--maze-floor"), 0.7);
@@ -953,7 +966,8 @@ export class MazeWorld {
           }
         }
       }
-      if (!this.failed) this.tickFireworks(dt);
+      if (this.failed) this.tickRain(dt);
+      else this.tickFireworks(dt);
     }
     this.boostMarkMat.emissiveIntensity = 0.55 + Math.sin(time * 4.5) * 0.28;
     this.iceMarkMat.emissiveIntensity = 0.35 + Math.sin(time * 1.6) * 0.12;
@@ -1347,6 +1361,91 @@ export class MazeWorld {
     this.fireworkCooldown = 0;
   }
 
+  private tickRain(dt: number): void {
+    const meadow = this.meadow;
+    if (!meadow) {
+      this.clearRain();
+      return;
+    }
+    this.rainCooldown -= dt;
+    if (this.rainCooldown <= 0) {
+      const drops = 10 + Math.floor(Math.random() * 14);
+      for (let i = 0; i < drops; i += 1) this.spawnRaindrop(meadow);
+      this.rainCooldown = 0.04 + Math.random() * 0.06;
+    }
+    for (let i = this.raindrops.length - 1; i >= 0; i -= 1) {
+      const bit = this.raindrops[i];
+      if (!bit) continue;
+      bit.age += dt;
+      const t = bit.age / bit.life;
+      if (!bit.mesh.parent || t >= 1 || bit.mesh.position.y < -0.2) {
+        this.dropRaindrop(bit);
+        this.raindrops.splice(i, 1);
+        continue;
+      }
+      bit.mesh.position.addScaledVector(bit.vel, dt);
+      const fade = t < 0.75 ? 0.55 + (1 - t) * 0.35 : (1 - t) * 2.2;
+      bit.mesh.scale.setScalar(Math.max(0.08, bit.baseScale * (0.85 + fade * 0.2)));
+      if (bit.mesh.material instanceof MeshBasicMaterial) {
+        bit.mesh.material.opacity = Math.max(0, Math.min(0.85, fade));
+      }
+    }
+  }
+
+  private spawnRaindrop(meadow: Group): void {
+    const tower = this.tower;
+    if (!tower) return;
+    const span = Math.max(tower.width, tower.depth) * 2.8;
+    const x = (Math.random() - 0.5) * span * 1.35;
+    const y = span * (0.55 + Math.random() * 0.55);
+    const z = (Math.random() - 0.5) * span * 1.15 - span * 0.08;
+    const palette = this.rainColors;
+    const color = palette[Math.floor(Math.random() * palette.length)] ?? "#9eb0c4";
+    const mat = new MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.72,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const mesh = new Mesh(this.rainGeometry, mat);
+    mesh.position.set(x, y, z);
+    mesh.renderOrder = 4;
+    const wind = 0.35 + Math.random() * 0.55;
+    const fall = 7.5 + Math.random() * 5.5;
+    const vel = new Vector3(
+      -wind * (0.7 + Math.random() * 0.6),
+      -fall,
+      wind * 0.15 * (Math.random() - 0.5),
+    );
+    const baseScale = 0.75 + Math.random() * 1.1;
+    mesh.scale.set(0.55 + Math.random() * 0.5, baseScale, 0.55 + Math.random() * 0.5);
+    const dir = vel.clone().normalize();
+    if (dir.lengthSq() > 0.001) {
+      mesh.quaternion.setFromUnitVectors(new Vector3(0, 1, 0), dir);
+    }
+    meadow.add(mesh);
+    this.raindrops.push({
+      mesh,
+      parent: meadow,
+      vel,
+      age: 0,
+      life: 1.1 + Math.random() * 0.7,
+      baseScale,
+    });
+  }
+
+  private dropRaindrop(bit: RainBit): void {
+    bit.parent.remove(bit.mesh);
+    if (bit.mesh.material instanceof MeshBasicMaterial) bit.mesh.material.dispose();
+  }
+
+  private clearRain(): void {
+    for (const bit of this.raindrops) this.dropRaindrop(bit);
+    this.raindrops.length = 0;
+    this.rainCooldown = 0;
+  }
+
   private tickPickups(list: PickupBit[], time: number, dt: number, spin: number, bob: number): void {
     for (let i = list.length - 1; i >= 0; i -= 1) {
       const bit = list[i];
@@ -1680,6 +1779,7 @@ export class MazeWorld {
     group.position.y = -MEADOW_DROP;
     group.visible = true;
     group.userData.generated = true;
+    this.rainCooldown = 0.01;
 
     const pad = new Mesh(new BoxGeometry(span, 0.22, span), this.groundMats.failGroundDark);
     pad.position.y = -0.11;
@@ -1712,6 +1812,7 @@ export class MazeWorld {
     this.addFailSign(group, span);
     this.board.add(group);
     this.meadow = group;
+    for (let i = 0; i < 48; i += 1) this.spawnRaindrop(group);
   }
 
   private addFailSign(parent: Group, span: number): void {
@@ -2594,6 +2695,7 @@ export class MazeWorld {
 
   private clearMeadow(): void {
     this.clearFireworks();
+    this.clearRain();
     if (this.meadow) {
       this.board.remove(this.meadow);
       this.meadow.traverse((child) => this.disposeGenerated(child));
@@ -2674,21 +2776,33 @@ export class MazeWorld {
     if (!tower) return;
     const meadowY = this.meadow?.position.y ?? -MEADOW_DROP;
     const span = Math.max(tower.width, tower.depth) * 2.8;
-    const yaw = (this.glanceDOrbit * Math.PI) / 180;
-    const pitch = (this.glanceDAngle * Math.PI) / 180;
-    // Up = out/up, down = in/down. Left/right only yaws in place.
-    const dolly = Math.sin(pitch);
-    const eyeRadius = span * (0.34 + dolly * 0.28);
-    const eyeHeight = 0.55 + dolly * span * 0.26;
-    const lookDist = span * 0.9;
-    const lookHeight = span * (0.1 + dolly * 0.08);
+    const orbit = (this.glanceDOrbit * Math.PI) / 180;
+    // Fixed pivot so orbit/pitch only moves the eye, not the scene center.
+    const lookY = meadowY + Math.max(1.1, span * 0.09);
+    const lookZ = -span * 0.28;
+    this.meadowCamLook.set(0, lookY, lookZ);
 
-    this.meadowCamEye.set(0, meadowY + eyeHeight, eyeRadius);
-    this.meadowCamLook.set(
-      Math.sin(yaw) * lookDist,
-      meadowY + lookHeight,
-      eyeRadius - Math.cos(yaw) * lookDist,
+    // Up mostly dollies back; elevation only tilts a little.
+    const up = clamp(this.glanceDAngle / MEADOW_GLANCE_PITCH_MAX, 0, 1);
+    const down = clamp(-this.glanceDAngle / Math.abs(MEADOW_GLANCE_PITCH_MIN), 0, 1);
+    const baseElev = (16 * Math.PI) / 180;
+    const elev = baseElev + up * ((20 * Math.PI) / 180) - down * ((16 * Math.PI) / 180);
+    const dist = span * (0.72 + up * 1.35 - down * 0.18);
+    const floorGap = meadowY + MEADOW_EYE_MIN - lookY;
+    const minElev = floorGap >= dist
+      ? Math.PI / 2
+      : floorGap <= -dist
+        ? -Math.PI / 2
+        : Math.asin(floorGap / dist);
+    const safeElev = Math.max(elev, minElev + 0.02);
+    const cosE = Math.cos(safeElev);
+    const sinE = Math.sin(safeElev);
+    this.meadowCamEye.set(
+      Math.sin(orbit) * cosE * dist,
+      lookY + sinE * dist,
+      lookZ + Math.cos(orbit) * cosE * dist,
     );
+    this.meadowCamEye.y = Math.max(this.meadowCamEye.y, meadowY + MEADOW_EYE_MIN);
     this.meadowCamEye.applyQuaternion(this.board.quaternion);
     this.meadowCamLook.applyQuaternion(this.board.quaternion);
 
@@ -2939,17 +3053,23 @@ export class MazeWorld {
       || child.geometry === this.starGeometry
       || child.geometry === this.wingGeometry
       || child.geometry === this.sparkGeometry
+      || child.geometry === this.rainGeometry
       || child.geometry === this.warpGateGeometry;
     if (!shared) child.geometry.dispose();
     if (child.userData.chunkMat instanceof MeshToonMaterial) child.userData.chunkMat.dispose();
     if (child.userData.owned === true && child.material instanceof MeshToonMaterial) child.material.dispose();
-    if (child.material instanceof MeshBasicMaterial && child.geometry === this.sparkGeometry) {
+    if (
+      child.material instanceof MeshBasicMaterial
+      && (child.geometry === this.sparkGeometry || child.geometry === this.rainGeometry)
+    ) {
       child.material.dispose();
     }
   }
 
   private clearGenerated(): void {
     this.clearSparks();
+    this.clearFireworks();
+    this.clearRain();
     const gone = this.board.children.filter((child) => child.userData.generated === true);
     for (const obj of gone) {
       this.board.remove(obj);
@@ -3250,6 +3370,15 @@ interface FireworkBit {
   life: number;
   gravity: number;
   drag: number;
+  baseScale: number;
+}
+
+interface RainBit {
+  mesh: Mesh;
+  parent: Group;
+  vel: Vector3;
+  age: number;
+  life: number;
   baseScale: number;
 }
 

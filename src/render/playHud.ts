@@ -1,10 +1,11 @@
 import {
   AmbientLight,
+  BoxGeometry,
   CanvasTexture,
-  CylinderGeometry,
   DirectionalLight,
   ExtrudeGeometry,
   Group,
+  LatheGeometry,
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
@@ -13,8 +14,10 @@ import {
   PlaneGeometry,
   Scene,
   Shape,
+  SphereGeometry,
   SRGBColorSpace,
-  TorusGeometry,
+  Vector2,
+  Vector3,
   WebGLRenderer,
   type BufferGeometry,
 } from "three";
@@ -23,12 +26,17 @@ import { snapPixels } from "../core/playSettings.ts";
 import { MAX_HEARTS_CAP } from "../core/tower.ts";
 
 const PAD_X = 18;
-const PAD_Y = 64;
-const ROW = 22;
+const PAD_Y = 28;
+const ROW = 24;
+const TITLE_FLOOR_GAP = 12;
 const ICON = 14;
+const TIMER_PX = 28;
+const TITLE_PX = 26;
+const FLOOR_PX = 18;
 const PULSE_SECS = 0.35;
 const SHOUT_LIFE = 1.05;
 const SHOUT_POP = 0.18;
+const SHATTER_LIFE = 0.7;
 const FONT = `700 64px "Arial Black", "Arial Bold", Impact, sans-serif`;
 
 type ComicShout = {
@@ -39,11 +47,27 @@ type ComicShout = {
   baseY: number;
 };
 
+type HeartShard = {
+  mesh: Mesh;
+  mat: MeshStandardMaterial;
+  geo: BufferGeometry;
+  vx: number;
+  vy: number;
+  vz: number;
+  spinX: number;
+  spinY: number;
+  spinZ: number;
+  age: number;
+  life: number;
+};
+
 export type PlayHudStats = {
   seconds: number;
   lives: number | null;
   coinsGot: number;
   coinsMax: number;
+  titleText: string;
+  floorText: string | null;
   pulseLives?: boolean;
   pulseCoins?: boolean;
 };
@@ -61,21 +85,31 @@ export class PlayHud {
   private readonly heartsRow = new Group();
   private readonly coinsRow = new Group();
   private readonly timerRow = new Group();
+  private readonly titleRow = new Group();
+  private readonly floorRow = new Group();
   private readonly heartGeo: BufferGeometry;
   private readonly coinGeo: BufferGeometry;
-  private readonly emptyCoinGeo: BufferGeometry;
-  private readonly heartMat: MeshStandardMaterial;
+  private readonly heartOutlineMat: MeshStandardMaterial;
+  private readonly heartBodyMat: MeshStandardMaterial;
+  private readonly heartShadeMat: MeshStandardMaterial;
+  private readonly heartHighlightMat: MeshBasicMaterial;
   private readonly coinMat: MeshStandardMaterial;
   private readonly emptyCoinMat: MeshStandardMaterial;
-  private readonly heartMeshes: Mesh[] = [];
+  private readonly heartIcons: Group[] = [];
   private readonly coinMeshes: Mesh[] = [];
   private timerPlate: TextPlate | null = null;
+  private titlePlate: TextPlate | null = null;
+  private floorPlate: TextPlate | null = null;
   private shown = false;
   private lives: number | null = null;
   private coinsGot = 0;
   private coinsMax = 0;
   private seconds = 0;
   private timerText = "";
+  private titleText = "";
+  private titleDrawn = "";
+  private floorText: string | null = null;
+  private floorDrawn = "";
   private pulseHeart = 0;
   private pulseCoin = 0;
   private bufferW = 1;
@@ -84,6 +118,9 @@ export class PlayHud {
   private viewScale = 1;
   private readonly shouts: ComicShout[] = [];
   private readonly shoutLayer = new Group();
+  private readonly shatterLayer = new Group();
+  private readonly shards: HeartShard[] = [];
+  private readonly shatterScratch = new Vector3();
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -100,25 +137,37 @@ export class PlayHud {
     this.camera = new PerspectiveCamera(28, 1, 0.1, 500);
     this.camera.position.set(0, 0, 120);
 
-    const heart = tokenColor("--maze-heart", "#e2586c");
+    const heart = tokenColor("--maze-heart", "#e84555");
     const coin = tokenColor("--maze-coin", "#f0c43a");
     const shine = tokenColor("--maze-coin-shine", "#ffe9a0");
 
-    this.heartMat = stdMat(heart, heart, 0.55);
+    this.heartOutlineMat = stdMat("#5a1e22", "#2a0c10", 0.05);
+    this.heartOutlineMat.roughness = 0.65;
+    this.heartBodyMat = stdMat(heart, heart, 0.35);
+    this.heartBodyMat.roughness = 0.35;
+    this.heartShadeMat = stdMat("#b02030", "#801018", 0.08);
+    this.heartShadeMat.transparent = true;
+    this.heartShadeMat.opacity = 0.55;
+    this.heartShadeMat.depthWrite = false;
+    this.heartHighlightMat = new MeshBasicMaterial({
+      color: "#ffffff",
+      toneMapped: false,
+      depthWrite: false,
+    });
+
     this.coinMat = stdMat(coin, shine, 0.4);
     this.coinMat.metalness = 0.7;
     this.coinMat.roughness = 0.25;
-    this.emptyCoinMat = stdMat("#3a3220", coin, 0.08);
+    // Same disc as filled coins — translucent “unfilled” shell.
+    this.emptyCoinMat = stdMat(coin, shine, 0.08);
     this.emptyCoinMat.transparent = true;
-    this.emptyCoinMat.opacity = 0.55;
-    this.emptyCoinMat.metalness = 0.2;
-    this.emptyCoinMat.roughness = 0.7;
+    this.emptyCoinMat.opacity = 0.28;
+    this.emptyCoinMat.metalness = 0.45;
+    this.emptyCoinMat.roughness = 0.4;
+    this.emptyCoinMat.depthWrite = false;
 
     this.heartGeo = makeHeartGeo();
-    this.coinGeo = new CylinderGeometry(0.5, 0.5, 0.2, 22);
-    this.coinGeo.rotateX(Math.PI / 2);
-    this.emptyCoinGeo = new TorusGeometry(0.38, 0.11, 10, 20);
-    this.emptyCoinGeo.rotateX(Math.PI / 2);
+    this.coinGeo = makeCoinGeo();
 
     this.scene.add(new AmbientLight("#ffffff", 0.55));
     const key = new DirectionalLight("#fff6ea", 1.45);
@@ -127,8 +176,8 @@ export class PlayHud {
     fill.position.set(5, -2, 6);
     const rim = new DirectionalLight("#ffffff", 0.25);
     rim.position.set(0, 2, -4);
-    this.scene.add(key, fill, rim, this.root, this.shoutLayer);
-    this.root.add(this.heartsRow, this.coinsRow, this.timerRow);
+    this.scene.add(key, fill, rim, this.root, this.shoutLayer, this.shatterLayer);
+    this.root.add(this.titleRow, this.floorRow, this.heartsRow, this.coinsRow, this.timerRow);
     this.canvas.hidden = true;
   }
 
@@ -169,26 +218,43 @@ export class PlayHud {
     this.canvas.hidden = !on;
     this.root.visible = on;
     this.shoutLayer.visible = on;
+    this.shatterLayer.visible = on;
     if (on) {
       this.layoutDirty = true;
       this.paint(true);
     } else {
       this.clearShouts();
+      this.clearShards();
       this.renderer.clear();
     }
   }
 
   setStats(stats: PlayHudStats): void {
-    const livesChanged = this.lives !== stats.lives;
+    const prevLives = this.lives;
+    const livesChanged = prevLives !== stats.lives;
     const coinsChanged = this.coinsGot !== stats.coinsGot || this.coinsMax !== stats.coinsMax;
+    const titleChanged = this.titleText !== stats.titleText;
+    const floorChanged = this.floorText !== stats.floorText;
     const timeChanged = this.seconds !== stats.seconds;
+    if (
+      this.shown
+      && prevLives !== null
+      && stats.lives !== null
+      && stats.lives < prevLives
+    ) {
+      const from = Math.max(0, Math.min(MAX_HEARTS_CAP, Math.round(prevLives)));
+      const to = Math.max(0, Math.min(MAX_HEARTS_CAP, Math.round(stats.lives)));
+      for (let i = to; i < from; i += 1) this.shatterHeart(i);
+    }
     this.seconds = stats.seconds;
     this.lives = stats.lives;
     this.coinsGot = stats.coinsGot;
     this.coinsMax = stats.coinsMax;
+    this.titleText = stats.titleText;
+    this.floorText = stats.floorText;
     if (stats.pulseLives) this.pulseHeart = PULSE_SECS;
     if (stats.pulseCoins && stats.coinsMax > 0) this.pulseCoin = PULSE_SECS;
-    if (livesChanged || coinsChanged) this.layoutDirty = true;
+    if (livesChanged || coinsChanged || titleChanged || floorChanged) this.layoutDirty = true;
     if (timeChanged) this.syncTimer();
   }
 
@@ -216,19 +282,112 @@ export class PlayHud {
     this.pulseHeart = Math.max(0, this.pulseHeart - dt);
     this.pulseCoin = Math.max(0, this.pulseCoin - dt);
     if (!reduceMotion) {
-      for (let i = 0; i < this.coinsGot && i < this.coinMeshes.length; i += 1) {
-        const mesh = this.coinMeshes[i];
-        if (mesh) mesh.rotation.y += dt * 3.6;
+      for (const mesh of this.coinMeshes) {
+        if (!mesh.visible) continue;
+        mesh.rotation.y += dt * 3.6;
       }
-      for (const heart of this.heartMeshes) {
+      for (const heart of this.heartIcons) {
         if (!heart.visible) continue;
-        heart.rotation.y = 0.25 + Math.sin(performance.now() * 0.0024 + heart.id) * 0.4;
+        heart.rotation.y = 0.2 + Math.sin(performance.now() * 0.0024 + heart.id) * 0.35;
       }
     }
     this.heartsRow.scale.setScalar(pulseScale(this.pulseHeart));
     this.coinsRow.scale.setScalar(pulseScale(this.pulseCoin));
     this.tickShouts(dt, reduceMotion);
+    this.tickShards(dt, reduceMotion);
     this.paint(false);
+  }
+
+  private shatterHeart(index: number): void {
+    const icon = this.heartIcons[index];
+    if (!icon || !icon.visible) return;
+    icon.updateWorldMatrix(true, false);
+    const origin = icon.getWorldPosition(this.shatterScratch);
+    this.shatterLayer.worldToLocal(origin);
+    const size = Math.max(0.01, icon.scale.x);
+    const bodyHex = this.heartBodyMat.color.getHex();
+    const shadeHex = this.heartShadeMat.color.getHex();
+    const outlineHex = this.heartOutlineMat.color.getHex();
+    const palette = [bodyHex, bodyHex, shadeHex, outlineHex];
+    const count = 11;
+    for (let i = 0; i < count; i += 1) {
+      const w = size * (0.14 + Math.random() * 0.28);
+      const h = size * (0.12 + Math.random() * 0.32);
+      const d = size * (0.1 + Math.random() * 0.18);
+      const geo = new BoxGeometry(w, h, d);
+      const mat = new MeshStandardMaterial({
+        color: palette[i % palette.length],
+        emissive: palette[i % palette.length],
+        emissiveIntensity: 0.25,
+        roughness: 0.45,
+        metalness: 0.05,
+        transparent: true,
+        depthWrite: false,
+      });
+      const mesh = new Mesh(geo, mat);
+      const ang = (i / count) * Math.PI * 2 + Math.random() * 0.4;
+      const kick = size * (1.8 + Math.random() * 3.4);
+      mesh.position.set(
+        origin.x + Math.cos(ang) * size * 0.12,
+        origin.y + (Math.random() - 0.2) * size * 0.15,
+        origin.z + (Math.random() - 0.5) * size * 0.1,
+      );
+      mesh.rotation.set(Math.random() * 2, Math.random() * 2, Math.random() * 2);
+      this.shatterLayer.add(mesh);
+      this.shards.push({
+        mesh,
+        mat,
+        geo,
+        vx: Math.cos(ang) * kick,
+        vy: size * (2.4 + Math.random() * 3.6),
+        vz: Math.sin(ang) * kick * 0.55,
+        spinX: (Math.random() - 0.5) * 14,
+        spinY: (Math.random() - 0.5) * 16,
+        spinZ: (Math.random() - 0.5) * 14,
+        age: 0,
+        life: SHATTER_LIFE * (0.75 + Math.random() * 0.35),
+      });
+    }
+    icon.visible = false;
+  }
+
+  private tickShards(dt: number, reduceMotion: boolean): void {
+    const gravity = this.viewScale * 52;
+    for (let i = this.shards.length - 1; i >= 0; i -= 1) {
+      const shard = this.shards[i];
+      if (!shard) continue;
+      shard.age += dt;
+      const u = Math.min(1, shard.age / shard.life);
+      if (reduceMotion) {
+        shard.mesh.scale.setScalar(1 - u);
+        shard.mat.opacity = 1 - u;
+      } else {
+        shard.vy -= gravity * dt;
+        shard.mesh.position.x += shard.vx * dt;
+        shard.mesh.position.y += shard.vy * dt;
+        shard.mesh.position.z += shard.vz * dt;
+        shard.mesh.rotation.x += shard.spinX * dt;
+        shard.mesh.rotation.y += shard.spinY * dt;
+        shard.mesh.rotation.z += shard.spinZ * dt;
+        shard.mat.opacity = 1 - u * u;
+        const shrink = 1 - u * 0.45;
+        shard.mesh.scale.setScalar(shrink);
+      }
+      if (shard.age < shard.life) continue;
+      this.shatterLayer.remove(shard.mesh);
+      shard.geo.dispose();
+      shard.mat.dispose();
+      this.shards.splice(i, 1);
+    }
+  }
+
+  private clearShards(): void {
+    for (const shard of this.shards) {
+      this.shatterLayer.remove(shard.mesh);
+      shard.geo.dispose();
+      shard.mat.dispose();
+    }
+    this.shards.length = 0;
   }
 
   private tickShouts(dt: number, reduceMotion: boolean): void {
@@ -291,6 +450,8 @@ export class PlayHud {
     if (!this.shown) return;
     if (this.layoutDirty || force) {
       this.layoutRows();
+      this.syncTitle(true);
+      this.syncFloor(true);
       this.syncTimer(true);
       this.layoutDirty = false;
     }
@@ -303,44 +464,99 @@ export class PlayHud {
     const padY = (this.bufferH - PAD_Y) * s;
     const row = ROW * s;
     const icon = ICON * s;
+    const viewW = this.bufferW * s;
     let y = padY;
 
-    this.syncHearts(padX, y, icon);
-    if (this.lives !== null) y -= row;
-    this.syncCoins(padX, y, icon);
-    if (this.coinsMax > 0) y -= row;
+    this.titleRow.visible = this.titleText.length > 0;
+    this.titleRow.position.set(padX, y, 0);
+    if (this.titleText.length > 0) y -= row * 1.15;
+
+    const showFloor = this.floorText !== null && this.floorText.length > 0;
+    this.floorRow.visible = showFloor;
+    this.floorRow.position.set(padX, y, 0);
+    if (showFloor) y -= row * 0.9;
     this.timerRow.position.set(padX, y, 0);
+
+    this.syncCoins(viewW * 0.5, padY, icon);
+    this.syncHearts(viewW - padX, padY, icon);
   }
 
-  private syncHearts(x: number, y: number, icon: number): void {
+  private syncTitle(force = false): void {
+    const text = this.titleText;
+    if (!force && text === this.titleDrawn) return;
+    this.titleDrawn = text;
+    if (!text) {
+      this.titleRow.visible = false;
+      return;
+    }
+    const height = this.viewScale * TITLE_PX;
+    if (!this.titlePlate) {
+      this.titlePlate = new TextPlate(text, "#ffffff", height);
+      this.titleRow.add(this.titlePlate.root);
+    } else {
+      this.titlePlate.set(text, "#ffffff", height);
+    }
+    this.titlePlate.root.position.set(this.titlePlate.width * 0.5, 0, 0);
+    this.titlePlate.root.rotation.x = -0.1;
+    this.titlePlate.root.rotation.y = 0.08;
+  }
+
+  private syncFloor(force = false): void {
+    const text = this.floorText ?? "";
+    if (!force && text === this.floorDrawn) return;
+    this.floorDrawn = text;
+    if (!text) {
+      this.floorRow.visible = false;
+      return;
+    }
+    const height = this.viewScale * FLOOR_PX;
+    if (!this.floorPlate) {
+      this.floorPlate = new TextPlate(text, "#ffffff", height);
+      this.floorRow.add(this.floorPlate.root);
+    } else {
+      this.floorPlate.set(text, "#ffffff", height);
+    }
+    this.floorPlate.root.position.set(this.floorPlate.width * 0.5, 0, 0);
+    this.floorPlate.root.rotation.x = -0.1;
+    this.floorPlate.root.rotation.y = 0.08;
+  }
+
+  private syncHearts(rightX: number, y: number, icon: number): void {
     const count = this.lives === null
       ? 0
       : Math.max(0, Math.min(MAX_HEARTS_CAP, Math.round(this.lives)));
     this.heartsRow.visible = count > 0;
-    this.heartsRow.position.set(x, y, 0);
-    const gap = icon * 1.25;
-    while (this.heartMeshes.length < count) {
-      const mesh = new Mesh(this.heartGeo, this.heartMat);
-      this.heartMeshes.push(mesh);
-      this.heartsRow.add(mesh);
+    this.heartsRow.position.set(rightX, y, 0);
+    const gap = icon * 1.3;
+    while (this.heartIcons.length < count) {
+      const iconGroup = makeHeartIcon(
+        this.heartGeo,
+        this.heartOutlineMat,
+        this.heartBodyMat,
+        this.heartShadeMat,
+        this.heartHighlightMat,
+      );
+      this.heartIcons.push(iconGroup);
+      this.heartsRow.add(iconGroup);
     }
-    for (let i = 0; i < this.heartMeshes.length; i += 1) {
-      const mesh = this.heartMeshes[i];
-      if (!mesh) continue;
+    for (let i = 0; i < this.heartIcons.length; i += 1) {
+      const iconGroup = this.heartIcons[i];
+      if (!iconGroup) continue;
       const on = i < count;
-      mesh.visible = on;
+      iconGroup.visible = on;
       if (!on) continue;
-      mesh.scale.setScalar(icon);
-      mesh.position.set(icon * 0.55 + i * gap, 0, 0);
-      mesh.rotation.x = -0.15;
+      iconGroup.scale.setScalar(icon);
+      // Right-align: last heart sits on the anchor, earlier ones extend left.
+      iconGroup.position.set(-(count - 1 - i) * gap - icon * 0.55, 0, 0);
+      iconGroup.rotation.x = -0.18;
     }
   }
 
-  private syncCoins(x: number, y: number, icon: number): void {
+  private syncCoins(centerX: number, y: number, icon: number): void {
     const total = Math.max(0, Math.round(this.coinsMax));
     const got = Math.max(0, Math.min(total, Math.round(this.coinsGot)));
     this.coinsRow.visible = total > 0;
-    this.coinsRow.position.set(x, y, 0);
+    this.coinsRow.position.set(centerX, y, 0);
     const gap = icon * 1.25;
     while (this.coinMeshes.length < total) {
       const mesh = new Mesh(this.coinGeo, this.coinMat);
@@ -354,12 +570,11 @@ export class PlayHud {
       mesh.visible = on;
       if (!on) continue;
       const filled = i < got;
-      mesh.geometry = filled ? this.coinGeo : this.emptyCoinGeo;
+      mesh.geometry = this.coinGeo;
       mesh.material = filled ? this.coinMat : this.emptyCoinMat;
       mesh.scale.setScalar(icon);
-      mesh.position.set(icon * 0.55 + i * gap, 0, 0);
+      mesh.position.set((i - (total - 1) * 0.5) * gap, 0, 0);
       mesh.rotation.x = -0.2;
-      if (!filled) mesh.rotation.y = 0.35;
     }
   }
 
@@ -367,7 +582,7 @@ export class PlayHud {
     const text = formatTime(this.seconds);
     if (!force && text === this.timerText) return;
     this.timerText = text;
-    const height = this.viewScale * 16;
+    const height = this.viewScale * TIMER_PX;
     if (!this.timerPlate) {
       this.timerPlate = new TextPlate(text, "#ffffff", height);
       this.timerRow.add(this.timerPlate.root);
@@ -497,25 +712,91 @@ function tokenColor(name: string, fallback: string): string {
   return value || fallback;
 }
 
+/** Disc with a shallow inset ring carved into both faces. */
+function makeCoinGeo(): BufferGeometry {
+  // Lathe profile: x = radius, y = half-thickness. Revolved around Y, then tipped to face ±Z.
+  const pts: Vector2[] = [];
+  const add = (r: number, y: number) => pts.push(new Vector2(r, y));
+
+  // Front face (center → rim)
+  add(0, 0.09);
+  add(0.17, 0.09);
+  add(0.22, 0.09);
+  add(0.255, 0.042); // drop into groove
+  add(0.37, 0.042);
+  add(0.405, 0.09); // climb out
+  add(0.455, 0.09);
+  add(0.5, 0.055);
+  // Rim wall
+  add(0.5, -0.055);
+  // Back face (rim → center), mirrored inset
+  add(0.455, -0.09);
+  add(0.405, -0.09);
+  add(0.37, -0.042);
+  add(0.255, -0.042);
+  add(0.22, -0.09);
+  add(0.17, -0.09);
+  add(0, -0.09);
+
+  const geo = new LatheGeometry(pts, 36);
+  geo.rotateX(Math.PI / 2);
+  geo.computeVertexNormals();
+  return geo;
+}
+
 function makeHeartGeo(): BufferGeometry {
   const shape = new Shape();
-  const s = 0.045;
+  const s = 0.048;
   const x = (value: number) => (value - 12) * s;
   const y = (value: number) => (16 - value) * s;
-  shape.moveTo(x(12), y(21));
-  shape.bezierCurveTo(x(12), y(21), x(4), y(14), x(4), y(9));
-  shape.bezierCurveTo(x(4), y(5.5), x(6.5), y(3), x(9.5), y(3));
-  shape.bezierCurveTo(x(11), y(3), x(12), y(4), x(12), y(4));
-  shape.bezierCurveTo(x(12), y(4), x(13), y(3), x(14.5), y(3));
-  shape.bezierCurveTo(x(17.5), y(3), x(20), y(5.5), x(20), y(9));
-  shape.bezierCurveTo(x(20), y(14), x(12), y(21), x(12), y(21));
+  // Tall lobes + deep center cleft so the dip reads clearly after bevel.
+  shape.moveTo(x(12), y(21.2));
+  shape.bezierCurveTo(x(12), y(21.2), x(2.2), y(14.8), x(2.2), y(8));
+  shape.bezierCurveTo(x(2.2), y(4.4), x(5), y(1.4), x(8.1), y(1.4));
+  shape.bezierCurveTo(x(9.7), y(1.4), x(11.1), y(3.1), x(12), y(6.8));
+  shape.bezierCurveTo(x(12.9), y(3.1), x(14.3), y(1.4), x(15.9), y(1.4));
+  shape.bezierCurveTo(x(19), y(1.4), x(21.8), y(4.4), x(21.8), y(8));
+  shape.bezierCurveTo(x(21.8), y(14.8), x(12), y(21.2), x(12), y(21.2));
   const geo = new ExtrudeGeometry(shape, {
-    depth: 0.32,
+    depth: 0.36,
     bevelEnabled: true,
     bevelThickness: 0.07,
-    bevelSize: 0.045,
+    bevelSize: 0.035,
     bevelSegments: 2,
   });
   geo.center();
   return geo;
+}
+
+/** Glossy bubble heart: thick dark outline, body, inner shade, dual highlights. */
+function makeHeartIcon(
+  geo: BufferGeometry,
+  outlineMat: MeshStandardMaterial,
+  bodyMat: MeshStandardMaterial,
+  shadeMat: MeshStandardMaterial,
+  highlightMat: MeshBasicMaterial,
+): Group {
+  const root = new Group();
+
+  const outline = new Mesh(geo, outlineMat);
+  outline.scale.setScalar(1.16);
+  outline.position.z = -0.05;
+
+  const body = new Mesh(geo, bodyMat);
+  body.position.z = 0.02;
+
+  const shade = new Mesh(geo, shadeMat);
+  shade.scale.set(0.9, 0.88, 0.55);
+  shade.position.set(0.06, -0.07, 0.14);
+
+  const hiBig = new Mesh(new SphereGeometry(0.11, 14, 12), highlightMat);
+  hiBig.scale.set(1.55, 0.72, 0.35);
+  hiBig.position.set(-0.2, 0.24, 0.26);
+  hiBig.rotation.z = -0.35;
+
+  const hiDot = new Mesh(new SphereGeometry(0.045, 12, 10), highlightMat);
+  hiDot.position.set(-0.1, 0.1, 0.28);
+
+  root.add(outline, body, shade, hiBig, hiDot);
+  return root;
 }

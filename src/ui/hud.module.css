@@ -7,6 +7,7 @@
 
   &[data-celebrate] {
     & .bottom,
+    & .debug,
     & .controls {
       display: none;
     }
@@ -27,15 +28,7 @@
   top: calc(var(--safe-top) + var(--chrome-top));
   left: calc(var(--safe-left) + var(--chrome-edge));
   right: calc(var(--safe-right) + var(--chrome-edge));
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--gap);
   pointer-events: none;
-
-  & button {
-    pointer-events: auto;
-  }
 }
 
 .brand {
@@ -139,19 +132,28 @@
   }
 }
 
-.actions {
+.debug {
+  position: absolute;
+  left: calc(var(--safe-left) + var(--chrome-edge));
+  right: calc(var(--safe-right) + var(--chrome-edge));
+  bottom: calc(var(--safe-bottom) + 16px);
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: var(--gap);
+  justify-content: center;
   align-items: center;
+  gap: 8px;
+  pointer-events: none;
+
+  & button {
+    pointer-events: auto;
+  }
 }
 
 .bottom {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: calc(var(--safe-bottom) + 28px);
+  bottom: calc(var(--safe-bottom) + 88px);
   display: flex;
   justify-content: center;
   pointer-events: none;
@@ -182,7 +184,7 @@
   --key-gap: 3px;
   position: absolute;
   right: calc(var(--safe-right) + var(--chrome-edge));
-  bottom: calc(var(--safe-bottom) + 28px);
+  bottom: calc(var(--safe-bottom) + 88px);
   display: flex;
   flex-direction: column;
   gap: 8px;

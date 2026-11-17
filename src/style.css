@@ -506,10 +506,10 @@ body,
   @media (max-width: 720px) {
     top: auto;
     right: calc(var(--safe-right) + 16px);
-    bottom: calc(var(--safe-bottom) + 128px);
+    bottom: calc(var(--safe-bottom) + 188px);
     left: calc(var(--safe-left) + 16px);
     width: auto;
-    max-height: calc(100% - var(--safe-top) - var(--safe-bottom) - 210px);
+    max-height: calc(100% - var(--safe-top) - var(--safe-bottom) - 270px);
   }
 }
 

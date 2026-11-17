@@ -5,6 +5,7 @@ import {
   cloneTower,
   coinTotal,
   generateTower,
+  levelNameOf,
   MAX_HEARTS_CAP,
   maxHeartsOf,
   type Tower,
@@ -57,6 +58,8 @@ export class App {
   private shareTimer = 0;
   private floorAt = 1;
   private floorCount = 1;
+  private floorCaption: string | null = null;
+  private titleCaption = "Untitled";
   private readonly keys = new Set<string>();
   private renderer: WebGLRenderer | null = null;
   private view: MazeWorld | null = null;
@@ -233,7 +236,8 @@ export class App {
     this.clearShareNote();
     this.hud.setNote("");
     this.hud.setStats(0, 0);
-    this.hud.setFloor(this.floorAt, this.floorCount);
+    this.setTitleCaption();
+    this.setFloorCaption(this.floorAt, this.floorCount);
     this.syncCollectHud();
     this.playHud.setVisible(true);
     this.syncPlayHud();
@@ -304,7 +308,9 @@ export class App {
     this.tower = { floors: [maze] };
     this.authored = cloneTower(this.tower);
     this.beginRun(layoutPlans([{ maze, goal: true }]), 1, 1);
+    this.floorCaption = `FLOOR ${index + 1}`;
     this.hud.setFloorName(`Floor ${index + 1}`);
+    this.syncPlayHud();
     forgetLevel();
     this.resize();
   }
@@ -472,7 +478,8 @@ export class App {
     view.rebase(STORY);
     this.tower = { floors: this.tower.floors.slice(1) };
     this.floorAt += 1;
-    this.hud.setFloor(this.floorAt, this.floorCount);
+    this.setFloorCaption(this.floorAt, this.floorCount);
+    this.syncPlayHud();
     if (this.mode === "campaign") this.extendCampaign();
     this.clearShareNote();
     this.hud.setNote("");
@@ -545,12 +552,26 @@ export class App {
     this.syncPlayHud({ pulseCoins });
   }
 
+  private setTitleCaption(): void {
+    this.titleCaption = this.mode === "campaign"
+      ? "Campaign"
+      : levelNameOf(this.authored ?? this.tower ?? { floors: [] });
+    this.hud.setTitle(this.titleCaption);
+  }
+
+  private setFloorCaption(current: number, total: number): void {
+    this.hud.setFloor(current, total);
+    this.floorCaption = total > 1 ? `FLOOR ${current} / ${total}` : null;
+  }
+
   private syncPlayHud(opts: { pulseLives?: boolean; pulseCoins?: boolean } = {}): void {
     this.playHud.setStats({
       seconds: this.seconds,
       lives: this.livesEnabled ? this.lives : null,
       coinsGot: this.coinsGot,
       coinsMax: this.coinsMax,
+      titleText: this.titleCaption,
+      floorText: this.floorCaption,
       pulseLives: opts.pulseLives === true,
       pulseCoins: opts.pulseCoins === true,
     });
@@ -561,6 +582,7 @@ export class App {
     if (this.livesEnabled) {
       this.lives -= 1;
       this.hud.setLives(this.lives);
+      this.syncPlayHud({ pulseLives: true });
       if (this.lives <= 0) {
         this.beginFail();
         return;
@@ -595,7 +617,12 @@ export class App {
     this.hud.setNote("");
     this.hud.hideHint();
     this.hud.setCelebrate(true);
-    this.playHud.setVisible(false);
+    // Keep the play HUD up long enough for the last heart to shatter.
+    window.setTimeout(() => {
+      if (this.phase === "failing" || this.phase === "lost") {
+        this.playHud.setVisible(false);
+      }
+    }, 720);
     this.closeSettings();
   }
 

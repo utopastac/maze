@@ -21,6 +21,7 @@ export class Hud {
   private readonly root: HTMLElement;
   private readonly callbacks: HudCallbacks;
   private readonly timeEl: HTMLElement;
+  private readonly titleEl: HTMLElement;
   private readonly floorEl: HTMLElement;
   private readonly noteEl: HTMLElement;
   private readonly hint: HTMLElement;
@@ -52,9 +53,9 @@ export class Hud {
       <div class="${styles.vignette}"></div>
       <header class="${styles.top}">
         <div class="${styles.brand}">
-          <h1 class="${styles.title}">Maze</h1>
+          <h1 class="${styles.sr}" data-title>Untitled</h1>
           <p class="${styles.status}">
-            <span class="${styles.story}" data-floor hidden></span>
+            <span class="${styles.sr}" data-floor hidden></span>
             <span class="${styles.sr}" data-time aria-live="polite">0:00.0</span>
             <span class="${styles.sr}" data-lives hidden title="Hearts">${iconSvg("heart", 14)}<span data-life-count>3</span></span>
             <span class="${styles.sr}" data-hearts hidden title="Hearts">${iconSvg("heart", 14)}<span data-heart-count>0</span></span>
@@ -62,23 +63,23 @@ export class Hud {
             <span class="${styles.note}" data-note hidden></span>
           </p>
         </div>
-        <div class="${styles.actions}">
-          <button type="button" class="glass-btn" data-motion hidden aria-label="Use device tilt">${iconSvg("motion")}</button>
-          <button type="button" class="glass-btn" data-level aria-label="Level the maze" title="Level">${iconSvg("level")}</button>
-          <button type="button" class="glass-btn" data-reset aria-label="Reset the ball" title="Reset">${iconSvg("reset")}</button>
-          <button type="button" class="glass-btn" data-edit aria-label="Edit level" title="Edit & share">${iconSvg("edit")}</button>
-          <button type="button" class="glass-btn" data-author aria-label="Author campaign" title="Author campaign">${iconSvg("author")}</button>
-          <button type="button" class="glass-btn" data-share aria-label="Copy level link" title="Copy link">${iconSvg("share")}</button>
-          <button type="button" class="glass-btn" data-wins aria-label="Victory screens" title="Victory screens" aria-pressed="false">${iconSvg("wins")}</button>
-          <button type="button" class="glass-btn" data-new aria-label="New maze" title="New maze">${iconSvg("new")}</button>
-          <button type="button" class="glass-btn" data-campaign aria-label="Campaign" title="Campaign" aria-pressed="false">${iconSvg("campaign")}</button>
-          <button type="button" class="glass-btn" data-levels aria-label="Level select" title="Level select" aria-pressed="false">${iconSvg("levels")}</button>
-          <button type="button" class="glass-btn" data-settings aria-label="Settings" title="Settings">${iconSvg("settings")}</button>
-        </div>
       </header>
       <div class="${styles.bottom}">
         <p class="${styles.hint}" data-hint>${hint}</p>
         <div class="${styles.level}" aria-hidden="true"><span data-bubble></span></div>
+      </div>
+      <div class="${styles.debug}" aria-label="Debug menu">
+        <button type="button" class="glass-btn" data-motion hidden aria-label="Use device tilt">${iconSvg("motion")}</button>
+        <button type="button" class="glass-btn" data-level aria-label="Level the maze" title="Level">${iconSvg("level")}</button>
+        <button type="button" class="glass-btn" data-reset aria-label="Reset the ball" title="Reset">${iconSvg("reset")}</button>
+        <button type="button" class="glass-btn" data-edit aria-label="Edit level" title="Edit & share">${iconSvg("edit")}</button>
+        <button type="button" class="glass-btn" data-author aria-label="Author campaign" title="Author campaign">${iconSvg("author")}</button>
+        <button type="button" class="glass-btn" data-share aria-label="Copy level link" title="Copy link">${iconSvg("share")}</button>
+        <button type="button" class="glass-btn" data-wins aria-label="Victory screens" title="Victory screens" aria-pressed="false">${iconSvg("wins")}</button>
+        <button type="button" class="glass-btn" data-new aria-label="New maze" title="New maze">${iconSvg("new")}</button>
+        <button type="button" class="glass-btn" data-campaign aria-label="Campaign" title="Campaign" aria-pressed="false">${iconSvg("campaign")}</button>
+        <button type="button" class="glass-btn" data-levels aria-label="Level select" title="Level select" aria-pressed="false">${iconSvg("levels")}</button>
+        <button type="button" class="glass-btn" data-settings aria-label="Settings" title="Settings">${iconSvg("settings")}</button>
       </div>
       <div class="${styles.controls}" aria-label="Keyboard controls">
         <div class="${styles.cluster}">
@@ -114,6 +115,7 @@ export class Hud {
       </div>
     `;
     this.timeEl = this.require("[data-time]");
+    this.titleEl = this.require("[data-title]");
     this.floorEl = this.require("[data-floor]");
     this.noteEl = this.require("[data-note]");
     this.hint = this.require("[data-hint]");
@@ -207,6 +209,10 @@ export class Hud {
 
   setTowerFloor(current: number): void {
     this.tower.setCurrent(current);
+  }
+
+  setTitle(label: string): void {
+    this.titleEl.textContent = label;
   }
 
   setFloor(current: number, total: number): void {

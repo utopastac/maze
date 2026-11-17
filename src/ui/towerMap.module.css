@@ -1,7 +1,7 @@
 .tower {
   position: absolute;
   top: calc(var(--safe-top) + 108px);
-  bottom: calc(var(--safe-bottom) + 118px);
+  bottom: calc(var(--safe-bottom) + 178px);
   left: calc(var(--safe-left) + var(--chrome-edge));
   width: 64px;
   pointer-events: none;
