@@ -21,6 +21,7 @@ import {
   Feather,
   Flag,
   Heart,
+  Home,
   Hourglass,
   Images,
   Keyboard,
@@ -56,6 +57,7 @@ export type IconName =
   | "reset"
   | "new"
   | "campaign"
+  | "home"
   | "levels"
   | "heart"
   | "coin"
@@ -105,6 +107,7 @@ const NODES: Record<IconName, IconNode> = {
   reset: RotateCcw,
   new: Shuffle,
   campaign: Castle,
+  home: Home,
   pause: Pause,
   levels: LayoutGrid,
   heart: Heart,
@@ -161,10 +164,10 @@ export function iconSvg(name: IconName, size = ICON_SIZE): string {
   return el.outerHTML;
 }
 
-export type PickupIcon = "heart" | "coin" | "star" | "wings";
+export type CellMarkIcon = "heart" | "coin" | "star" | "wings" | "north" | "east" | "south" | "west";
 
-/** Swap the collectible glyph in an editor/preview pickup slot when the kind changes. */
-export function setPickupIcon(pickup: HTMLElement, kind: PickupIcon | null): void {
+/** Swap the centered glyph in an editor/preview cell mark slot when the kind changes. */
+export function setPickupIcon(pickup: HTMLElement, kind: CellMarkIcon | null): void {
   const next = kind ?? "";
   if (pickup.dataset.icon === next) return;
   pickup.dataset.icon = next;

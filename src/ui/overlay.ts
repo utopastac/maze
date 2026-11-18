@@ -25,7 +25,7 @@ export class Overlay {
         <p class="${styles.detail}" data-detail>Clean run.</p>
         <div class="${styles.actions}">
           <button type="button" class="glass-pill metal-ring ${styles.again}" data-again>Again</button>
-          <button type="button" class="glass-pill ${styles.leave}" data-leave hidden>Free play</button>
+          <button type="button" class="glass-pill ${styles.leave}" data-leave hidden>Home</button>
         </div>
       </div>
     `;

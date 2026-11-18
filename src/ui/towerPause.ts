@@ -7,11 +7,11 @@ import { TowerMap } from "./towerMap.ts";
 import styles from "./towerPause.module.css";
 
 export interface TowerPauseStats {
+  mode: "campaign" | "free";
   floor: number;
   total: number;
   lives: number;
   seconds: number;
-  drops: number;
   sizes: number[];
   themes: FloorThemeId[];
   maze: Maze | null;
@@ -23,6 +23,8 @@ export interface TowerPauseStats {
 
 export interface TowerPauseCallbacks {
   onResume: () => void;
+  onSettings: () => void;
+  onQuit: () => void;
   onSave: () => void;
   onSaveLeave: () => void;
   onClearSave: () => void;
@@ -41,6 +43,8 @@ export class TowerPause {
   private readonly saveBtn: HTMLButtonElement;
   private readonly saveLeaveBtn: HTMLButtonElement;
   private readonly clearBtn: HTMLButtonElement;
+  private readonly newBtn: HTMLButtonElement;
+  private readonly quitBtn: HTMLButtonElement;
   private readonly mapSlot: HTMLElement;
   private readonly tower: TowerMap;
   private open = false;
@@ -64,7 +68,7 @@ export class TowerPause {
           </div>
           <button type="button" class="glass-btn ${styles.close}" data-close aria-label="Resume">${iconSvg("close")}</button>
         </header>
-        <div class="${styles.body}">
+        <div class="${styles.body}" data-campaign-body>
           <div class="${styles.mapSlot}" data-map></div>
           <div class="${styles.floorPanel}">
             <p class="${styles.floorLabel}" data-floor-label>Current floor</p>
@@ -73,10 +77,12 @@ export class TowerPause {
         </div>
         <div class="${styles.actions}">
           <button type="button" class="glass-pill metal-ring ${styles.primary}" data-resume>Resume</button>
-          <button type="button" class="glass-pill ${styles.primary}" data-save>Save</button>
-          <button type="button" class="glass-pill ${styles.ghost}" data-save-leave>Save & leave</button>
-          <button type="button" class="glass-pill ${styles.ghost}" data-clear hidden>Delete this save</button>
-          <button type="button" class="glass-pill ${styles.ghost}" data-new>New run</button>
+          <button type="button" class="glass-pill ${styles.primary}" data-settings>Settings</button>
+          <button type="button" class="glass-pill ${styles.primary}" data-save data-campaign-only>Save</button>
+          <button type="button" class="glass-pill ${styles.ghost}" data-save-leave data-campaign-only>Save & leave</button>
+          <button type="button" class="glass-pill ${styles.ghost}" data-clear data-campaign-only hidden>Delete this save</button>
+          <button type="button" class="glass-pill ${styles.ghost}" data-new data-campaign-only>New run</button>
+          <button type="button" class="glass-pill ${styles.ghost}" data-quit data-free-only>Quit</button>
         </div>
       </div>
     `;
@@ -89,15 +95,19 @@ export class TowerPause {
     this.saveBtn = this.require("[data-save]");
     this.saveLeaveBtn = this.require("[data-save-leave]");
     this.clearBtn = this.require("[data-clear]");
+    this.newBtn = this.require("[data-new]");
+    this.quitBtn = this.require("[data-quit]");
     this.mapSlot = this.require("[data-map]");
     this.tower = new TowerMap(this.mapSlot, "full");
     this.require("[data-close]").addEventListener("click", () => this.callbacks.onResume());
     this.require("[data-scrim]").addEventListener("click", () => this.callbacks.onResume());
     this.require("[data-resume]").addEventListener("click", () => this.callbacks.onResume());
+    this.require("[data-settings]").addEventListener("click", () => this.callbacks.onSettings());
+    this.quitBtn.addEventListener("click", () => this.callbacks.onQuit());
     this.saveBtn.addEventListener("click", () => this.callbacks.onSave());
     this.saveLeaveBtn.addEventListener("click", () => this.callbacks.onSaveLeave());
     this.clearBtn.addEventListener("click", () => this.callbacks.onClearSave());
-    this.require("[data-new]").addEventListener("click", () => this.callbacks.onNewRun());
+    this.newBtn.addEventListener("click", () => this.callbacks.onNewRun());
   }
 
   isOpen(): boolean {
@@ -111,7 +121,7 @@ export class TowerPause {
     this.root.dataset.phase = "out";
     requestAnimationFrame(() => {
       this.root.dataset.phase = "in";
-      this.tower.setCurrent(stats.floor);
+      if (stats.mode === "campaign") this.tower.setCurrent(stats.floor);
     });
   }
 
@@ -129,24 +139,27 @@ export class TowerPause {
   }
 
   private apply(stats: TowerPauseStats): void {
-    const drops = stats.drops > 0
-      ? ` · ${stats.drops} ${stats.drops === 1 ? "drop" : "drops"}`
-      : "";
-    this.metaEl.textContent = stats.note
-      ? stats.note
-      : `${stats.total} floors${drops}`;
+    this.root.dataset.mode = stats.mode;
+    const note = stats.note?.trim() ?? "";
+    this.metaEl.textContent = note;
+    this.metaEl.hidden = note.length === 0;
     this.floorEl.textContent = `${stats.floor} of ${stats.total}`;
     this.livesEl.textContent = String(stats.lives);
     this.timeEl.textContent = formatTime(stats.seconds);
     this.floorLabel.textContent = `Floor ${stats.floor}`;
-    this.clearBtn.hidden = !stats.hasSave;
-    this.tower.setRun(stats.sizes, stats.floor, true, stats.themes);
-    this.floorThumb.replaceChildren();
-    if (stats.maze) {
-      this.floorThumb.append(renderMazeBoardPreview(stats.maze, {
-        showGoal: stats.showGoal,
-        landing: stats.landing,
-      }));
+    this.clearBtn.hidden = stats.mode !== "campaign" || !stats.hasSave;
+    if (stats.mode === "campaign") {
+      this.tower.setRun(stats.sizes, stats.floor, true, stats.themes);
+      this.floorThumb.replaceChildren();
+      if (stats.maze) {
+        this.floorThumb.append(renderMazeBoardPreview(stats.maze, {
+          showGoal: stats.showGoal,
+          landing: stats.landing,
+        }));
+      }
+    } else {
+      this.tower.hide();
+      this.floorThumb.replaceChildren();
     }
   }
 

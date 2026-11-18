@@ -1,10 +1,12 @@
 import { Wall, type Maze } from "../core/maze.ts";
 import { parseFloorTheme } from "../core/theme.ts";
+import { installCrumblePreviewCss } from "../render/crumblePaint.ts";
 import styles from "./mazeThumbnail.module.css";
 
 type CellKind = "floor" | "start" | "goal" | "hatch" | "pit" | "boost" | "ice" | "crumble" | "block" | "warp" | "switch";
 
 export function renderMazeThumbnail(maze: Maze): HTMLElement {
+  installCrumblePreviewCss();
   const board = document.createElement("div");
   board.className = styles.board;
   board.dataset.theme = parseFloorTheme(maze.theme);

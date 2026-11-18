@@ -103,8 +103,11 @@
 
   &[data-kind="goal"] {
     background:
-      linear-gradient(var(--maze-void), var(--maze-void)) center / 42% 42% no-repeat,
-      var(--maze-goal-floor);
+      linear-gradient(
+        color-mix(in srgb, var(--maze-goal-floor) 42%, transparent),
+        color-mix(in srgb, var(--maze-goal-floor) 42%, transparent)
+      ),
+      var(--maze-void);
     box-shadow:
       inset 0 0 0 2px var(--maze-goal),
       inset 0 var(--wall-line) 0 0 var(--edge-n, transparent),
@@ -115,8 +118,11 @@
 
   &[data-kind="hatch"] {
     background:
-      linear-gradient(var(--maze-void), var(--maze-void)) center / 42% 42% no-repeat,
-      var(--maze-floor);
+      linear-gradient(
+        color-mix(in srgb, var(--maze-goal-floor) 42%, transparent),
+        color-mix(in srgb, var(--maze-goal-floor) 42%, transparent)
+      ),
+      var(--maze-void);
     box-shadow:
       inset 0 0 0 2px var(--maze-hatch),
       inset 0 var(--wall-line) 0 0 var(--edge-n, transparent),
@@ -148,7 +154,11 @@
   }
 
   &[data-kind="crumble"] {
-    background: var(--maze-crumble);
+    background-color: var(--maze-crumble);
+    background-image: var(--maze-crumble-tex, none);
+    background-size: cover;
+    background-position: center;
+    image-rendering: pixelated;
   }
 
   &[data-kind="block"] {

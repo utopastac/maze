@@ -1,7 +1,8 @@
 import { DEFAULT_FLOOR_THEME, type FloorThemeId } from "../core/theme.ts";
 import styles from "./towerMap.module.css";
 
-const SECTION_WINDOW = 15;
+const SECTION_WINDOW_FALLBACK = 15;
+const FLOOR_MAX_FALLBACK = 24;
 
 export type TowerMapMode = "hud" | "full";
 
@@ -10,9 +11,11 @@ export class TowerMap {
   private readonly bars: HTMLElement;
   private readonly mark: HTMLElement;
   private readonly steps: HTMLElement[] = [];
+  private readonly resizeObserver: ResizeObserver;
   private sizes: number[] = [];
   private themes: FloorThemeId[] = [];
   private current = 0;
+  private wantSection = false;
   private sectioned = false;
   private windowStart = 0;
   private onTap: (() => void) | null = null;
@@ -40,10 +43,8 @@ export class TowerMap {
       event.preventDefault();
       this.onTap();
     });
-    window.addEventListener("resize", () => {
-      if (this.root.hidden || this.current === 0) return;
-      this.placeMark();
-    });
+    this.resizeObserver = new ResizeObserver(() => this.onResize());
+    this.resizeObserver.observe(this.root);
   }
 
   setTapHandler(handler: (() => void) | null): void {
@@ -59,7 +60,8 @@ export class TowerMap {
   ): void {
     this.sizes = sizes.slice();
     this.themes = themes.slice();
-    this.sectioned = section && sizes.length > this.sectionWindow();
+    this.wantSection = section;
+    this.syncSectioned();
     this.root.hidden = false;
     this.syncInteractive();
     this.setCurrent(current);
@@ -67,6 +69,7 @@ export class TowerMap {
 
   setCurrent(current: number): void {
     this.current = Math.min(this.sizes.length, Math.max(1, current));
+    this.syncSectioned();
     this.windowStart = this.computeWindowStart();
     this.rebuild();
     this.root.setAttribute(
@@ -83,6 +86,7 @@ export class TowerMap {
     this.current = 0;
     this.sizes = [];
     this.themes = [];
+    this.wantSection = false;
     this.sectioned = false;
     this.syncInteractive();
   }
@@ -91,8 +95,44 @@ export class TowerMap {
     this.root.style.visibility = on ? "hidden" : "";
   }
 
+  private onResize(): void {
+    if (this.root.hidden || this.current === 0 || this.sizes.length === 0) return;
+    const prevWindow = this.visibleCount();
+    const prevStart = this.windowStart;
+    this.syncSectioned();
+    this.windowStart = this.computeWindowStart();
+    if (this.visibleCount() !== prevWindow || this.windowStart !== prevStart) {
+      this.rebuild();
+    }
+    this.placeMark();
+  }
+
+  /** How many floor bars fit at max height in the current column. */
+  private fitCapacity(): number {
+    const height = this.bars.clientHeight;
+    if (height <= 0) return SECTION_WINDOW_FALLBACK;
+    const full = this.mode === "full";
+    const gap = full ? 3 : window.matchMedia("(max-height: 760px)").matches ? 1 : 2;
+    const pad = full ? 20 : 16;
+    const floorMax = this.floorMaxPx();
+    const inner = Math.max(0, height - pad);
+    return Math.max(1, Math.floor((inner + gap) / (floorMax + gap)));
+  }
+
+  private floorMaxPx(): number {
+    const raw = getComputedStyle(this.root).getPropertyValue("--tower-floor-max").trim();
+    const value = Number.parseFloat(raw);
+    return Number.isFinite(value) && value > 0 ? value : FLOOR_MAX_FALLBACK;
+  }
+
   private sectionWindow(): number {
-    return SECTION_WINDOW;
+    const fit = this.fitCapacity();
+    if (this.sizes.length === 0) return fit;
+    return Math.max(1, Math.min(this.sizes.length, fit));
+  }
+
+  private syncSectioned(): void {
+    this.sectioned = this.wantSection && this.sizes.length > this.sectionWindow();
   }
 
   private syncInteractive(): void {
@@ -167,6 +207,7 @@ export class TowerMap {
   }
 
   private placeMark(): void {
+    if (this.mode === "full") return;
     const local = this.current - 1 - this.windowStart;
     const step = this.steps[local];
     if (!step || this.root.hidden) return;

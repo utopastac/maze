@@ -4,6 +4,8 @@ import { MAX_HEARTS_CAP } from "./tower.ts";
 const STORAGE_KEY = "maze.campaignProgress";
 const STORAGE_KEY_V2 = "maze.campaignSaves";
 const MAX_SAVES = 20;
+/** Reserved id for the single tower-run autosave slot. */
+export const AUTOSAVE_ID = "autosave";
 
 export interface CampaignProgress {
   id: string;
@@ -17,14 +19,21 @@ export interface CampaignProgress {
 
 export type CampaignProgressInput = Omit<CampaignProgress, "id" | "savedAt"> & { id?: string };
 
+export function isCampaignAutosave(id: string): boolean {
+  return id === AUTOSAVE_ID;
+}
+
 export function listCampaignProgress(): CampaignProgress[] {
-  return readAll().sort((a, b) => b.savedAt - a.savedAt);
+  const all = readAll().sort((a, b) => b.savedAt - a.savedAt);
+  const auto = all.find((entry) => entry.id === AUTOSAVE_ID);
+  const rest = all.filter((entry) => entry.id !== AUTOSAVE_ID);
+  return auto ? [auto, ...rest] : rest;
 }
 
 export function loadCampaignProgress(id?: string): CampaignProgress | null {
   const all = readAll();
   if (id) return all.find((entry) => entry.id === id) ?? null;
-  return all[0] ?? null;
+  return listCampaignProgress()[0] ?? null;
 }
 
 export function saveCampaignProgress(progress: CampaignProgressInput): CampaignProgress | null {
@@ -38,11 +47,20 @@ export function saveCampaignProgress(progress: CampaignProgressInput): CampaignP
     drops: Math.max(0, Math.round(progress.drops)),
     savedAt: Date.now(),
   };
-  const next = [entry, ...readAll().filter((item) => item.id !== entry.id)]
-    .sort((a, b) => b.savedAt - a.savedAt)
-    .slice(0, MAX_SAVES);
+  const next = packSaves([entry, ...readAll().filter((item) => item.id !== entry.id)]);
   if (!writeAll(next)) return null;
   return entry;
+}
+
+/** Overwrite the reserved autosave slot after clearing a tower floor. */
+export function saveCampaignAutosave(
+  progress: Omit<CampaignProgressInput, "id">,
+): CampaignProgress | null {
+  return saveCampaignProgress({ ...progress, id: AUTOSAVE_ID });
+}
+
+export function clearCampaignAutosave(): boolean {
+  return deleteCampaignProgress(AUTOSAVE_ID);
 }
 
 export function deleteCampaignProgress(id: string): boolean {
@@ -51,6 +69,15 @@ export function deleteCampaignProgress(id: string): boolean {
   if (next.length === all.length) return false;
   writeAll(next);
   return true;
+}
+
+/** Keep autosave when trimming to MAX_SAVES. */
+function packSaves(entries: CampaignProgress[]): CampaignProgress[] {
+  const sorted = [...entries].sort((a, b) => b.savedAt - a.savedAt);
+  const auto = sorted.find((entry) => entry.id === AUTOSAVE_ID);
+  const rest = sorted.filter((entry) => entry.id !== AUTOSAVE_ID);
+  const limit = auto ? Math.max(0, MAX_SAVES - 1) : MAX_SAVES;
+  return auto ? [auto, ...rest.slice(0, limit)] : rest.slice(0, limit);
 }
 
 /** @deprecated Prefer deleteCampaignProgress(id). Clears every tower save. */
@@ -163,8 +190,11 @@ function isProgress(value: unknown): value is CampaignProgress {
 }
 
 function makeId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const id = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `tower-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e9).toString(36)}`;
+    if (id !== AUTOSAVE_ID) return id;
   }
   return `tower-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e9).toString(36)}`;
 }

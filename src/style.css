@@ -199,8 +199,8 @@
   --theme-suburbia-grout: #9aa3ab;
   --theme-suburbia-frame: #6b8cae;
   --maze-pit: #000000;
-  --maze-void-star: #d8e6ff;
-  --maze-void-star-dim: #6a7a9a;
+  --maze-void-star: #f2f6ff;
+  --maze-void-star-dim: #a0b0cc;
   --maze-void-glow: #3a4a6a;
   --maze-lip: #c75c29;
   --maze-hatch: #6aafdf;
@@ -226,7 +226,7 @@
   --maze-switch-4: #d5dde6;
   --maze-switch-5: #f4f1ea;
   --maze-goal: #ffbc61;
-  --maze-goal-floor: #2a2118;
+  --maze-goal-floor: #ffd78a;
   --maze-grass: #3f6b3a;
   --maze-grass-dark: #2a4a28;
   --maze-sand: #d6c09a;
@@ -245,12 +245,12 @@
   --maze-coral-lit: #ffbc61;
   --maze-anemone: #6aafdf;
   --maze-seaweed: #3a8a48;
-  --maze-pavement: #4a5058;
-  --maze-pavement-dark: #2e333a;
-  --maze-building: #6a7582;
-  --maze-building-lit: #d5dde6;
-  --maze-building-brick: #8a4a3a;
-  --maze-building-glass: #4a6a7a;
+  --maze-pavement: #c4b8a4;
+  --maze-pavement-dark: #9a8c78;
+  --maze-building: #e8c96a;
+  --maze-building-lit: #f4efe4;
+  --maze-building-brick: #d45a4a;
+  --maze-building-glass: #5a9ec4;
   --maze-awning: #c75c29;
   --maze-lamp: #ffbc61;
   --maze-window: #ffbc61;
@@ -336,7 +336,7 @@
   --maze-orchard-sky: #8eb8a0;
   --maze-twilight-sky: #3a3f6b;
   --maze-underwater-sky: #1a6a7a;
-  --maze-city-sky: #5a6a7a;
+  --maze-city-sky: #7eb8d8;
   --maze-village-sky: #3a2a28;
   --maze-moon-sky: #05060a;
   --maze-venus-sky: #c47a3a;
@@ -488,13 +488,64 @@ body,
 #app:has(#editor[data-phase="in"]) #viewport,
 #app:has(#picker[data-phase="in"]) #viewport,
 #app:has(#pause[data-phase="in"]) #viewport,
-#app:has(#tower-intro[data-phase="in"]) #viewport,
 #app:has(#overlay[data-phase="in"]) #play-hud,
 #app:has(#editor[data-phase="in"]) #play-hud,
 #app:has(#picker[data-phase="in"]) #play-hud,
-#app:has(#pause[data-phase="in"]) #play-hud,
-#app:has(#tower-intro[data-phase="in"]) #play-hud {
+#app:has(#pause[data-phase="in"]) #play-hud {
   filter: blur(var(--page-blur));
+}
+
+/* Menu screens own the shell — maze/chrome are not underneath them.
+   Home keeps the world viewport visible for the storm-tower backdrop. */
+#app[data-screen="tower"] #viewport,
+#app[data-screen="settings"] #viewport,
+#app[data-screen="create"] #viewport,
+#app[data-screen="saved"] #viewport,
+#app[data-screen="home"] #chrome,
+#app[data-screen="tower"] #chrome,
+#app[data-screen="settings"] #chrome,
+#app[data-screen="create"] #chrome,
+#app[data-screen="saved"] #chrome {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+#app[data-screen="home"] #viewport {
+  visibility: visible;
+  pointer-events: none;
+}
+
+#app[data-screen="home"] #play-hud {
+  z-index: 9;
+  pointer-events: auto;
+}
+
+#app[data-screen="tower"] #play-hud,
+#app[data-screen="settings"] #play-hud,
+#app[data-screen="create"] #play-hud,
+#app[data-screen="saved"] #play-hud {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+#app[data-screen="tower"] #tower-intro,
+#app[data-screen="settings"] #sheet,
+#app[data-screen="create"] #editor,
+#app[data-screen="saved"] #library {
+  z-index: 8;
+}
+
+/* Mid-play settings covers the run without disposing it. */
+#app[data-settings="overlay"] #viewport,
+#app[data-settings="overlay"] #chrome,
+#app[data-settings="overlay"] #play-hud,
+#app[data-settings="overlay"] #pause {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+#app[data-settings="overlay"] #sheet {
+  z-index: 8;
 }
 
 #chrome {
@@ -503,22 +554,9 @@ body,
 
 #sheet {
   position: absolute;
-  z-index: 6;
-  top: calc(var(--safe-top) + 88px);
-  left: calc(var(--safe-left) + 22px);
-  width: min(340px, calc(100vw - 44px));
-  max-height: calc(100% - var(--safe-top) - var(--safe-bottom) - 150px);
-  pointer-events: auto;
+  inset: 0;
+  z-index: 7;
   touch-action: manipulation;
-
-  @media (max-width: 720px) {
-    top: auto;
-    right: calc(var(--safe-right) + 16px);
-    bottom: calc(var(--safe-bottom) + 188px);
-    left: calc(var(--safe-left) + 16px);
-    width: auto;
-    max-height: calc(100% - var(--safe-top) - var(--safe-bottom) - 270px);
-  }
 }
 
 .field {

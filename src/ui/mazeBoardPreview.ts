@@ -11,8 +11,9 @@ import {
   type WallAxis,
 } from "../core/maze.ts";
 import { parseFloorTheme } from "../core/theme.ts";
+import { installCrumblePreviewCss } from "../render/crumblePaint.ts";
 import editor from "./editor.module.css";
-import { setPickupIcon, type PickupIcon } from "./icons.ts";
+import { setPickupIcon, type CellMarkIcon } from "./icons.ts";
 import styles from "./mazeBoardPreview.module.css";
 
 type CellKind =
@@ -41,6 +42,7 @@ type CellPaint = {
 
 /** Read-only board that matches the level editor’s cell/wall look. */
 export function renderMazeBoardPreview(maze: Maze, opts: { showGoal?: boolean; landing?: boolean } = {}): HTMLElement {
+  installCrumblePreviewCss();
   const showGoal = opts.showGoal !== false;
   const landing = opts.landing === true;
   const theme = parseFloorTheme(maze.theme);
@@ -118,7 +120,7 @@ export function renderMazeBoardPreview(maze: Maze, opts: { showGoal?: boolean; l
     if (showCoin) cell.dataset.coin = "true";
     if (showStar) cell.dataset.star = "true";
     if (showWings) cell.dataset.wings = "true";
-    const pickupKind: PickupIcon | null = showHeart
+    const pickupKind: CellMarkIcon | null = showHeart
       ? "heart"
       : showCoin
         ? "coin"
@@ -126,7 +128,9 @@ export function renderMazeBoardPreview(maze: Maze, opts: { showGoal?: boolean; l
           ? "star"
           : showWings
             ? "wings"
-            : null;
+            : paint.kind === "boost" && paint.dir
+              ? ({ n: "north", e: "east", s: "south", w: "west" } as const)[paint.dir]
+              : null;
     const pickup = cell.firstElementChild as HTMLElement | null;
     if (pickup) setPickupIcon(pickup, pickupKind);
   }

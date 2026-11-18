@@ -1,4 +1,5 @@
 .tower {
+  --tower-floor-max: 24px;
   position: relative;
   width: 118px;
   height: 100%;
@@ -24,7 +25,7 @@
     width: 100%;
 
     & .bars {
-      right: 32px;
+      right: 0;
       gap: 3px;
       padding: 10px 14px;
     }
@@ -35,9 +36,7 @@
     }
 
     & .mark {
-      left: auto;
-      right: 2px;
-      font-size: 13px;
+      display: none;
     }
   }
 }
@@ -80,6 +79,7 @@
 .step {
   flex: 1 1 0;
   min-height: 2px;
+  max-height: var(--tower-floor-max);
   margin-inline: auto;
   border-radius: 99px;
   --floor-theme: var(--ink);

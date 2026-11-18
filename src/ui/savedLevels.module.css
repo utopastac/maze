@@ -28,7 +28,7 @@
 .scrim {
   position: absolute;
   inset: 0;
-  background: color-mix(in srgb, var(--maze-void) 62%, transparent);
+  background: var(--maze-void);
 }
 
 .card {

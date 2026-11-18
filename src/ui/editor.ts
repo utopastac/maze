@@ -83,7 +83,8 @@ import {
   setMaxHearts,
   type Tower,
 } from "../core/tower.ts";
-import { iconSvg, setPickupIcon, type IconName, type PickupIcon } from "./icons.ts";
+import { installCrumblePreviewCss } from "../render/crumblePaint.ts";
+import { iconSvg, setPickupIcon, type CellMarkIcon, type IconName } from "./icons.ts";
 import styles from "./editor.module.css";
 
 export type EditorMode = "share" | "campaign";
@@ -282,6 +283,7 @@ export class LevelEditor {
   private boardConfirm: BoardConfirm | null = null;
 
   constructor(root: HTMLElement, callbacks: EditorCallbacks) {
+    installCrumblePreviewCss();
     this.root = root;
     this.callbacks = callbacks;
     this.root.className = styles.root;
@@ -1835,7 +1837,7 @@ export class LevelEditor {
         else delete cell.dataset.wings;
       } else if (showWings) cell.dataset.wings = "true";
       else delete cell.dataset.wings;
-      const pickupKind: PickupIcon | null = cell.dataset.heart
+      const pickupKind: CellMarkIcon | null = cell.dataset.heart
         ? "heart"
         : cell.dataset.coin
           ? "coin"
@@ -1843,7 +1845,9 @@ export class LevelEditor {
             ? "star"
             : cell.dataset.wings
               ? "wings"
-              : null;
+              : paint.kind === "boost" && paint.dir
+                ? ({ n: "north", e: "east", s: "south", w: "west" } as const)[paint.dir]
+                : null;
       const pickup = cell.firstElementChild as HTMLElement | null;
       if (pickup) setPickupIcon(pickup, pickupKind);
       if (isSource || isPairSource) cell.dataset.dragging = "true";

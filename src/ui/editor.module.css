@@ -36,7 +36,7 @@
 .scrim {
   position: absolute;
   inset: 0;
-  background: color-mix(in srgb, var(--maze-void) 62%, transparent);
+  background: var(--maze-void);
 }
 
 .card {
@@ -1504,8 +1504,11 @@ button.deleteBtn {
 
   &[data-kind="goal"] {
     background:
-      linear-gradient(var(--maze-void), var(--maze-void)) center / 42% 42% no-repeat,
-      var(--maze-goal-floor);
+      linear-gradient(
+        color-mix(in srgb, var(--maze-goal-floor) 42%, transparent),
+        color-mix(in srgb, var(--maze-goal-floor) 42%, transparent)
+      ),
+      var(--maze-void);
     box-shadow: inset 0 0 0 3px var(--maze-goal);
   }
 
@@ -1516,49 +1519,25 @@ button.deleteBtn {
 
   &[data-kind="hatch"] {
     background:
-      linear-gradient(var(--maze-void), var(--maze-void)) center / 42% 42% no-repeat,
-      var(--maze-floor);
+      linear-gradient(
+        color-mix(in srgb, var(--maze-goal-floor) 42%, transparent),
+        color-mix(in srgb, var(--maze-goal-floor) 42%, transparent)
+      ),
+      var(--maze-void);
     box-shadow: inset 0 0 0 3px var(--maze-hatch);
   }
 
   &[data-kind="boost"] {
     background: var(--maze-boost);
 
-    &::after {
-      content: "";
-      position: absolute;
-      left: 50%;
-      top: 50%;
-      width: 34%;
-      height: 46%;
-      background: var(--maze-boost-mark);
-      clip-path: polygon(
-        40% 0,
-        60% 0,
-        60% 22%,
-        88% 22%,
-        88% 48%,
-        60% 48%,
-        60% 100%,
-        40% 100%,
-        40% 48%,
-        12% 48%,
-        12% 22%,
-        40% 22%
-      );
-      transform: translate(-50%, -50%);
-    }
+    & > .pickup {
+      opacity: 1;
+      color: var(--maze-boost-mark);
 
-    &[data-dir="e"]::after {
-      transform: translate(-50%, -50%) rotate(90deg);
-    }
-
-    &[data-dir="s"]::after {
-      transform: translate(-50%, -50%) rotate(180deg);
-    }
-
-    &[data-dir="w"]::after {
-      transform: translate(-50%, -50%) rotate(-90deg);
+      & :is(svg) {
+        stroke: var(--maze-boost-mark);
+        fill: none;
+      }
     }
   }
 
@@ -1615,35 +1594,11 @@ button.deleteBtn {
   }
 
   &[data-kind="crumble"] {
-    background:
-      linear-gradient(118deg, transparent 47%, color-mix(in srgb, var(--maze-crumble) 35%, #000) 47%, color-mix(in srgb, var(--maze-crumble) 35%, #000) 53%, transparent 53%),
-      linear-gradient(28deg, transparent 46%, color-mix(in srgb, var(--maze-crumble) 25%, #000) 46%, color-mix(in srgb, var(--maze-crumble) 25%, #000) 52%, transparent 52%),
-      linear-gradient(-42deg, transparent 48%, color-mix(in srgb, var(--maze-crumble) 30%, #000) 48%, color-mix(in srgb, var(--maze-crumble) 30%, #000) 51%, transparent 51%),
-      radial-gradient(circle at 28% 34%, color-mix(in srgb, var(--maze-crumble-mark) 28%, var(--maze-crumble)) 0 1.5px, transparent 2px),
-      radial-gradient(circle at 72% 62%, color-mix(in srgb, var(--maze-crumble-mark) 22%, var(--maze-crumble)) 0 1.5px, transparent 2px),
-      radial-gradient(circle at 54% 18%, color-mix(in srgb, #000 35%, var(--maze-crumble)) 0 1px, transparent 1.5px),
-      var(--maze-crumble);
-
-    &::before,
-    &::after {
-      content: "";
-      position: absolute;
-      left: 50%;
-      top: 50%;
-      width: 70%;
-      height: 2px;
-      background: color-mix(in srgb, var(--maze-crumble) 20%, #000);
-      box-shadow: 0 0 0 1px color-mix(in srgb, var(--maze-crumble-mark) 35%, transparent);
-    }
-
-    &::before {
-      transform: translate(-50%, -50%) rotate(34deg);
-    }
-
-    &::after {
-      width: 48%;
-      transform: translate(-42%, -20%) rotate(-52deg);
-    }
+    background-color: var(--maze-crumble);
+    background-image: var(--maze-crumble-tex, none);
+    background-size: cover;
+    background-position: center;
+    image-rendering: pixelated;
   }
 
   &[data-kind="block"] {

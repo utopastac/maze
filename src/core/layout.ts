@@ -176,7 +176,6 @@ export function isSolid(kind: PieceKind): boolean {
   return (
     kind === "floor" ||
     kind === "start" ||
-    kind === "goal" ||
     kind === "boost" ||
     kind === "warp" ||
     kind === "ice" ||
@@ -291,10 +290,12 @@ export function layoutMaze(
     for (let c = 0; c < maze.cols; c += 1) {
       const at = center(originX, originZ, { c, r });
       if (maze.hatch && maze.hatch.c === c && maze.hatch.r === r) {
+        pieces.push(exitGlass(at.x, at.z));
         pieces.push(...lips(at.x, at.z, "hatch"));
         continue;
       }
       if (showGoal && c === maze.goal.c && r === maze.goal.r) {
+        pieces.push(exitGlass(at.x, at.z));
         pieces.push(...lips(at.x, at.z, "exit"));
         continue;
       }
@@ -545,7 +546,8 @@ function pitCell(c: number, r: number, x: number, z: number, holes: Set<string>)
   const mid = (top + floor) / 2;
   const hy = (top - floor) / 2;
   const half = CELL / 2;
-  const wallAlong = half - 0.01;
+  // Overlap past half so N/S and E/W walls seal at corners (half - ε left see-through slits).
+  const wallAlong = half + 0.01;
   const wallInset = half - thickness / 2;
   // Overlap neighbors so merged pits share one continuous starfield floor.
   const voidHalf = half + 0.02;
@@ -562,6 +564,13 @@ function pitCell(c: number, r: number, x: number, z: number, holes: Set<string>)
   if (east) out.push({ kind: "pit", x: x + wallInset, y: mid, z, hx: thickness / 2, hy, hz: wallAlong });
   out.push(...edgeLips(x, z, north, south, west, east, "lip"));
   return out;
+}
+
+/** Thin translucent glass pad over hatch/exit openings. Visual only — not solid. */
+function exitGlass(x: number, z: number): Piece {
+  const span = (CELL - WALL) / 2 + 0.02;
+  const hy = 0.012;
+  return { kind: "goal", x, y: -hy, z, hx: span, hy, hz: span };
 }
 
 function lips(x: number, z: number, kind: "lip" | "hatch" | "exit" = "lip"): Piece[] {
@@ -581,7 +590,7 @@ function edgeLips(
   const hy = 0.012;
   const y = 0.014;
   const half = CELL / 2;
-  const along = half - 0.01;
+  const along = half + 0.01;
   const inset = half - lipT / 2;
   const out: Piece[] = [];
   if (north) out.push({ kind, x, y, z: z - inset, hx: along, hy, hz: lipT / 2 });

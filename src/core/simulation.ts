@@ -58,6 +58,7 @@ export interface Pose {
   ballScale: number;
   starPower: number;
   hoverPower: number;
+  fallingThrough: boolean;
   crumbles: CrumbleView[];
   gates: string[];
   smashed: string[];
@@ -274,6 +275,7 @@ export class Simulation {
       ballScale: this.ballR / BALL_R,
       starPower: this.starLeft > 0 ? this.starLeft / STAR_TIME : 0,
       hoverPower: this.hoverLeft > 0 ? this.hoverLeft / HOVER_TIME : 0,
+      fallingThrough: this.fallingThrough || this.escaping,
       crumbles: [...this.crumbles].map((cell) => {
         const gone = this.crumbleGone.has(cell);
         const time = this.crumbleTime.get(cell) ?? 0;

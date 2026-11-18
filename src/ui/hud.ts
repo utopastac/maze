@@ -3,6 +3,7 @@ import { iconSvg } from "./icons.ts";
 import styles from "./hud.module.css";
 
 export interface HudCallbacks {
+  onHome: () => void;
   onLevel: () => void;
   onReset: () => void;
   onNew: () => void;
@@ -15,6 +16,7 @@ export interface HudCallbacks {
   onAuthor: () => void;
   onShare: () => void;
   onWins: () => void;
+  onWinScene: (index: number) => void;
   onPause: () => void;
 }
 
@@ -42,6 +44,8 @@ export class Hud {
   private readonly heartsEl: HTMLElement;
   private readonly coinsEl: HTMLElement;
   private readonly coinCount: HTMLElement;
+  private readonly winGallery: HTMLElement;
+  private readonly winList: HTMLElement;
   private readonly keycaps: HTMLElement[];
 
   constructor(root: HTMLElement, callbacks: HudCallbacks) {
@@ -69,7 +73,18 @@ export class Hud {
         <p class="${styles.hint}" data-hint>${hint}</p>
         <div class="${styles.level}" aria-hidden="true"><span data-bubble></span></div>
       </div>
+      <aside class="${styles.winGallery}" data-win-gallery hidden>
+        <div class="${styles.winHead}">
+          <div>
+            <p class="${styles.winTitle}">Victory screens</p>
+            <p class="${styles.winMeta}" data-win-meta>1 / 15 · [ ]</p>
+          </div>
+          <button type="button" class="glass-btn ${styles.winClose}" data-win-close aria-label="Close victory screens" title="Close">${iconSvg("close")}</button>
+        </div>
+        <div class="${styles.winList}" data-win-list role="listbox" aria-label="Victory screens"></div>
+      </aside>
       <div class="${styles.debug}" aria-label="Debug menu">
+        <button type="button" class="glass-btn" data-home aria-label="Home" title="Home">${iconSvg("home")}</button>
         <button type="button" class="glass-btn" data-motion hidden aria-label="Use device tilt">${iconSvg("motion")}</button>
         <button type="button" class="glass-btn" data-level aria-label="Level the maze" title="Level">${iconSvg("level")}</button>
         <button type="button" class="glass-btn" data-reset aria-label="Reset the ball" title="Reset">${iconSvg("reset")}</button>
@@ -154,6 +169,9 @@ export class Hud {
     this.heartsEl = this.require("[data-hearts]");
     this.coinsEl = this.require("[data-coins]");
     this.coinCount = this.require("[data-coin-count]");
+    this.winGallery = this.require("[data-win-gallery]");
+    this.winList = this.require("[data-win-list]");
+    this.require<HTMLButtonElement>("[data-home]").addEventListener("click", () => this.callbacks.onHome());
     this.require<HTMLButtonElement>("[data-level]").addEventListener("click", () => this.callbacks.onLevel());
     this.require<HTMLButtonElement>("[data-reset]").addEventListener("click", () => this.callbacks.onReset());
     this.require<HTMLButtonElement>("[data-new]").addEventListener("click", () => this.callbacks.onNew());
@@ -165,8 +183,16 @@ export class Hud {
     this.shareBtn.addEventListener("click", () => this.callbacks.onShare());
     this.savedBtn.addEventListener("click", () => this.callbacks.onSaved());
     this.winsBtn.addEventListener("click", () => this.callbacks.onWins());
+    this.require<HTMLButtonElement>("[data-win-close]").addEventListener("click", () => this.callbacks.onWins());
     this.campaignBtn.addEventListener("click", () => this.callbacks.onCampaign());
     this.levelsBtn.addEventListener("click", () => this.callbacks.onLevels());
+    this.winList.addEventListener("click", (event) => {
+      const button = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>("[data-win-index]");
+      if (!button) return;
+      const index = Number(button.dataset.winIndex);
+      if (!Number.isFinite(index)) return;
+      this.callbacks.onWinScene(index);
+    });
     this.keycaps = [...this.root.querySelectorAll<HTMLElement>(`.${styles.controls} [data-key]`)];
     const controlsDock = this.require<HTMLElement>(`.${styles.controlsDock}`);
     const controlsTrigger = this.require<HTMLButtonElement>("[data-controls-trigger]");
@@ -323,6 +349,37 @@ export class Hud {
     this.winsBtn.classList.toggle("selected", selected);
     this.winsBtn.setAttribute("aria-pressed", selected ? "true" : "false");
     this.winsBtn.setAttribute("aria-label", selected ? "Close victory screens" : "Victory screens");
+  }
+
+  setWinGallery(open: boolean, scenes: readonly string[] = [], index = 0): void {
+    this.winGallery.hidden = !open;
+    if (!open) {
+      this.winList.replaceChildren();
+      return;
+    }
+    const meta = this.winGallery.querySelector<HTMLElement>("[data-win-meta]");
+    if (meta) {
+      meta.textContent = `${index + 1} / ${scenes.length} · [ ]`;
+    }
+    const existing = this.winList.childElementCount;
+    if (existing !== scenes.length) {
+      this.winList.replaceChildren(
+        ...scenes.map((name, sceneIndex) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = `glass-pill ${styles.winItem}`;
+          button.dataset.winIndex = String(sceneIndex);
+          button.setAttribute("role", "option");
+          button.textContent = name.charAt(0).toUpperCase() + name.slice(1);
+          return button;
+        }),
+      );
+    }
+    for (const button of this.winList.querySelectorAll<HTMLButtonElement>("[data-win-index]")) {
+      const selected = Number(button.dataset.winIndex) === index;
+      button.classList.toggle("selected", selected);
+      button.setAttribute("aria-selected", selected ? "true" : "false");
+    }
   }
 
   setLevelsSelected(selected: boolean): void {

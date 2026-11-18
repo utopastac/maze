@@ -18,7 +18,7 @@ import {
   type BufferGeometry,
 } from "three";
 import { formatTime } from "../core/format.ts";
-import { snapPixels } from "../core/playSettings.ts";
+import { SETTING_DEFAULTS, snapPixels } from "../core/playSettings.ts";
 import { MAX_HEARTS_CAP } from "../core/tower.ts";
 import {
   makeCoinGeo,
@@ -43,6 +43,11 @@ const START_ICON = 18;
 const START_GAP = 10;
 const START_TITLE_FLOOR_GAP = 2;
 const START_COLLECT_GAP = 0.55;
+const HOME_TITLE_PX = 52;
+const HOME_BTN_PX = 34;
+const HOME_TITLE_BTN_GAP = 22;
+const HOME_BTN_GAP = 8;
+const HOME_DECOR_ICON = 16;
 /** Show individual coin meshes up to this many; beyond that, one coin + count. */
 const MAX_COIN_ICONS = 5;
 const START_BTN_FONT = `700 72px "Arial Black", "Arial Bold", Impact, sans-serif`;
@@ -50,6 +55,7 @@ const PULSE_SECS = 0.35;
 const SHOUT_LIFE = 1.05;
 const SHOUT_POP = 0.18;
 const SHATTER_LIFE = 0.7;
+const START_SHATTER_LIFE = 0.9;
 const CENTER_HEART_DROP = 0.28;
 const CENTER_SHATTER_LIFE = 1.05;
 
@@ -107,6 +113,32 @@ export type PlayHudStartGate = {
   coins: number;
 };
 
+export type PlayHudHomeAction = "tower" | "play" | "create" | "saved" | "settings";
+
+type HomeHit = {
+  action: PlayHudHomeAction;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+};
+
+const HOME_ACTIONS: readonly PlayHudHomeAction[] = [
+  "tower",
+  "play",
+  "create",
+  "saved",
+  "settings",
+];
+
+const HOME_LABELS: Record<PlayHudHomeAction, string> = {
+  tower: "Tower",
+  play: "Free play",
+  create: "Create level",
+  saved: "Saved levels",
+  settings: "Settings",
+};
+
 /**
  * Mario 64–style play stats: 3D heart/coin meshes + Arial Black text plates
  * on their own WebGL canvas (UI pixels only).
@@ -126,7 +158,12 @@ export class PlayHud {
   private readonly startHeartsRow = new Group();
   private readonly startCoinsRow = new Group();
   private readonly startBtnRow = new Group();
+  private readonly homeLayer = new Group();
+  private readonly homeBtnRows: Group[] = HOME_ACTIONS.map(() => new Group());
+  private readonly homeDecorHearts: Group[] = [];
+  private readonly homeDecorCoins: Mesh[] = [];
   private startScrim: Mesh | null = null;
+  private homeScrim: Mesh | null = null;
   private readonly heartGeo: BufferGeometry;
   private readonly coinGeo: BufferGeometry;
   private readonly heartOutlineMat: MeshStandardMaterial;
@@ -146,13 +183,18 @@ export class PlayHud {
   private startTitlePlate: StartLabel | null = null;
   private startFloorPlate: StartLabel | null = null;
   private startBtn: StartButton | null = null;
+  private homeTitlePlate: ArchLabel | null = null;
+  private readonly homeBtns: (StartButton | null)[] = HOME_ACTIONS.map(() => null);
   private shown = false;
   private startGate = false;
+  private homeMenu = false;
   private startTitle = "";
   private startFloors = 1;
   private startLives: number | null = null;
   private startCoins = 0;
   private startBtnHit: { x: number; y: number; w: number; h: number } | null = null;
+  private homeHits: HomeHit[] = [];
+  private homeHover: PlayHudHomeAction | null = null;
   private lives: number | null = null;
   private coinsGot = 0;
   private coinsMax = 0;
@@ -167,7 +209,10 @@ export class PlayHud {
   private bufferW = 1;
   private bufferH = 1;
   private layoutDirty = true;
+  /** World units per buffer pixel (frustum height / bufferH). */
   private viewScale = 1;
+  /** CSS pixels per buffer pixel from the UI pixels setting. */
+  private uiScale = 1;
   private normalLook = false;
   private readonly shouts: ComicShout[] = [];
   private readonly shoutLayer = new Group();
@@ -219,16 +264,33 @@ export class PlayHud {
     this.scene.add(key, fill, rim, this.root, this.shoutLayer, this.shatterLayer);
     this.root.add(this.titleRow, this.floorRow, this.heartsRow, this.coinsRow, this.timerRow);
     this.startLayer.visible = false;
-    this.scene.add(this.startLayer);
+    this.homeLayer.visible = false;
+    this.scene.add(this.startLayer, this.homeLayer);
+    for (const row of this.homeBtnRows) this.homeLayer.add(row);
     this.canvas.hidden = true;
+  }
+
+  private overlayOpen(): boolean {
+    return this.startGate || this.homeMenu;
+  }
+
+  private syncOverlayVisibility(): void {
+    const on = this.shown;
+    const overlay = this.overlayOpen();
+    this.root.visible = on && !overlay;
+    this.startLayer.visible = on && this.startGate;
+    this.homeLayer.visible = on && this.homeMenu;
+    this.shoutLayer.visible = on && !overlay;
+    this.shatterLayer.visible = on;
   }
 
   /** Comic collect shout — same Arial Black plates as the timer. */
   shout(text: string, color: string): void {
     if (!this.shown || this.bufferW < 2) return;
     const fill = color.trim() || "#ffffff";
-    // Match timer TextPlate sizing (viewScale × px), just larger for comic pops.
-    const height = this.viewScale * 42;
+    // Match timer TextPlate sizing (design CSS px), just larger for comic pops.
+    const u = this.designScale();
+    const height = u * 42;
     const plate = new TextPlate(text.toUpperCase(), fill, height);
     plate.setSoft(this.normalLook);
     const root = plate.root;
@@ -240,7 +302,7 @@ export class PlayHud {
     const edge = left
       ? viewW * (0.18 + Math.random() * 0.08)
       : viewW * (0.74 + Math.random() * 0.08);
-    const baseY = viewH * (0.42 + Math.random() * 0.22) + stack * this.viewScale * 14;
+    const baseY = viewH * (0.42 + Math.random() * 0.22) + stack * u * 14;
     root.scale.setScalar(0.12);
     root.position.set(edge, baseY, 8 + stack * 0.4);
     root.rotation.x = -0.1;
@@ -260,10 +322,7 @@ export class PlayHud {
     if (this.shown === on) return;
     this.shown = on;
     this.canvas.hidden = !on;
-    this.root.visible = on && !this.startGate;
-    this.startLayer.visible = on && this.startGate;
-    this.shoutLayer.visible = on && !this.startGate;
-    this.shatterLayer.visible = on && !this.startGate;
+    this.syncOverlayVisibility();
     if (on) {
       this.layoutDirty = true;
       this.paint(true);
@@ -278,6 +337,7 @@ export class PlayHud {
   setStartGate(gate: PlayHudStartGate | null): void {
     const open = gate !== null;
     if (!open && !this.startGate) return;
+    if (open && this.homeMenu) this.setHomeMenu(false);
     this.startGate = open;
     if (gate) {
       this.startTitle = gate.title;
@@ -287,16 +347,51 @@ export class PlayHud {
     } else {
       this.startBtnHit = null;
     }
-    this.root.visible = this.shown && !this.startGate;
-    this.startLayer.visible = this.shown && this.startGate;
-    this.shoutLayer.visible = this.shown && !this.startGate;
-    this.shatterLayer.visible = this.shown && !this.startGate;
+    this.syncOverlayVisibility();
     this.layoutDirty = true;
     if (this.shown) this.paint(true);
   }
 
+  /** Full-screen title menu on the 3D HUD layer. */
+  setHomeMenu(open: boolean): void {
+    if (open === this.homeMenu) {
+      if (open) {
+        this.layoutDirty = true;
+        if (this.shown) this.paint(true);
+      }
+      return;
+    }
+    if (open && this.startGate) this.setStartGate(null);
+    this.homeMenu = open;
+    if (!open) {
+      this.homeHits = [];
+      this.homeHover = null;
+    }
+    this.syncOverlayVisibility();
+    this.layoutDirty = true;
+    if (this.shown) this.paint(true);
+  }
+
+  /** Blow apart the start briefing, then hand off to the play HUD. */
+  shatterStartGate(): void {
+    if (!this.startGate) return;
+    if (this.shown && this.bufferW >= 2) this.spawnStartGateShards();
+    this.setStartGate(null);
+  }
+
+  /** Blow apart the home menu before leaving for a destination. */
+  shatterHomeMenu(): void {
+    if (!this.homeMenu) return;
+    if (this.shown && this.bufferW >= 2) this.spawnHomeMenuShards();
+    this.setHomeMenu(false);
+  }
+
   isStartGateOpen(): boolean {
     return this.startGate;
+  }
+
+  isHomeMenuOpen(): boolean {
+    return this.homeMenu;
   }
 
   /** Hit-test the Start button in CSS client coordinates. */
@@ -308,6 +403,27 @@ export class PlayHud {
     const y = ((clientY - rect.top) / rect.height) * this.bufferH;
     const hit = this.startBtnHit;
     return x >= hit.x && x <= hit.x + hit.w && y >= hit.y && y <= hit.y + hit.h;
+  }
+
+  /** Hit-test a home menu CTA in CSS client coordinates. */
+  hitTestHome(clientX: number, clientY: number): PlayHudHomeAction | null {
+    if (!this.homeMenu || !this.shown || this.homeHits.length === 0) return null;
+    const rect = this.canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    const x = ((clientX - rect.left) / rect.width) * this.bufferW;
+    const y = ((clientY - rect.top) / rect.height) * this.bufferH;
+    for (const hit of this.homeHits) {
+      if (x >= hit.x && x <= hit.x + hit.w && y >= hit.y && y <= hit.y + hit.h) {
+        return hit.action;
+      }
+    }
+    return null;
+  }
+
+  /** Soft hover scale on the pointed home CTA. */
+  setHomeHover(action: PlayHudHomeAction | null): void {
+    if (this.homeHover === action) return;
+    this.homeHover = action;
   }
 
   setStats(stats: PlayHudStats): void {
@@ -345,6 +461,8 @@ export class PlayHud {
 
   /**
    * Size the HUD from UI pixels only — never game Pixels.
+   * Raising UI pixels lowers buffer resolution (chunkier glyphs) while
+   * designScale() keeps on-screen element size stable.
    * With normal look, keep the same layout grid but supersample to device resolution.
    */
   resize(width: number, height: number, uiPixels: number, normalLook = false): void {
@@ -352,13 +470,14 @@ export class PlayHud {
     const bufferW = Math.max(1, Math.floor(width / scale));
     const bufferH = Math.max(1, Math.floor(height / scale));
     const sizeChanged = this.bufferW !== bufferW || this.bufferH !== bufferH;
+    const scaleChanged = this.uiScale !== scale;
     const lookChanged = this.normalLook !== normalLook;
     this.bufferW = bufferW;
     this.bufferH = bufferH;
+    this.uiScale = scale;
     this.normalLook = normalLook;
     const dpr = normalLook ? Math.min(window.devicePixelRatio || 1, 2) : 1;
-    // Logical buffer stays chunk-sized so HUD element sizes match UI pixels;
-    // pixel ratio fills the CSS viewport (× dpr) so normal look stays sharp.
+    // Chunk-sized drawing buffer; pixel ratio only supersamples in normal look.
     this.renderer.setPixelRatio(normalLook ? scale * dpr : 1);
     this.renderer.setSize(bufferW, bufferH, false);
     this.canvas.style.width = `${width}px`;
@@ -368,8 +487,17 @@ export class PlayHud {
     this.camera.updateProjectionMatrix();
     this.fitCamera();
     if (lookChanged) this.applyLookFilters();
-    if (sizeChanged || lookChanged) this.layoutDirty = true;
+    if (sizeChanged || scaleChanged || lookChanged) this.layoutDirty = true;
     if (this.shown) this.paint(true);
+  }
+
+  /**
+   * World units per design pixel. Anchored to the default UI pixels value so the
+   * stock layout size is unchanged; other settings only change chunkiness.
+   */
+  private designScale(): number {
+    const baseline = Math.max(SETTING_DEFAULTS.uiPixels, 1e-6);
+    return this.viewScale * (baseline / Math.max(this.uiScale, 1e-6));
   }
 
   private applyLookFilters(): void {
@@ -392,19 +520,64 @@ export class PlayHud {
     this.pulseHeart = Math.max(0, this.pulseHeart - dt);
     this.pulseCoin = Math.max(0, this.pulseCoin - dt);
     if (!reduceMotion) {
-      const coins = this.startGate ? this.startCoinMeshes : this.coinMeshes;
+      const coins = this.startGate || this.homeMenu
+        ? (this.homeMenu ? this.homeDecorCoins : this.startCoinMeshes)
+        : this.coinMeshes;
       for (const mesh of coins) {
         if (!mesh.visible || mesh.material !== this.coinMat) continue;
         mesh.rotation.y += dt * 3.6;
       }
-      const hearts = this.startGate ? this.startHeartIcons : this.heartIcons;
+      const hearts = this.startGate || this.homeMenu
+        ? (this.homeMenu ? this.homeDecorHearts : this.startHeartIcons)
+        : this.heartIcons;
       for (const heart of hearts) {
         if (!heart.visible) continue;
         heart.rotation.y = 0.2 + Math.sin(performance.now() * 0.0024 + heart.id) * 0.35;
       }
       if (this.startGate && this.startBtnRow.visible) {
-        const bob = Math.sin(performance.now() * 0.0032) * this.viewScale * 1.2;
+        const bob = Math.sin(performance.now() * 0.0032) * this.designScale() * 1.2;
         this.startBtnRow.position.y = (this.startBtnRow.userData.baseY as number ?? 0) + bob;
+      }
+      if (this.homeMenu) {
+        const u = this.designScale();
+        const now = performance.now();
+        if (this.homeTitlePlate) {
+          this.homeTitlePlate.root.rotation.y = 0.04 + Math.sin(now * 0.0011) * 0.03;
+          this.homeTitlePlate.root.rotation.x = -0.08 + Math.sin(now * 0.0009) * 0.02;
+        }
+        for (let i = 0; i < this.homeBtnRows.length; i += 1) {
+          const row = this.homeBtnRows[i];
+          const action = HOME_ACTIONS[i];
+          if (!row || !action) continue;
+          const baseY = (row.userData.baseY as number) ?? 0;
+          const primary = action === "tower";
+          const hover = this.homeHover === action;
+          const bob = primary
+            ? Math.sin(now * 0.0032) * u * 1.4
+            : Math.sin(now * 0.0024 + i) * u * 0.45;
+          row.position.y = baseY + bob;
+          const target = hover ? 1.08 : 1;
+          const cur = (row.userData.scale as number) ?? 1;
+          const next = cur + (target - cur) * Math.min(1, dt * 14);
+          row.userData.scale = next;
+          row.scale.setScalar(next);
+        }
+        for (let i = 0; i < this.homeDecorHearts.length; i += 1) {
+          const heart = this.homeDecorHearts[i];
+          if (!heart?.visible) continue;
+          const base = heart.userData.base as { x: number; y: number; z: number };
+          if (!base) continue;
+          heart.position.x = base.x + Math.sin(now * 0.0014 + i * 1.7) * u * 3;
+          heart.position.y = base.y + Math.cos(now * 0.0018 + i * 1.3) * u * 4;
+        }
+        for (let i = 0; i < this.homeDecorCoins.length; i += 1) {
+          const coin = this.homeDecorCoins[i];
+          if (!coin?.visible) continue;
+          const base = coin.userData.base as { x: number; y: number; z: number };
+          if (!base) continue;
+          coin.position.x = base.x + Math.cos(now * 0.0016 + i * 1.9) * u * 3;
+          coin.position.y = base.y + Math.sin(now * 0.0021 + i * 1.1) * u * 4;
+        }
       }
     }
     this.heartsRow.scale.setScalar(pulseScale(this.pulseHeart));
@@ -482,6 +655,98 @@ export class PlayHud {
     icon.visible = false;
   }
 
+  private spawnStartGateShards(): void {
+    const life = START_SHATTER_LIFE;
+    for (const icon of this.startHeartIcons) {
+      if (!icon.visible) continue;
+      icon.updateWorldMatrix(true, false);
+      const origin = icon.getWorldPosition(this.shatterScratch);
+      this.shatterLayer.worldToLocal(origin);
+      const size = Math.max(0.01, icon.scale.x);
+      this.spawnHeartShards(origin.x, origin.y, origin.z, size, 14, life, true);
+    }
+
+    const coinHex = this.coinMat.color.getHex();
+    const coinShine = tokenHex("--maze-coin-shine", "#ffe9a0");
+    const coinPalette = [coinHex, coinHex, coinShine, 0xffffff];
+    for (const mesh of this.startCoinMeshes) {
+      if (!mesh.visible) continue;
+      mesh.updateWorldMatrix(true, false);
+      const origin = mesh.getWorldPosition(this.shatterScratch);
+      this.shatterLayer.worldToLocal(origin);
+      const size = Math.max(0.01, mesh.scale.x);
+      this.spawnShards(origin.x, origin.y, origin.z, size, 12, life, true, coinPalette, {
+        coinPieces: 3,
+      });
+    }
+
+    const titleH = START_TITLE_PX * this.designScale();
+    if (this.startTitlePlate) {
+      this.shatterPlate(
+        this.startTitlePlate.root,
+        this.startTitlePlate.width,
+        titleH,
+        [0xffffff, 0xffffff, 0xf0f0f0, 0x222222],
+        life,
+      );
+    }
+    const floorH = START_FLOOR_PX * this.designScale();
+    if (this.startFloorPlate) {
+      this.shatterPlate(
+        this.startFloorPlate.root,
+        this.startFloorPlate.width,
+        floorH,
+        [0xffffff, 0xe8e8e8, 0x1a1a1a],
+        life,
+      );
+    }
+    if (this.startCoinCountPlate?.root.visible) {
+      const countH = START_ICON * this.designScale() * 1.15;
+      this.shatterPlate(
+        this.startCoinCountPlate.root,
+        this.startCoinCountPlate.width,
+        countH,
+        coinPalette,
+        life,
+      );
+    }
+    if (this.startBtn) {
+      const btnH = START_BTN_PX * this.designScale();
+      const face = tokenHex("--maze-goal", "#ffbc61");
+      const ink = tokenHex("--maze-void", "#000000");
+      this.shatterPlate(
+        this.startBtn.root,
+        this.startBtn.width,
+        btnH,
+        [face, face, 0xffffff, ink],
+        life,
+      );
+    }
+  }
+
+  private shatterPlate(
+    root: Group,
+    width: number,
+    height: number,
+    palette: number[],
+    life: number,
+  ): void {
+    if (width < 1e-4 || height < 1e-4) return;
+    root.updateWorldMatrix(true, false);
+    const origin = root.getWorldPosition(this.shatterScratch);
+    this.shatterLayer.worldToLocal(origin);
+    const cols = Math.max(4, Math.min(12, Math.round((width / height) * 1.8)));
+    const rows = 2;
+    const cell = Math.max(height * 0.32, width / cols);
+    for (let r = 0; r < rows; r += 1) {
+      for (let c = 0; c < cols; c += 1) {
+        const ox = (c / Math.max(1, cols - 1) - 0.5) * width * 0.92;
+        const oy = (r / Math.max(1, rows - 1) - 0.5) * height * 0.65;
+        this.spawnShards(origin.x + ox, origin.y + oy, origin.z, cell, 1, life, true, palette);
+      }
+    }
+  }
+
   private spawnHeartShards(
     x: number,
     y: number,
@@ -494,12 +759,38 @@ export class PlayHud {
     const bodyHex = this.heartBodyMat.color.getHex();
     const shadeHex = this.heartShadeMat.color.getHex();
     const outlineHex = this.heartOutlineMat.color.getHex();
-    const palette = [bodyHex, bodyHex, shadeHex, outlineHex];
-    const heartPieces = dramatic ? Math.min(8, Math.floor(count * 0.28)) : 0;
+    this.spawnShards(
+      x,
+      y,
+      z,
+      size,
+      count,
+      life,
+      dramatic,
+      [bodyHex, bodyHex, shadeHex, outlineHex],
+      { heartPieces: dramatic ? Math.min(8, Math.floor(count * 0.28)) : 0 },
+    );
+  }
+
+  private spawnShards(
+    x: number,
+    y: number,
+    z: number,
+    size: number,
+    count: number,
+    life: number,
+    dramatic: boolean,
+    palette: number[],
+    opts: { heartPieces?: number; coinPieces?: number } = {},
+  ): void {
+    const heartPieces = opts.heartPieces ?? 0;
+    const coinPieces = opts.coinPieces ?? 0;
+    const colors = palette.length > 0 ? palette : [0xffffff];
     for (let i = 0; i < count; i += 1) {
-      const ang = (i / count) * Math.PI * 2 + Math.random() * 0.45;
+      const ang = ((i + Math.random()) / Math.max(1, count)) * Math.PI * 2;
       const kick = size * (dramatic ? 2.6 + Math.random() * 4.8 : 1.8 + Math.random() * 3.4);
       const useHeart = i < heartPieces;
+      const useCoin = !useHeart && i < heartPieces + coinPieces;
       let geo: BufferGeometry;
       let ownsGeo: boolean;
       let meshScale = 1;
@@ -507,6 +798,10 @@ export class PlayHud {
         geo = this.heartGeo;
         ownsGeo = false;
         meshScale = size * (0.18 + Math.random() * 0.28);
+      } else if (useCoin) {
+        geo = this.coinGeo;
+        ownsGeo = false;
+        meshScale = size * (0.2 + Math.random() * 0.32);
       } else {
         const w = size * (dramatic ? 0.12 + Math.random() * 0.38 : 0.14 + Math.random() * 0.28);
         const h = size * (dramatic ? 0.1 + Math.random() * 0.42 : 0.12 + Math.random() * 0.32);
@@ -514,17 +809,18 @@ export class PlayHud {
         geo = new BoxGeometry(w, h, d);
         ownsGeo = true;
       }
+      const tint = colors[i % colors.length] ?? 0xffffff;
       const mat = new MeshStandardMaterial({
-        color: palette[i % palette.length],
-        emissive: palette[i % palette.length],
+        color: tint,
+        emissive: tint,
         emissiveIntensity: dramatic ? 0.4 : 0.25,
         roughness: 0.45,
-        metalness: 0.05,
+        metalness: useCoin ? 0.35 : 0.05,
         transparent: true,
         depthWrite: false,
       });
       const mesh = new Mesh(geo, mat);
-      const baseScale = useHeart ? meshScale : 1;
+      const baseScale = useHeart || useCoin ? meshScale : 1;
       mesh.scale.setScalar(baseScale);
       mesh.position.set(
         x + Math.cos(ang) * size * (dramatic ? 0.18 : 0.12),
@@ -552,7 +848,7 @@ export class PlayHud {
   }
 
   private tickShards(dt: number, reduceMotion: boolean): void {
-    const gravity = this.viewScale * 52;
+    const gravity = this.designScale() * 52;
     for (let i = this.shards.length - 1; i >= 0; i -= 1) {
       const shard = this.shards[i];
       if (!shard) continue;
@@ -611,14 +907,14 @@ export class PlayHud {
         shout.root.scale.setScalar(base * (0.12 + punch * 1.08));
         shout.faceMat.opacity = 1;
         shout.shadeMat.opacity = 1;
-        shout.root.position.y = shout.baseY + punch * this.viewScale * 8;
+        shout.root.position.y = shout.baseY + punch * this.designScale() * 8;
       } else {
         const u = Math.min(1, (shout.age - SHOUT_POP) / (SHOUT_LIFE - SHOUT_POP));
         shout.root.scale.setScalar(base * (1.2 + u * 0.9));
         const fade = 1 - u * u;
         shout.faceMat.opacity = fade;
         shout.shadeMat.opacity = fade * 0.85;
-        shout.root.position.y = shout.baseY + this.viewScale * (8 + u * 36);
+        shout.root.position.y = shout.baseY + this.designScale() * (8 + u * 36);
         shout.root.rotation.z = (u - 0.5) * 0.1;
       }
       if (shout.age < SHOUT_LIFE) continue;
@@ -649,7 +945,8 @@ export class PlayHud {
   private paint(force: boolean): void {
     if (!this.shown) return;
     if (this.layoutDirty || force) {
-      if (this.startGate) this.layoutStartGate();
+      if (this.homeMenu) this.layoutHomeMenu();
+      else if (this.startGate) this.layoutStartGate();
       else {
         this.syncTitle(true);
         this.syncFloor(true);
@@ -662,12 +959,13 @@ export class PlayHud {
   }
 
   private layoutRows(): void {
-    const s = this.viewScale;
-    const padX = PAD_X * s;
-    const padY = (this.bufferH - PAD_Y) * s;
-    const row = ROW * s;
-    const icon = ICON * s;
-    const viewW = this.bufferW * s;
+    const u = this.designScale();
+    const viewW = this.bufferW * this.viewScale;
+    const viewH = this.bufferH * this.viewScale;
+    const padX = PAD_X * u;
+    const padY = viewH - PAD_Y * u;
+    const row = ROW * u;
+    const icon = ICON * u;
     let y = padY;
 
     const showTitle = this.titleText.length > 0;
@@ -677,7 +975,7 @@ export class PlayHud {
 
     let floorX = padX;
     if (showTitle && this.titlePlate) {
-      floorX = padX + this.titlePlate.width + TITLE_FLOOR_GAP * s;
+      floorX = padX + this.titlePlate.width + TITLE_FLOOR_GAP * u;
     }
     this.floorRow.visible = showFloor;
     this.floorRow.position.set(floorX, y, 0);
@@ -693,10 +991,11 @@ export class PlayHud {
 
   private layoutStartGate(): void {
     const s = this.viewScale;
+    const u = this.designScale();
     const viewW = this.bufferW * s;
     const viewH = this.bufferH * s;
-    const icon = START_ICON * s;
-    const gap = START_GAP * s;
+    const icon = START_ICON * u;
+    const gap = START_GAP * u;
     const cx = viewW * 0.5;
     if (!this.startScrim) {
       const mat = new MeshBasicMaterial({
@@ -721,7 +1020,7 @@ export class PlayHud {
     const rows: { height: number; after: number; place: (y: number) => void }[] = [];
 
     const title = this.startTitle.trim() || "Untitled";
-    const titleH = START_TITLE_PX * s;
+    const titleH = START_TITLE_PX * u;
     if (!this.startTitlePlate) {
       this.startTitlePlate = new StartLabel(title, "#ffffff", titleH, true);
       this.startLayer.add(this.startTitlePlate.root);
@@ -731,9 +1030,9 @@ export class PlayHud {
     this.startTitlePlate.root.rotation.x = -0.08;
     this.startTitlePlate.root.rotation.y = 0.04;
     const floorLabel = this.startFloors === 1 ? "1 floor" : `${this.startFloors} floors`;
-    const floorH = START_FLOOR_PX * s;
+    const floorH = START_FLOOR_PX * u;
     // StartLabel canvases include transparent pad; pull the pair together optically.
-    const titleFloorAfter = START_TITLE_FLOOR_GAP * s - titleH * 0.2 - floorH * 0.12;
+    const titleFloorAfter = START_TITLE_FLOOR_GAP * u - titleH * 0.2 - floorH * 0.12;
     rows.push({
       height: titleH,
       after: titleFloorAfter,
@@ -774,7 +1073,7 @@ export class PlayHud {
       this.startCoinsRow.visible = false;
     }
 
-    const btnH = START_BTN_PX * s;
+    const btnH = START_BTN_PX * u;
     const face = tokenColor("--maze-goal", "#ffbc61");
     const ink = tokenColor("--maze-void", "#000000");
     if (!this.startBtn) {
@@ -793,11 +1092,11 @@ export class PlayHud {
         this.startBtnRow.visible = true;
         this.startBtnRow.userData.baseY = y;
         this.startBtnRow.position.set(cx, y, 4);
-        // CSS-pixel hit box (y grows down).
-        const cssY = this.bufferH - (y + btnH * 0.5) / s;
+        // Buffer-pixel hit box (y grows down); client coords map into buffer space.
+        const bufY = this.bufferH - (y + btnH * 0.5) / s;
         this.startBtnHit = {
           x: (cx - btnW * 0.5) / s,
-          y: cssY,
+          y: bufY,
           w: btnW / s,
           h: btnH / s,
         };
@@ -815,6 +1114,243 @@ export class PlayHud {
       y -= row.height * 0.5;
       row.place(y);
       y -= row.height * 0.5 + (i < rows.length - 1 ? row.after : 0);
+    }
+  }
+
+  private layoutHomeMenu(): void {
+    const s = this.viewScale;
+    const u = this.designScale();
+    const viewW = this.bufferW * s;
+    const viewH = this.bufferH * s;
+    const cx = viewW * 0.5;
+    const btnGap = HOME_BTN_GAP * u;
+
+    if (!this.homeScrim) {
+      const mat = new MeshBasicMaterial({
+        color: tokenColor("--sky-sad-deep", "#080a10"),
+        transparent: true,
+        opacity: 0.08,
+        depthWrite: false,
+        toneMapped: false,
+      });
+      this.homeScrim = new Mesh(new PlaneGeometry(1, 1), mat);
+      this.homeLayer.add(this.homeScrim);
+    } else if (this.homeScrim.material instanceof MeshBasicMaterial) {
+      this.homeScrim.material.opacity = 0.08;
+      this.homeScrim.material.transparent = true;
+      this.homeScrim.material.color.set(tokenColor("--sky-sad-deep", "#080a10"));
+    }
+    this.homeScrim.scale.set(viewW * 1.2, viewH * 1.2, 1);
+    this.homeScrim.position.set(cx, viewH * 0.5, -2);
+
+    const rows: { height: number; after: number; place: (y: number) => void }[] = [];
+    const titleH = HOME_TITLE_PX * u;
+    if (!this.homeTitlePlate) {
+      this.homeTitlePlate = new ArchLabel("MAZESPIRE", "#ffffff", titleH);
+      this.homeLayer.add(this.homeTitlePlate.root);
+    } else {
+      this.homeTitlePlate.set("MAZESPIRE", "#ffffff", titleH);
+    }
+    rows.push({
+      height: titleH,
+      after: HOME_TITLE_BTN_GAP * u,
+      place: (y) => {
+        if (!this.homeTitlePlate) return;
+        this.homeTitlePlate.root.position.set(cx, y, 3);
+        this.homeTitlePlate.root.rotation.x = -0.08;
+        this.homeTitlePlate.root.rotation.y = 0.04;
+      },
+    });
+
+    const btnH = HOME_BTN_PX * u;
+    const goal = tokenColor("--maze-goal", "#ffbc61");
+    const voidInk = tokenColor("--maze-void", "#000000");
+    const face = tokenColor("--ink", "#ffffff");
+    const hits: HomeHit[] = [];
+    let menuWidth = 0;
+    for (let i = 0; i < HOME_ACTIONS.length; i += 1) {
+      const action = HOME_ACTIONS[i];
+      const row = this.homeBtnRows[i];
+      if (!action || !row) continue;
+      const label = HOME_LABELS[action];
+      const primary = action === "tower";
+      const fill = primary ? goal : face;
+      let btn = this.homeBtns[i];
+      if (!btn) {
+        btn = new StartButton(label, fill, voidInk, btnH);
+        this.homeBtns[i] = btn;
+        row.add(btn.root);
+      } else {
+        btn.set(label, fill, voidInk, btnH);
+      }
+      menuWidth = Math.max(menuWidth, btn.width);
+      const index = i;
+      rows.push({
+        height: btnH,
+        after: index < HOME_ACTIONS.length - 1 ? btnGap : 0,
+        place: (y) => {
+          const current = this.homeBtns[index];
+          const slot = this.homeBtnRows[index];
+          const act = HOME_ACTIONS[index];
+          if (!current || !slot || !act) return;
+          slot.visible = true;
+          slot.userData.baseY = y;
+          slot.position.set(cx, y, 4 + index * 0.05);
+          slot.rotation.x = -0.08;
+          current.root.rotation.x = -0.1;
+          const bufY = this.bufferH - (y + btnH * 0.5) / s;
+          hits.push({
+            action: act,
+            x: (cx - current.width * 0.5) / s,
+            y: bufY,
+            w: current.width / s,
+            h: btnH / s,
+          });
+        },
+      });
+    }
+    this.homeHits = hits;
+
+    const totalH = rows.reduce((sum, row, i) => {
+      const after = i < rows.length - 1 ? row.after : 0;
+      return sum + row.height + after;
+    }, 0);
+    let y = viewH * 0.58 + totalH * 0.5;
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows[i];
+      if (!row) continue;
+      y -= row.height * 0.5;
+      row.place(y);
+      y -= row.height * 0.5 + (i < rows.length - 1 ? row.after : 0);
+    }
+
+    this.layoutHomeDecor(viewW, viewH, u, menuWidth);
+  }
+
+  private layoutHomeDecor(viewW: number, viewH: number, u: number, menuWidth: number): void {
+    const icon = HOME_DECOR_ICON * u;
+    const gutter = Math.max(icon * 1.4, (viewW - menuWidth) * 0.22);
+    const spots = [
+      { x: gutter, y: viewH * 0.72, heart: true },
+      { x: viewW - gutter, y: viewH * 0.68, heart: false },
+      { x: gutter * 0.85, y: viewH * 0.38, heart: false },
+      { x: viewW - gutter * 0.9, y: viewH * 0.42, heart: true },
+      { x: gutter * 1.15, y: viewH * 0.22, heart: true },
+      { x: viewW - gutter * 1.1, y: viewH * 0.2, heart: false },
+    ];
+    let heartAt = 0;
+    let coinAt = 0;
+    for (let i = 0; i < spots.length; i += 1) {
+      const spot = spots[i];
+      if (!spot) continue;
+      if (spot.heart) {
+        while (this.homeDecorHearts.length <= heartAt) {
+          const iconGroup = makeHeartIcon(
+            this.heartGeo,
+            this.heartOutlineMat,
+            this.heartBodyMat,
+            this.heartShadeMat,
+          );
+          this.homeDecorHearts.push(iconGroup);
+          this.homeLayer.add(iconGroup);
+        }
+        const heart = this.homeDecorHearts[heartAt];
+        if (!heart) continue;
+        heart.visible = true;
+        heart.scale.setScalar(icon);
+        heart.position.set(spot.x, spot.y, 1);
+        heart.rotation.x = -0.18;
+        heart.userData.base = { x: spot.x, y: spot.y, z: 1 };
+        heartAt += 1;
+      } else {
+        while (this.homeDecorCoins.length <= coinAt) {
+          const mesh = new Mesh(this.coinGeo, this.coinMat);
+          this.homeDecorCoins.push(mesh);
+          this.homeLayer.add(mesh);
+        }
+        const coin = this.homeDecorCoins[coinAt];
+        if (!coin) continue;
+        coin.visible = true;
+        coin.scale.setScalar(icon);
+        coin.position.set(spot.x, spot.y, 1);
+        coin.rotation.x = -0.2;
+        coin.userData.base = { x: spot.x, y: spot.y, z: 1 };
+        coinAt += 1;
+      }
+    }
+    for (let i = heartAt; i < this.homeDecorHearts.length; i += 1) {
+      const heart = this.homeDecorHearts[i];
+      if (heart) heart.visible = false;
+    }
+    for (let i = coinAt; i < this.homeDecorCoins.length; i += 1) {
+      const coin = this.homeDecorCoins[i];
+      if (coin) coin.visible = false;
+    }
+  }
+
+  private spawnHomeMenuShards(): void {
+    const life = START_SHATTER_LIFE;
+    const bodyHex = this.heartBodyMat.color.getHex();
+    const shadeHex = this.heartShadeMat.color.getHex();
+    const outlineHex = this.heartOutlineMat.color.getHex();
+    const coinHex = this.coinMat.color.getHex();
+    const coinShine = tokenHex("--maze-coin-shine", "#ffe9a0");
+    for (const heart of this.homeDecorHearts) {
+      if (!heart.visible) continue;
+      heart.updateWorldMatrix(true, false);
+      const origin = heart.getWorldPosition(this.shatterScratch);
+      this.shatterLayer.worldToLocal(origin);
+      const size = Math.max(0.01, heart.scale.x);
+      this.spawnShards(
+        origin.x,
+        origin.y,
+        origin.z,
+        size,
+        10,
+        life,
+        true,
+        [bodyHex, bodyHex, shadeHex, outlineHex],
+      );
+    }
+    for (const mesh of this.homeDecorCoins) {
+      if (!mesh.visible) continue;
+      mesh.updateWorldMatrix(true, false);
+      const origin = mesh.getWorldPosition(this.shatterScratch);
+      this.shatterLayer.worldToLocal(origin);
+      const size = Math.max(0.01, mesh.scale.x);
+      this.spawnShards(origin.x, origin.y, origin.z, size, 10, life, true, [
+        coinHex,
+        coinHex,
+        coinShine,
+        0xffffff,
+      ], { coinPieces: 3 });
+    }
+    const titleH = HOME_TITLE_PX * this.designScale();
+    if (this.homeTitlePlate) {
+      this.shatterPlate(
+        this.homeTitlePlate.root,
+        this.homeTitlePlate.width,
+        titleH,
+        [0xffffff, 0xffffff, 0xf0f0f0, 0x222222],
+        life,
+      );
+    }
+    const btnH = HOME_BTN_PX * this.designScale();
+    const goal = tokenHex("--maze-goal", "#ffbc61");
+    const ink = tokenHex("--maze-void", "#000000");
+    const face = tokenHex("--ink", "#ffffff");
+    for (let i = 0; i < this.homeBtns.length; i += 1) {
+      const btn = this.homeBtns[i];
+      const action = HOME_ACTIONS[i];
+      if (!btn || !action) continue;
+      const primary = action === "tower";
+      this.shatterPlate(
+        btn.root,
+        btn.width,
+        btnH,
+        primary ? [goal, goal, 0xffffff, ink] : [face, face, 0xffffff, ink],
+        life,
+      );
     }
   }
 
@@ -928,7 +1464,7 @@ export class PlayHud {
       this.titleRow.visible = false;
       return;
     }
-    const height = this.viewScale * TITLE_PX;
+    const height = this.designScale() * TITLE_PX;
     if (!this.titlePlate) {
       this.titlePlate = new TextPlate(text, "#ffffff", height);
       this.titlePlate.setSoft(this.normalLook);
@@ -949,7 +1485,7 @@ export class PlayHud {
       this.floorRow.visible = false;
       return;
     }
-    const height = this.viewScale * FLOOR_PX;
+    const height = this.designScale() * FLOOR_PX;
     if (!this.floorPlate) {
       this.floorPlate = new TextPlate(text, "#ffffff", height, false);
       this.floorRow.add(this.floorPlate.root);
@@ -1061,7 +1597,7 @@ export class PlayHud {
     const text = formatTime(this.seconds);
     if (!force && text === this.timerText) return;
     this.timerText = text;
-    const height = this.viewScale * TIMER_PX;
+    const height = this.designScale() * TIMER_PX;
     if (!this.timerPlate) {
       this.timerPlate = new TextPlate(text, "#ffffff", height);
       this.timerPlate.setSoft(this.normalLook);
@@ -1072,6 +1608,130 @@ export class PlayHud {
     this.timerPlate.root.position.set(this.timerPlate.width * 0.5, 0, 0);
     this.timerPlate.root.rotation.x = -0.1;
     this.timerPlate.root.rotation.y = 0.08;
+  }
+}
+
+/**
+ * Flat-top / arched-bottom wordmark (arch lower): end letters stay tall,
+ * center letters compress upward so the baseline bows up while the topline stays flat.
+ */
+class ArchLabel {
+  readonly root = new Group();
+  private readonly faceMat: MeshBasicMaterial;
+  private readonly shadeMat: MeshBasicMaterial;
+  private readonly face: Mesh;
+  private readonly shade: Mesh;
+  private readonly texture: CanvasTexture;
+  private readonly paintCanvas: HTMLCanvasElement;
+  private readonly ctx: CanvasRenderingContext2D;
+  private readonly scratch = document.createElement("canvas");
+  private readonly scratchCtx: CanvasRenderingContext2D;
+  width = 1;
+  private height = 1;
+  private text = "";
+  private fill = "";
+  private arch = 0.48;
+
+  constructor(text: string, fill: string, height: number, arch = 0.48) {
+    this.paintCanvas = document.createElement("canvas");
+    const ctx = this.paintCanvas.getContext("2d");
+    if (!ctx) throw new Error("Play HUD arch label canvas unavailable");
+    this.ctx = ctx;
+    const scratchCtx = this.scratch.getContext("2d");
+    if (!scratchCtx) throw new Error("Play HUD arch scratch canvas unavailable");
+    this.scratchCtx = scratchCtx;
+    this.texture = new CanvasTexture(this.paintCanvas);
+    this.texture.colorSpace = SRGBColorSpace;
+    this.texture.magFilter = LinearFilter;
+    this.texture.minFilter = LinearFilter;
+    this.texture.generateMipmaps = false;
+
+    this.faceMat = new MeshBasicMaterial({
+      map: this.texture,
+      transparent: true,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    this.shadeMat = new MeshBasicMaterial({
+      map: this.texture,
+      color: "#000000",
+      transparent: true,
+      opacity: 0.55,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    this.face = new Mesh(new PlaneGeometry(1, 1), this.faceMat);
+    this.shade = new Mesh(new PlaneGeometry(1, 1), this.shadeMat);
+    this.root.add(this.shade, this.face);
+    this.arch = arch;
+    this.set(text, fill, height);
+  }
+
+  set(text: string, fill: string, height: number): void {
+    if (text === this.text && fill === this.fill && Math.abs(height - this.height) < 1e-6) return;
+    this.text = text;
+    this.fill = fill;
+    this.height = height;
+
+    const px = 96;
+    const font = `700 ${px}px "Arial Black", "Arial Bold", Impact, sans-serif`;
+    const padX = 20;
+    const padY = 18;
+    const tracking = px * 0.02;
+    const letters = [...text];
+    this.scratchCtx.font = font;
+    const widths = letters.map((ch) => Math.max(1, this.scratchCtx.measureText(ch).width));
+    const contentW = widths.reduce((sum, w, i) => sum + w + (i > 0 ? tracking : 0), 0);
+    const w = Math.max(8, Math.ceil(contentW + padX * 2));
+    const h = Math.max(8, Math.ceil(px * 1.3 + padY));
+    this.paintCanvas.width = w;
+    this.paintCanvas.height = h;
+    this.ctx.clearRect(0, 0, w, h);
+
+    // Draw each glyph into scratch at full size, then blit with vertical scale from the top.
+    let x = padX;
+    for (let i = 0; i < letters.length; i += 1) {
+      const ch = letters[i];
+      const glyphW = widths[i] ?? 1;
+      if (!ch) continue;
+      const mid = contentW <= 0 ? 0.5 : (x - padX + glyphW * 0.5) / contentW;
+      const scaleY = 1 - this.arch * Math.sin(Math.PI * Math.min(1, Math.max(0, mid)));
+      const glyphH = Math.max(2, Math.ceil(h * scaleY));
+      const scratchW = Math.max(2, Math.ceil(glyphW + padX));
+      this.scratch.width = scratchW;
+      this.scratch.height = h;
+      this.scratchCtx.clearRect(0, 0, scratchW, h);
+      this.scratchCtx.font = font;
+      this.scratchCtx.textAlign = "left";
+      this.scratchCtx.textBaseline = "top";
+      this.scratchCtx.lineJoin = "round";
+      const gx = padX * 0.35;
+      const gy = padY * 0.35;
+      this.scratchCtx.lineWidth = Math.max(5, Math.round(px * 0.18));
+      this.scratchCtx.strokeStyle = "#000000";
+      this.scratchCtx.strokeText(ch, gx, gy);
+      this.scratchCtx.fillStyle = fill;
+      this.scratchCtx.fillText(ch, gx, gy);
+      // Top-anchored vertical squash → flat topline, arched baseline.
+      this.ctx.drawImage(
+        this.scratch,
+        0,
+        0,
+        scratchW,
+        h,
+        x - gx,
+        0,
+        scratchW,
+        glyphH,
+      );
+      x += glyphW + tracking;
+    }
+    this.texture.needsUpdate = true;
+
+    this.width = height * (w / h);
+    this.face.scale.set(this.width, height, 1);
+    this.shade.scale.set(this.width, height, 1);
+    this.shade.position.set(height * 0.05, -height * 0.06, -height * 0.1);
   }
 }
 
@@ -1441,4 +2101,13 @@ function stdMat(color: string, emissive: string, emissiveIntensity: number): Mes
 function tokenColor(name: string, fallback: string): string {
   const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return value || fallback;
+}
+
+function tokenHex(name: string, fallback: string): number {
+  const raw = tokenColor(name, fallback).replace("#", "").trim();
+  const hex = raw.length === 3
+    ? raw.split("").map((ch) => ch + ch).join("")
+    : raw.padStart(6, "0").slice(0, 6);
+  const parsed = Number.parseInt(hex, 16);
+  return Number.isFinite(parsed) ? parsed : 0xffffff;
 }

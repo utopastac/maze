@@ -27,6 +27,7 @@ import {
   PlaneGeometry,
   PointLight,
   RepeatWrapping,
+  RingGeometry,
   Scene,
   ShaderMaterial,
   Shape,
@@ -64,6 +65,7 @@ import {
   makeHeartIcon,
   makeHeartMaterials,
 } from "./collectibleMeshes.ts";
+import { makeCrumbleCanvas } from "./crumblePaint.ts";
 import { makeThemeSurfaces, type ThemeSurfaces } from "./themeMaterials.ts";
 
 const SHELL_ALPHA = 0.18;
@@ -72,6 +74,9 @@ const PICKUP_ICON_SCALE = 0.55;
 const WARP_GATE_R = 0.3;
 const WARP_GATE_H = 0.58;
 const WARP_GATE_ALPHA = 0.38;
+const EXIT_GATE_R = 0.34;
+const EXIT_GATE_H = 0.58;
+const EXIT_GATE_ALPHA = 0.4;
 const ANGLE_SPEC = SETTING_SPECS.find((spec) => spec.key === "angle");
 const ANGLE_MIN = ANGLE_SPEC?.min ?? 22;
 const ANGLE_MAX = ANGLE_SPEC?.max ?? 80;
@@ -79,6 +84,10 @@ const MEADOW_CAM_SECS = 1.25;
 const MEADOW_GLANCE_PITCH_MIN = -28;
 const MEADOW_GLANCE_PITCH_MAX = 88;
 const MEADOW_EYE_MIN = 0.55;
+const HOME_TOWER_LAYERS = 100;
+const HOME_LAYER_H = 0.145;
+const HOME_TOWER_H = HOME_TOWER_LAYERS * HOME_LAYER_H;
+const HOME_BACKDROP_SPAN = CELL * 7;
 
 export class MazeWorld {
   readonly scene = new Scene();
@@ -117,6 +126,7 @@ export class MazeWorld {
   private readonly boostMarkMat: MeshToonMaterial;
   private readonly warpMats: MeshToonMaterial[];
   private readonly warpGateMats: MeshToonMaterial[];
+  private readonly exitGateMat: MeshToonMaterial;
   private readonly iceMarkMat: MeshToonMaterial;
   private readonly switchMats: MeshToonMaterial[];
   private readonly gateMeshes: Mesh[] = [];
@@ -129,6 +139,7 @@ export class MazeWorld {
   private readonly wingGeometry: BufferGeometry;
   private readonly sparkGeometry: BufferGeometry;
   private readonly warpGateGeometry: BufferGeometry;
+  private readonly exitGateGeometry: BufferGeometry;
   private readonly heartBodyMat: MeshStandardMaterial;
   private readonly heartShadeMat: MeshStandardMaterial;
   private readonly coinMat: MeshStandardMaterial;
@@ -161,11 +172,13 @@ export class MazeWorld {
   private readonly floorGroups: (Group | null)[] = [];
   private readonly frames: (Mesh | null)[] = [];
   private readonly goalRings: Mesh[] = [];
+  private readonly goalGates: Mesh[] = [];
   private readonly goalLights: PointLight[] = [];
+  private exitBreached = false;
   private meadow: Group | null = null;
   private meadowFlowers: Mesh[] = [];
   private meadowAnimals: AnimalBit[] = [];
-  private meadowFlames: Mesh[] = [];
+  private meadowFlames: Object3D[] = [];
   private meadowDisco: { mesh: Mesh; phase: number; row: number; col: number }[] = [];
   private meadowDiscoBall: Group | null = null;
   private readonly discoMats: MeshToonMaterial[];
@@ -173,6 +186,14 @@ export class MazeWorld {
   private meadowWinLetters: Group | null = null;
   private escaped = false;
   private failed = false;
+  private homeBackdrop = false;
+  private homeOrbit = 0;
+  private lightningCooldown = 1.2;
+  private lightningFlash = 0;
+  private lightningLight: PointLight | null = null;
+  private lightningBolt: Group | null = null;
+  private readonly hemiLight: HemisphereLight;
+  private readonly ambientLight: AmbientLight;
   private failFloorMat: MeshToonMaterial;
   private winSceneIndex = 0;
   private tower: TowerLayout | null = null;
@@ -214,7 +235,7 @@ export class MazeWorld {
       block: toon(token("--maze-block")),
       switch: toon(token("--maze-switch"), token("--maze-switch-0"), 0.12),
       start: toon(token("--maze-start")),
-      goal: toon(token("--maze-goal-floor"), token("--maze-goal"), 0.24),
+      goal: toon(token("--maze-goal-floor"), token("--maze-goal"), 0.55),
       wall: toon(token("--maze-wall")),
       grout: toon(token("--maze-grout")),
       frame: toon(token("--maze-frame")),
@@ -226,6 +247,11 @@ export class MazeWorld {
       roof: toon(token("--maze-roof")),
     };
     this.materials.pit.side = DoubleSide;
+    this.materials.goal.transparent = true;
+    this.materials.goal.opacity = 0.38;
+    this.materials.goal.depthWrite = false;
+    this.materials.goal.toneMapped = false;
+    this.materials.goal.side = DoubleSide;
     this.materials.lip.toneMapped = false;
     this.materials.hatch.toneMapped = false;
     this.materials.exit.toneMapped = false;
@@ -416,6 +442,10 @@ export class MazeWorld {
       mat.depthWrite = false;
       return mat;
     });
+    this.exitGateMat = glow(token("--maze-goal"));
+    this.exitGateMat.transparent = true;
+    this.exitGateMat.opacity = EXIT_GATE_ALPHA;
+    this.exitGateMat.depthWrite = false;
     this.iceMarkMat = glow(token("--maze-ice-mark"));
     this.switchMats = Array.from({ length: SWITCH_COLOR_COUNT }, (_, index) => glow(token(`--maze-switch-${index}`)));
     this.arrowGeometry = arrowGeometry();
@@ -426,6 +456,9 @@ export class MazeWorld {
     this.sparkGeometry = facet(new BoxGeometry(0.05, 0.14, 0.05));
     this.rainGeometry = facet(new BoxGeometry(0.028, 0.42, 0.028));
     this.warpGateGeometry = facet(new CylinderGeometry(WARP_GATE_R, WARP_GATE_R, WARP_GATE_H, 8, 1, true));
+    this.exitGateGeometry = facet(
+      new CylinderGeometry(EXIT_GATE_R, EXIT_GATE_R, EXIT_GATE_H, 8, 1, true),
+    );
     const heartMats = makeHeartMaterials(token("--maze-heart"));
     heartMats.outline.dispose();
     this.heartBodyMat = heartMats.body;
@@ -487,8 +520,8 @@ export class MazeWorld {
       "#c8d6e4",
     ];
 
-    const hemi = new HemisphereLight(token("--maze-sky"), token("--maze-floor"), 0.7);
-    const ambient = new AmbientLight("#ffffff", 0.28);
+    this.hemiLight = new HemisphereLight(token("--maze-sky"), token("--maze-floor"), 0.7);
+    this.ambientLight = new AmbientLight("#ffffff", 0.28);
     this.key = new DirectionalLight("#fff6ea", 1.45);
     this.key.position.set(4.4, 12.8, 6.2);
     this.key.castShadow = true;
@@ -501,7 +534,7 @@ export class MazeWorld {
     fill.position.set(-7.5, 5.5, -3.5);
     const rim = new DirectionalLight("#ffffff", 0.18);
     rim.position.set(-2.5, 7, -9);
-    this.scene.add(hemi, ambient, this.key, this.key.target, fill, rim);
+    this.scene.add(this.hemiLight, this.ambientLight, this.key, this.key.target, fill, rim);
 
     this.ballToonMat = toon(token("--maze-ball"));
     this.ballSmoothMat = new MeshStandardMaterial({
@@ -534,6 +567,9 @@ export class MazeWorld {
     this.raised = 0;
     this.escaped = false;
     this.failed = false;
+    this.homeBackdrop = false;
+    this.clearLightning();
+    this.restoreHomeLighting();
     this.meadowCamLive = false;
     this.meadowCamT = 0;
     this.ball.visible = true;
@@ -542,6 +578,7 @@ export class MazeWorld {
     this.clearSparks();
     this.clearMeadow();
     this.clearGenerated();
+    this.exitBreached = false;
     this.floorGroups.length = 0;
     this.frames.length = 0;
     this.focusY = 0;
@@ -575,6 +612,7 @@ export class MazeWorld {
       ? (group.userData.exit as { x: number; z: number } | null) ??
         (group.userData.hatch as { x: number; z: number } | null)
       : null;
+    this.shatterExit();
     this.shatterFloor(index, blast);
     this.escaped = true;
     this.failed = false;
@@ -611,7 +649,19 @@ export class MazeWorld {
     return true;
   }
 
+  setWinScene(index: number): boolean {
+    if (!this.escaped) return false;
+    const count = WIN_SCENES.length;
+    if (count <= 0) return false;
+    this.winSceneIndex = ((index % count) + count) % count;
+    this.applyWinScene(this.winSceneIndex);
+    return true;
+  }
+
   enterWinGallery(): void {
+    this.homeBackdrop = false;
+    this.clearLightning();
+    this.restoreHomeLighting();
     this.escaped = true;
     this.failed = false;
     this.clearGoalMarkers();
@@ -626,6 +676,90 @@ export class MazeWorld {
     this.applyWinScene(0);
     this.beginMeadowCamera();
     this.placeCamera();
+  }
+
+  /** Ominous 100-floor tower meadow for the title screen. */
+  enterHomeBackdrop(): void {
+    this.clearDebris();
+    this.clearSparks();
+    this.clearMeadow();
+    this.clearGenerated();
+    this.clearLightning();
+    this.floorGroups.length = 0;
+    this.frames.length = 0;
+    this.exitBreached = false;
+    this.raised = 0;
+    this.focusY = 0;
+    this.escaped = true;
+    this.failed = false;
+    this.homeBackdrop = true;
+    this.homeOrbit = 0.55; // start on a corner so the pyramid taper reads clearly
+    this.lightningCooldown = 0.6 + Math.random() * 1.4;
+    this.ball.visible = false;
+    this.board.quaternion.identity();
+    this.tower = {
+      floors: [],
+      width: HOME_BACKDROP_SPAN,
+      depth: HOME_BACKDROP_SPAN,
+      story: STORY,
+    };
+    this.story = STORY;
+    this.buildHomeScene();
+    this.scene.background = this.voidSky.texture;
+    this.syncVoidSky(this.lastTime);
+    this.applyHomeLighting();
+    this.key.shadow.camera.far = 80;
+    this.camera.far = 220;
+    // Ultrawide like an iPhone 0.5× — big floor, looming stack.
+    this.camera.fov = 88;
+    this.camera.updateProjectionMatrix();
+    this.meadowCamLive = true;
+    this.meadowCamT = 1;
+    this.restCamera();
+    this.placeCamera();
+  }
+
+  leaveHomeBackdrop(): void {
+    if (!this.homeBackdrop) return;
+    this.homeBackdrop = false;
+    this.escaped = false;
+    this.failed = false;
+    this.meadowCamLive = false;
+    this.meadowCamT = 0;
+    this.clearLightning();
+    this.restoreHomeLighting();
+    this.key.shadow.camera.far = 40;
+    this.camera.far = 140;
+    this.camera.fov = this.settings?.values.field ?? 40;
+    this.camera.updateProjectionMatrix();
+    this.clearMeadow();
+    this.clearGenerated();
+    this.floorGroups.length = 0;
+    this.frames.length = 0;
+    this.tower = null;
+    this.ball.visible = false;
+    this.scene.background = this.voidSky.texture;
+    this.syncVoidSky(this.lastTime);
+  }
+
+  /** Tick rain, lightning, and orbit camera while the title backdrop is up. */
+  updateHome(time: number): void {
+    if (!this.homeBackdrop) return;
+    const dt = Math.min(0.05, Math.max(0, time - this.lastTime));
+    this.lastTime = time;
+    if (!this.reduceMotion) this.homeOrbit += dt * 0.09;
+    this.tickLightning(dt);
+    this.tickRain(dt);
+    this.syncVoidSky(time);
+    this.placeCamera();
+  }
+
+  isHomeBackdrop(): boolean {
+    return this.homeBackdrop;
+  }
+
+  winGalleryScenes(): readonly string[] {
+    return WIN_SCENES;
   }
 
   winGalleryStatus(): { index: number; count: number; name: string } {
@@ -730,7 +864,8 @@ export class MazeWorld {
     this.applyBallLook(normal);
     organicProps = normal;
     this.syncVoidSky(this.lastTime);
-    if (lookChanged && this.escaped && !this.failed) this.applyWinScene(this.winSceneIndex);
+    if (lookChanged && this.homeBackdrop) this.buildHomeScene();
+    else if (lookChanged && this.escaped && !this.failed) this.applyWinScene(this.winSceneIndex);
     else if (lookChanged && this.failed) this.buildFailScene();
     if (!lookChanged && Math.abs(steps - paintedSteps) < 0.001) return;
     paintRamp(ramp, steps, normal);
@@ -804,7 +939,7 @@ export class MazeWorld {
   private syncVoidSky(time: number): void {
     const chunk = this.settings?.values.skyPixels ?? 4;
     const steps = this.settings?.values.skyShade ?? 6;
-    const themeId = this.failed
+    const themeId = this.homeBackdrop || this.failed
       ? "sad"
       : this.escaped
         ? "rainbow"
@@ -829,7 +964,7 @@ export class MazeWorld {
 
   nudgeCamera(dAngle: number, dOrbit: number): void {
     if (dAngle === 0 && dOrbit === 0) return;
-    if (this.escaped) {
+    if (this.escaped || this.homeBackdrop) {
       this.glanceDAngle = clamp(
         this.glanceDAngle + dAngle,
         MEADOW_GLANCE_PITCH_MIN,
@@ -891,18 +1026,22 @@ export class MazeWorld {
     this.placeCamera();
     this.syncVoidStars(time);
     this.syncTiles(pose, time);
+    if (pose.fallingThrough) this.shatterExit();
     this.tickPickups(this.hearts, time, dt, 1.7, 2.4);
     this.tickPickups(this.coins, time, dt, 3.6, 2.8);
     this.tickPickups(this.stars, time, dt, 2.8, 3.2);
     this.tickPickups(this.wings, time, dt, 2.2, 2.6);
     this.syncVoidSky(time);
     if (this.reduceMotion) return;
-    if (this.goalRings.length) {
+    if (this.goalRings.length || this.goalGates.length) {
       const wave = Math.sin(time * 2.2);
       const pulse = 0.75 + wave * 0.25;
       const scale = 1 + wave * 0.03;
       this.goalRingMat.emissiveIntensity = pulse;
+      this.exitGateMat.emissiveIntensity = pulse;
+      this.exitGateMat.opacity = EXIT_GATE_ALPHA * (0.85 + wave * 0.15);
       for (const ring of this.goalRings) ring.scale.setScalar(scale);
+      for (const gate of this.goalGates) gate.rotation.y = time * 0.65;
       for (const light of this.goalLights) light.intensity = 2.8 + wave * 0.8;
     }
     if (this.escaped) {
@@ -925,16 +1064,18 @@ export class MazeWorld {
         animal.group.rotation.y = animal.facing + Math.sin(time * 0.7 + index * 1.3) * 0.08;
       }
       for (const [index, flame] of this.meadowFlames.entries()) {
-        if (flame.userData.auroraRibbon) {
+        if (flame.userData.planetFloat) {
           const phase = typeof flame.userData.driftPhase === "number" ? flame.userData.driftPhase : index;
           const speed = typeof flame.userData.driftSpeed === "number" ? flame.userData.driftSpeed : 0.35;
-          flame.position.z = Math.sin(time * speed + phase) * 0.55;
-          flame.position.y = Math.sin(time * speed * 0.7 + phase * 1.2) * 0.18;
-          if (flame.material instanceof MeshToonMaterial) {
-            flame.material.emissiveIntensity = 0.7 + Math.sin(time * 2.2 + phase) * 0.2;
-          }
+          const baseY = typeof flame.userData.baseY === "number" ? flame.userData.baseY : flame.position.y;
+          const bob = typeof flame.userData.bobAmp === "number" ? flame.userData.bobAmp : 0.12;
+          const spin = typeof flame.userData.spin === "number" ? flame.userData.spin : 0.18;
+          flame.position.y = baseY + Math.sin(time * speed + phase) * bob;
+          flame.rotation.y = time * spin + phase;
+          flame.rotation.z = Math.sin(time * speed * 0.55 + phase) * 0.08;
           continue;
         }
+        if (!(flame instanceof Mesh)) continue;
         if (flame.userData.flickerScale !== false) {
           const flicker = 0.85 + Math.sin(time * 14 + index * 2.1) * 0.2;
           flame.scale.set(flicker, 0.9 + Math.sin(time * 11 + index) * 0.35, flicker);
@@ -983,8 +1124,9 @@ export class MazeWorld {
           }
         }
       }
-      if (this.failed) this.tickRain(dt);
+      if (this.homeBackdrop || this.failed) this.tickRain(dt);
       else this.tickFireworks(dt);
+      if (this.homeBackdrop) this.tickLightning(dt);
     }
     this.boostMarkMat.emissiveIntensity = 0.55 + Math.sin(time * 4.5) * 0.28;
     this.iceMarkMat.emissiveIntensity = 0.35 + Math.sin(time * 1.6) * 0.12;
@@ -1036,7 +1178,8 @@ export class MazeWorld {
             piece.kind === "void" ||
             piece.kind === "lip" ||
             piece.kind === "grout" ||
-            piece.kind === "roof"
+            piece.kind === "roof" ||
+            (piece.kind === "goal" && this.exitBreached)
           ) {
             continue;
           }
@@ -1050,6 +1193,194 @@ export class MazeWorld {
     this.frames[index] = null;
     this.pruneSpins();
     this.pruneGoalMarkers();
+    this.exitBreached = false;
+  }
+
+  /** Shatter the exit glass pad, veil, and ring as the ball passes through. */
+  private shatterExit(): void {
+    if (this.exitBreached) return;
+    const index = this.topFloorIndex();
+    const group = index >= 0 ? this.floorGroups[index] : null;
+    if (!group) return;
+    const hasExit =
+      (group.userData.exit as { x: number; z: number } | null) != null ||
+      (group.userData.hatch as { x: number; z: number } | null) != null;
+    if (!hasExit) return;
+
+    this.exitBreached = true;
+    this.board.updateWorldMatrix(true, true);
+    const floorY = group.position.y;
+    const quat = this.board.quaternion;
+
+    const pieces = (group.userData.pieces as Piece[] | undefined) ?? [];
+    const goals = pieces.filter((piece) => piece.kind === "goal");
+    group.userData.pieces = pieces.filter((piece) => piece.kind !== "goal");
+
+    const remove: Object3D[] = [];
+    for (const child of group.children) {
+      if (child instanceof Mesh && child.userData.pieceKind === "goal") remove.push(child);
+    }
+    for (const mesh of remove) {
+      group.remove(mesh);
+      this.disposeGenerated(mesh);
+    }
+
+    if (!this.reduceMotion) {
+      for (const piece of goals) this.spawnGlassBurst(piece, floorY, quat);
+      this.burstExitMarkers(group, quat);
+    } else {
+      this.stripExitMarkers(group);
+    }
+  }
+
+  private burstExitMarkers(group: Group, boardQuat: Quaternion): void {
+    const blast = this.ball.position.clone();
+    for (let i = this.goalRings.length - 1; i >= 0; i -= 1) {
+      const ring = this.goalRings[i];
+      if (!ring || ring.parent !== group) continue;
+      this.spawnMarkerShards(ring, boardQuat, blast, 10, 0.08);
+      ring.removeFromParent();
+      this.goalRings.splice(i, 1);
+    }
+    for (let i = this.goalGates.length - 1; i >= 0; i -= 1) {
+      const gate = this.goalGates[i];
+      if (!gate || gate.parent !== group) continue;
+      this.spawnMarkerShards(gate, boardQuat, blast, 14, 0.12);
+      gate.removeFromParent();
+      this.goalGates.splice(i, 1);
+    }
+    for (let i = this.goalLights.length - 1; i >= 0; i -= 1) {
+      const light = this.goalLights[i];
+      if (!light || light.parent !== group) continue;
+      light.visible = false;
+      light.removeFromParent();
+      this.goalLights.splice(i, 1);
+    }
+  }
+
+  private stripExitMarkers(group: Group): void {
+    for (let i = this.goalRings.length - 1; i >= 0; i -= 1) {
+      const ring = this.goalRings[i];
+      if (!ring || ring.parent !== group) continue;
+      ring.removeFromParent();
+      this.goalRings.splice(i, 1);
+    }
+    for (let i = this.goalGates.length - 1; i >= 0; i -= 1) {
+      const gate = this.goalGates[i];
+      if (!gate || gate.parent !== group) continue;
+      gate.removeFromParent();
+      this.goalGates.splice(i, 1);
+    }
+    for (let i = this.goalLights.length - 1; i >= 0; i -= 1) {
+      const light = this.goalLights[i];
+      if (!light || light.parent !== group) continue;
+      light.visible = false;
+      light.removeFromParent();
+      this.goalLights.splice(i, 1);
+    }
+  }
+
+  private spawnMarkerShards(
+    from: Mesh,
+    boardQuat: Quaternion,
+    blast: Vector3,
+    count: number,
+    size: number,
+  ): void {
+    const origin = from.getWorldPosition(new Vector3());
+    for (let i = 0; i < count; i += 1) {
+      const geo = new BoxGeometry(
+        size * (0.5 + Math.random()),
+        size * (0.7 + Math.random() * 1.4),
+        size * (0.35 + Math.random() * 0.5),
+      );
+      const mat = this.exitGateMat.clone();
+      mat.transparent = true;
+      mat.opacity = 0.7;
+      mat.depthWrite = false;
+      const mesh = new Mesh(geo, mat);
+      const angle = (i / count) * Math.PI * 2 + Math.random() * 0.4;
+      const radius = 0.08 + Math.random() * 0.2;
+      mesh.position.set(
+        origin.x + Math.cos(angle) * radius,
+        origin.y + (Math.random() - 0.3) * 0.35,
+        origin.z + Math.sin(angle) * radius,
+      );
+      mesh.quaternion.copy(boardQuat);
+      const away = mesh.position.clone().sub(blast);
+      if (away.lengthSq() < 0.0001) away.set(Math.cos(angle), 0.5, Math.sin(angle));
+      away.normalize();
+      const speed = 1.6 + Math.random() * 2.4;
+      const vel = away.multiplyScalar(speed);
+      vel.y += 1.2 + Math.random() * 1.6;
+      const spin = new Vector3(
+        (Math.random() - 0.5) * 16,
+        (Math.random() - 0.5) * 16,
+        (Math.random() - 0.5) * 16,
+      );
+      this.scene.add(mesh);
+      this.debris.push({
+        mesh,
+        vel,
+        spin,
+        delay: Math.random() * 0.04,
+        age: 0,
+        life: 0.85 + Math.random() * 0.35,
+      });
+    }
+  }
+
+  private spawnGlassBurst(piece: Piece, floorY: number, boardQuat: Quaternion): void {
+    const source = this.materials.goal;
+    const cols = 4;
+    const rows = 2;
+    const depth = 4;
+    const sx = (piece.hx * 2) / cols;
+    const sy = (piece.hy * 2) / rows;
+    const sz = (piece.hz * 2) / depth;
+    const blast = this.ball.position.clone();
+    for (let ix = 0; ix < cols; ix += 1) {
+      for (let iy = 0; iy < rows; iy += 1) {
+        for (let iz = 0; iz < depth; iz += 1) {
+          const ox = (ix + 0.5) / cols - 0.5;
+          const oy = (iy + 0.5) / rows - 0.5;
+          const oz = (iz + 0.5) / depth - 0.5;
+          const geo = new BoxGeometry(sx * 0.85, sy * 0.85, sz * 0.85);
+          const mat = source.clone();
+          mat.transparent = true;
+          mat.opacity = 0.65;
+          mat.depthWrite = false;
+          const mesh = new Mesh(geo, mat);
+          const local = new Vector3(
+            piece.x + ox * piece.hx * 2,
+            piece.y + floorY + oy * piece.hy * 2,
+            piece.z + oz * piece.hz * 2,
+          );
+          mesh.position.copy(local.applyQuaternion(boardQuat));
+          mesh.quaternion.copy(boardQuat);
+          const away = mesh.position.clone().sub(blast);
+          if (away.lengthSq() < 0.0001) away.set(ox + 0.001, 0.5, oz + 0.001);
+          away.normalize();
+          const speed = 1.8 + Math.random() * 2.6;
+          const vel = away.multiplyScalar(speed);
+          vel.y += 1.1 + Math.random() * 1.7;
+          const spin = new Vector3(
+            (Math.random() - 0.5) * 14,
+            (Math.random() - 0.5) * 14,
+            (Math.random() - 0.5) * 14,
+          );
+          this.scene.add(mesh);
+          this.debris.push({
+            mesh,
+            vel,
+            spin,
+            delay: Math.random() * 0.03,
+            age: 0,
+            life: 0.9 + Math.random() * 0.4,
+          });
+        }
+      }
+    }
   }
 
   private shatterRoofAt(index: number): void {
@@ -1648,7 +1979,6 @@ export class MazeWorld {
       mesh.receiveShadow =
         kind === "floor" ||
         kind === "start" ||
-        kind === "goal" ||
         kind === "boost" ||
         kind === "warp" ||
         kind === "ice" ||
@@ -1657,6 +1987,10 @@ export class MazeWorld {
         kind === "switch" ||
         kind === "grout" ||
         kind === "roof";
+      if (kind === "goal") {
+        mesh.renderOrder = 2;
+        mesh.castShadow = false;
+      }
       if (kind === "frame") {
         frame = mesh;
         mesh.userData.theme = theme;
@@ -1730,8 +2064,15 @@ export class MazeWorld {
     const ring = new Mesh(facet(new TorusGeometry(0.34, 0.045, 4, 8)), this.goalRingMat);
     ring.rotation.x = Math.PI / 2;
     ring.position.set(goal.x, 0.045, goal.z);
+    ring.renderOrder = 2;
     this.goalRings.push(ring);
     parent.add(ring);
+
+    const gate = new Mesh(this.exitGateGeometry, this.exitGateMat);
+    gate.position.set(goal.x, EXIT_GATE_H / 2 + 0.02, goal.z);
+    gate.renderOrder = 3;
+    this.goalGates.push(gate);
+    parent.add(gate);
 
     const light = new PointLight(this.goalLightColor, 3.2, 4.2, 2);
     light.position.set(goal.x, 0.62, goal.z);
@@ -1776,7 +2117,7 @@ export class MazeWorld {
       this.addSeaweed(group, span);
       this.addShipwreck(group, span);
     } else if (kind === "city") {
-      this.addCityBlocks(group, span);
+      this.addCityPark(group, span);
     } else if (kind === "village") {
       this.addVillage(group, span);
       this.addBonfire(group);
@@ -1889,6 +2230,426 @@ export class MazeWorld {
     for (let i = 0; i < 48; i += 1) this.spawnRaindrop(group);
   }
 
+  private buildHomeScene(): void {
+    this.clearMeadow();
+    const tower = this.tower;
+    if (!tower) return;
+    // Extra-wide ground plane so the 0.5× FOV still reads as barren rock, not void.
+    const span = Math.max(tower.width, tower.depth) * 4.2;
+    const group = new Group();
+    group.position.y = -MEADOW_DROP;
+    group.visible = true;
+    group.userData.generated = true;
+    this.rainCooldown = 0.01;
+
+    const pad = new Mesh(new BoxGeometry(span, 0.28, span), this.groundMats.failGroundDark);
+    pad.position.y = -0.14;
+    pad.receiveShadow = organicProps;
+    group.add(pad);
+
+    const tiles = Math.max(6, Math.round(span / 2.0));
+    if (this.failFloorMat.map) {
+      this.failFloorMat.map.repeat.set(tiles, tiles);
+      this.failFloorMat.map.needsUpdate = true;
+    }
+    const carpet = new Mesh(new PlaneGeometry(span, span), this.failFloorMat);
+    carpet.rotation.x = -Math.PI / 2;
+    carpet.position.y = 0.01;
+    carpet.receiveShadow = organicProps;
+    group.add(carpet);
+
+    this.addBarrenRocks(group, span);
+    // Tower footprint still keyed to the playable tower span, not the expanded ground.
+    this.addOminousTower(group, Math.max(tower.width, tower.depth) * 2.8);
+
+    const light = new PointLight("#eef4ff", 0, span * 3.2, 1.6);
+    light.position.set(0, 1.5, span * 0.15);
+    group.add(light);
+    this.lightningLight = light;
+
+    // Soft fill so the tower silhouette stays readable under the storm sky.
+    const wash = new PointLight("#8a9bb0", 2.2, span * 1.8, 2);
+    wash.position.set(span * 0.22, HOME_TOWER_H * 0.55, span * 0.35);
+    group.add(wash);
+    const rim = new PointLight("#6a8098", 1.6, span * 1.6, 2);
+    rim.position.set(-span * 0.3, HOME_TOWER_H * 0.4, -span * 0.2);
+    group.add(rim);
+
+    this.board.add(group);
+    this.meadow = group;
+    for (let i = 0; i < 64; i += 1) this.spawnRaindrop(group);
+  }
+
+  private addBarrenRocks(parent: Group, span: number): void {
+    const rim = span * 0.42;
+    for (let i = 0; i < 28; i += 1) {
+      const a = i * 1.37 + 0.2;
+      const radius = rim * (0.35 + ((i * 17) % 100) / 100 * 0.62);
+      const rock = new Mesh(
+        new BoxGeometry(
+          0.22 + (i % 5) * 0.11,
+          0.1 + (i % 4) * 0.08,
+          0.18 + (i % 3) * 0.1,
+        ),
+        i % 3 === 0
+          ? this.groundMats.moonRock
+          : i % 3 === 1
+            ? this.groundMats.failGround
+            : this.groundMats.failCrack,
+      );
+      rock.position.set(
+        Math.cos(a) * radius,
+        0.06 + (i % 3) * 0.02,
+        Math.sin(a) * radius * 0.92,
+      );
+      rock.rotation.y = a * 0.55;
+      rock.rotation.z = ((i % 5) - 2) * 0.04;
+      rock.castShadow = organicProps;
+      rock.receiveShadow = organicProps;
+      parent.add(rock);
+    }
+    for (let i = 0; i < 10; i += 1) {
+      const a = i * 2.1 + 0.8;
+      const ridge = new Mesh(
+        new BoxGeometry(0.7 + (i % 3) * 0.35, 0.18 + (i % 2) * 0.12, 0.28 + (i % 4) * 0.08),
+        this.groundMats.failGroundDark,
+      );
+      ridge.position.set(Math.cos(a) * rim * 0.78, 0.1, Math.sin(a) * rim * 0.7);
+      ridge.rotation.y = a * 0.4;
+      ridge.castShadow = organicProps;
+      ridge.receiveShadow = organicProps;
+      parent.add(ridge);
+    }
+  }
+
+  private addOminousTower(parent: Group, span: number): void {
+    const baseSize = span * 0.36;
+    const floorT = 0.045;
+    const wallH = 0.088;
+    const wallT = 0.038;
+    const floorGeos: BufferGeometry[] = [];
+    const wallGeos: BufferGeometry[] = [];
+    const shadeGeos: BufferGeometry[] = [];
+    const accentGeos: BufferGeometry[] = [];
+
+    for (let i = 0; i < HOME_TOWER_LAYERS; i += 1) {
+      const t = i / Math.max(1, HOME_TOWER_LAYERS - 1);
+      // Pyramid: keep the base fat, then shrink hard toward the tip (~25% width).
+      const taper = 1 - Math.pow(t, 0.9) * 0.75;
+      const wobble = Math.sin(i * 0.73) * 0.01 + Math.cos(i * 1.17) * 0.007;
+      const size = baseSize * taper * (1 + wobble * taper);
+      const y = i * HOME_LAYER_H + floorT * 0.5;
+      const ox = Math.sin(i * 0.41) * 0.04 * taper;
+      const oz = Math.cos(i * 0.37) * 0.04 * taper;
+      const half = size * 0.5;
+
+      const slab = new BoxGeometry(size, floorT, size);
+      slab.translate(ox, y, oz);
+      floorGeos.push(slab);
+
+      const wy = y + floorT * 0.5 + wallH * 0.5;
+      const north = new BoxGeometry(size, wallH, wallT);
+      north.translate(ox, wy, oz - half + wallT * 0.5);
+      const south = new BoxGeometry(size, wallH, wallT);
+      south.translate(ox, wy, oz + half - wallT * 0.5);
+      const west = new BoxGeometry(wallT, wallH, size - wallT * 2);
+      west.translate(ox - half + wallT * 0.5, wy, oz);
+      const east = new BoxGeometry(wallT, wallH, size - wallT * 2);
+      east.translate(ox + half - wallT * 0.5, wy, oz);
+      wallGeos.push(north, south, west, east);
+
+      // Sparse interior stubs so layers read like maze floors.
+      if (i % 2 === 0) {
+        const stubW = size * (0.28 + ((i * 13) % 7) * 0.04);
+        const stub = new BoxGeometry(stubW, wallH * 0.85, wallT * 0.9);
+        const angle = (i * 1.7) % (Math.PI * 2);
+        stub.translate(
+          ox + Math.cos(angle) * size * 0.18,
+          wy,
+          oz + Math.sin(angle) * size * 0.18,
+        );
+        shadeGeos.push(stub);
+      }
+      if (i % 5 === 0) {
+        const post = new BoxGeometry(wallT * 1.4, wallH * 1.15, wallT * 1.4);
+        post.translate(ox + half * 0.72, wy, oz + half * 0.72);
+        accentGeos.push(post);
+      }
+    }
+
+    const merge = (geos: BufferGeometry[]): BufferGeometry | null => {
+      if (geos.length === 0) return null;
+      const merged = geos.length === 1 ? geos[0]! : mergeGeometries(geos);
+      if (geos.length > 1) {
+        for (const geo of geos) geo.dispose();
+      }
+      if (!merged) return null;
+      // Translated floor slabs sit far from the origin — refresh bounds or frustum culling hides the tower.
+      merged.computeBoundingSphere();
+      merged.computeBoundingBox();
+      return merged;
+    };
+
+    const floorMesh = merge(floorGeos);
+    if (floorMesh) {
+      const floorMat = new MeshBasicMaterial({
+        color: token("--maze-fail-ground"),
+        toneMapped: false,
+      });
+      const mesh = new Mesh(floorMesh, floorMat);
+      mesh.frustumCulled = false;
+      mesh.userData.owned = true;
+      mesh.castShadow = organicProps;
+      mesh.receiveShadow = organicProps;
+      parent.add(mesh);
+    }
+    const wallMesh = merge(wallGeos);
+    if (wallMesh) {
+      // Lit stone — MeshBasic so the stack stays readable under the storm wash.
+      const wallMat = new MeshBasicMaterial({
+        color: token("--maze-wall"),
+        toneMapped: false,
+      });
+      const mesh = new Mesh(wallMesh, wallMat);
+      mesh.frustumCulled = false;
+      mesh.userData.owned = true;
+      mesh.castShadow = organicProps;
+      mesh.receiveShadow = organicProps;
+      parent.add(mesh);
+    }
+    const shadeMesh = merge(shadeGeos);
+    if (shadeMesh) {
+      const mesh = new Mesh(shadeMesh, this.groundMats.failCrack);
+      mesh.frustumCulled = false;
+      mesh.castShadow = organicProps;
+      parent.add(mesh);
+    }
+    const accentMesh = merge(accentGeos);
+    if (accentMesh) {
+      const mesh = new Mesh(accentMesh, this.materials.frame);
+      mesh.frustumCulled = false;
+      mesh.castShadow = organicProps;
+      parent.add(mesh);
+    }
+
+    // Crown + spire catch lightning and mark the summit.
+    const tipSize = baseSize * 0.28;
+    const crown = new Mesh(
+      new BoxGeometry(tipSize, 0.12, tipSize),
+      this.materials.frame,
+    );
+    crown.position.y = HOME_TOWER_H + 0.04;
+    crown.castShadow = organicProps;
+    parent.add(crown);
+    const spire = new Mesh(
+      new BoxGeometry(0.08, 0.65, 0.08),
+      this.groundMats.failNeon,
+    );
+    spire.position.y = HOME_TOWER_H + 0.42;
+    parent.add(spire);
+  }
+
+  private applyHomeLighting(): void {
+    this.hemiLight.intensity = 0.48;
+    this.ambientLight.intensity = 0.22;
+    this.key.intensity = 0.85;
+    this.key.color.set("#b0bec8");
+    this.key.position.set(6, HOME_TOWER_H * 0.85, 10);
+  }
+
+  private restoreHomeLighting(): void {
+    this.hemiLight.intensity = 0.7;
+    this.ambientLight.intensity = 0.28;
+    this.key.intensity = 1.45;
+    this.key.color.set("#fff6ea");
+    this.key.position.set(4.4, 12.8, 6.2);
+  }
+
+  private tickLightning(dt: number): void {
+    if (!this.homeBackdrop || this.reduceMotion) {
+      if (this.lightningLight) this.lightningLight.intensity = 0;
+      if (this.lightningBolt) this.lightningBolt.visible = false;
+      return;
+    }
+    this.lightningCooldown -= dt;
+    if (this.lightningFlash > 0) {
+      this.lightningFlash -= dt;
+      const peak = this.lightningFlash > 0.05;
+      const after = this.lightningFlash > 0.02;
+      const burst = peak
+        ? 28 + Math.random() * 22
+        : after
+          ? 8 + Math.random() * 10
+          : 1.2 + Math.random() * 2.5;
+      if (this.lightningLight) this.lightningLight.intensity = burst;
+      this.hemiLight.intensity = 0.48 + burst * 0.12;
+      this.ambientLight.intensity = 0.22 + burst * 0.07;
+      this.key.intensity = 0.85 + burst * 0.08;
+      if (this.lightningBolt) this.lightningBolt.visible = peak || after;
+      if (this.lightningFlash <= 0) {
+        if (this.lightningLight) this.lightningLight.intensity = 0;
+        this.dropLightningBolt();
+        this.hemiLight.intensity = 0.48;
+        this.ambientLight.intensity = 0.22;
+        this.key.intensity = 0.85;
+      }
+      return;
+    }
+    if (this.lightningCooldown > 0) return;
+    this.strikeLightning();
+    // Frequent double/triple cracks for a violent storm.
+    this.lightningCooldown = Math.random() < 0.55
+      ? 0.08 + Math.random() * 0.16
+      : 0.9 + Math.random() * 2.4;
+  }
+
+  private strikeLightning(): void {
+    const meadow = this.meadow;
+    if (!meadow) return;
+    this.lightningFlash = 0.16 + Math.random() * 0.12;
+    const span = HOME_BACKDROP_SPAN * 4.2;
+    const side = Math.random() < 0.5 ? -1 : 1;
+    // Strike beside the tower, landing near camera / floor level.
+    const x = side * (span * (0.12 + Math.random() * 0.22));
+    const z = span * (0.08 + Math.random() * 0.18) * (Math.random() < 0.5 ? 1 : -0.35);
+    if (this.lightningLight) {
+      this.lightningLight.position.set(x, 1.2 + Math.random() * 2.4, z);
+      this.lightningLight.intensity = 36;
+      this.lightningLight.distance = span * 2.8;
+    }
+    if (this.lightningBolt) this.dropLightningBolt();
+    const bolt = new Group();
+    bolt.userData.generated = true;
+    const coreMat = new MeshBasicMaterial({
+      color: "#f4f8ff",
+      transparent: true,
+      opacity: 1,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const glowMat = new MeshBasicMaterial({
+      color: "#9eb8ff",
+      transparent: true,
+      opacity: 0.45,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    bolt.userData.boltMat = coreMat;
+    bolt.userData.boltGlowMat = glowMat;
+
+    const skyY = HOME_TOWER_H * 2.1 + Math.random() * 2.5;
+    const floorY = 0.06;
+    this.addLightningFork(bolt, coreMat, glowMat, x, skyY, z, x, floorY, z, 0.11, true);
+
+    // Side branches that peel off mid-fall.
+    const branches = 2 + Math.floor(Math.random() * 3);
+    for (let b = 0; b < branches; b += 1) {
+      const t = 0.25 + Math.random() * 0.45;
+      const by = skyY + (floorY - skyY) * t;
+      const bx = x + (Math.random() - 0.5) * 0.4;
+      const bz = z + (Math.random() - 0.5) * 0.4;
+      const endX = bx + side * (1.2 + Math.random() * 2.4);
+      const endZ = bz + (Math.random() - 0.5) * 2.2;
+      const endY = Math.max(floorY, by - (2.5 + Math.random() * 5.5));
+      this.addLightningFork(bolt, coreMat, glowMat, bx, by, bz, endX, endY, endZ, 0.055, false);
+    }
+
+    // Ground bloom where the bolt hits the barren floor.
+    const bloom = new Mesh(
+      new BoxGeometry(0.55 + Math.random() * 0.35, 0.08, 0.55 + Math.random() * 0.35),
+      glowMat,
+    );
+    bloom.position.set(x, 0.08, z);
+    bolt.add(bloom);
+
+    meadow.add(bolt);
+    this.lightningBolt = bolt;
+  }
+
+  private addLightningFork(
+    parent: Group,
+    coreMat: MeshBasicMaterial,
+    glowMat: MeshBasicMaterial,
+    x0: number,
+    y0: number,
+    z0: number,
+    x1: number,
+    y1: number,
+    z1: number,
+    thickness: number,
+    main: boolean,
+  ): void {
+    const drop = Math.max(0.5, y0 - y1);
+    const segments = main
+      ? Math.max(10, Math.round(drop / 1.15))
+      : Math.max(4, Math.round(drop / 1.6));
+    let cx = x0;
+    let cy = y0;
+    let cz = z0;
+    for (let i = 0; i < segments; i += 1) {
+      const t = (i + 1) / segments;
+      const remain = segments - i;
+      const step = (cy - y1) / remain;
+      const len = Math.min(step, 0.7 + Math.random() * 1.35);
+      const jag = main ? 0.85 : 1.25;
+      const nx = i === segments - 1
+        ? x1
+        : cx + (x1 - cx) * (1 / remain) + (Math.random() - 0.5) * jag;
+      const nz = i === segments - 1
+        ? z1
+        : cz + (z1 - cz) * (1 / remain) + (Math.random() - 0.5) * jag * 0.85;
+      const ny = i === segments - 1 ? y1 : cy - len;
+      const dx = nx - cx;
+      const dy = ny - cy;
+      const dz = nz - cz;
+      const segLen = Math.hypot(dx, dy, dz) || 0.01;
+      const thick = thickness * (main ? (1.15 - t * 0.35) : 0.7);
+      const core = new Mesh(new BoxGeometry(thick, segLen, thick), coreMat);
+      const glow = new Mesh(new BoxGeometry(thick * 2.6, segLen * 1.02, thick * 2.6), glowMat);
+      const midX = (cx + nx) * 0.5;
+      const midY = (cy + ny) * 0.5;
+      const midZ = (cz + nz) * 0.5;
+      const orient = (mesh: Mesh): void => {
+        mesh.position.set(midX, midY, midZ);
+        mesh.quaternion.setFromUnitVectors(
+          new Vector3(0, 1, 0),
+          new Vector3(dx / segLen, dy / segLen, dz / segLen),
+        );
+        parent.add(mesh);
+      };
+      orient(glow);
+      orient(core);
+      cx = nx;
+      cy = ny;
+      cz = nz;
+    }
+  }
+
+  private dropLightningBolt(): void {
+    const bolt = this.lightningBolt;
+    if (!bolt) return;
+    this.meadow?.remove(bolt);
+    const mat = bolt.userData.boltMat;
+    const glow = bolt.userData.boltGlowMat;
+    bolt.traverse((child) => {
+      if (!(child instanceof Mesh)) return;
+      child.geometry.dispose();
+    });
+    if (mat instanceof MeshBasicMaterial) mat.dispose();
+    if (glow instanceof MeshBasicMaterial) glow.dispose();
+    this.lightningBolt = null;
+  }
+
+  private clearLightning(): void {
+    this.lightningFlash = 0;
+    this.lightningCooldown = 1;
+    if (this.lightningLight) {
+      this.lightningLight.intensity = 0;
+      this.lightningLight = null;
+    }
+    this.dropLightningBolt();
+  }
+
   private addFailSign(parent: Group, span: number): void {
     const glyphs = [FAIL_GLYPH_F, FAIL_GLYPH_A, FAIL_GLYPH_I, FAIL_GLYPH_L, FAIL_GLYPH_BANG];
     const rows = FAIL_GLYPH_F.length;
@@ -1938,7 +2699,7 @@ export class MazeWorld {
       orchard: this.groundMats.grassDark,
       twilight: this.groundMats.lavenderDark,
       underwater: this.groundMats.seabedDark,
-      city: this.groundMats.pavementDark,
+      city: this.groundMats.grassDark,
       village: this.groundMats.cobbleDark,
       moon: this.groundMats.moonDustDark,
       venus: this.groundMats.venusGroundDark,
@@ -2120,20 +2881,69 @@ export class MazeWorld {
     parent.add(wreck);
   }
 
-  private addCityBlocks(parent: Group, span: number): void {
+  private addCityPark(parent: Group, span: number): void {
+    const lakeX = 0;
+    const lakeZ = span * 0.04;
+    const lakeR = span * 0.15;
+
+    const shore = flatDisc(lakeR * 1.22, this.groundMats.sand);
+    shore.position.set(lakeX, 0.03, lakeZ);
+    parent.add(shore);
+    const deep = flatDisc(lakeR, this.streamDeepMat);
+    deep.position.set(lakeX, 0.04, lakeZ);
+    parent.add(deep);
+    const water = flatDisc(lakeR * 0.9, this.streamMat);
+    water.position.set(lakeX, 0.055, lakeZ);
+    parent.add(water);
+    const gloss = flatDisc(lakeR * 0.42, this.streamMat);
+    gloss.position.set(lakeX - lakeR * 0.18, 0.06, lakeZ + lakeR * 0.12);
+    parent.add(gloss);
+
+    const path = new Mesh(
+      new RingGeometry(lakeR * 1.28, lakeR * 1.58, 40),
+      this.groundMats.pavement,
+    );
+    path.rotation.x = -Math.PI / 2;
+    path.position.set(lakeX, 0.035, lakeZ);
+    path.receiveShadow = organicProps;
+    parent.add(path);
+
+    const approach = new Mesh(
+      new BoxGeometry(span * 0.14, 0.04, span * 0.22),
+      this.groundMats.pavement,
+    );
+    approach.position.set(0, 0.03, lakeZ + lakeR * 1.55);
+    approach.receiveShadow = organicProps;
+    parent.add(approach);
+
+    const rim = span * 0.4;
+    const trees: { kind: TreeKind; x: number; z: number; scale: number }[] = [
+      { kind: "willow", x: -rim * 0.35, z: lakeZ + lakeR * 0.95, scale: 1.35 },
+      { kind: "oak", x: rim * 0.55, z: lakeZ + lakeR * 0.7, scale: 1.45 },
+      { kind: "birch", x: -rim * 0.7, z: lakeZ - lakeR * 0.15, scale: 1.25 },
+      { kind: "oak", x: rim * 0.72, z: lakeZ - lakeR * 0.35, scale: 1.5 },
+      { kind: "autumn", x: -rim * 0.55, z: rim * 0.55, scale: 1.3 },
+      { kind: "pine", x: rim * 0.48, z: rim * 0.62, scale: 1.55 },
+      { kind: "birch", x: -rim * 0.82, z: rim * 0.15, scale: 1.15 },
+      { kind: "oak", x: rim * 0.88, z: rim * 0.08, scale: 1.35 },
+      { kind: "autumn", x: -rim * 0.78, z: -rim * 0.55, scale: 1.2 },
+      { kind: "pine", x: rim * 0.8, z: -rim * 0.52, scale: 1.4 },
+    ];
+    for (const tree of trees) {
+      parent.add(makeTree(tree.kind, tree.x, tree.z, tree.scale, this.treeMats));
+    }
+
+    const benches: { x: number; z: number; facing: number }[] = [
+      { x: -lakeR * 1.45, z: lakeZ + lakeR * 0.15, facing: Math.PI * 0.5 },
+      { x: lakeR * 1.45, z: lakeZ - lakeR * 0.1, facing: -Math.PI * 0.5 },
+      { x: -lakeR * 0.35, z: lakeZ + lakeR * 1.45, facing: Math.PI },
+      { x: lakeR * 0.55, z: lakeZ + lakeR * 1.4, facing: Math.PI * 1.1 },
+    ];
+    for (const bench of benches) {
+      parent.add(makeBench(bench.x, bench.z, bench.facing, this.treeMats.trunk, this.groundMats.plaster));
+    }
+
     const unit = span * 0.12;
-    const street = new Mesh(new BoxGeometry(unit * 1.4, 0.05, span * 0.92), this.groundMats.pavementDark);
-    street.position.set(0, 0.02, 0);
-    const cross = new Mesh(new BoxGeometry(span * 0.92, 0.05, unit * 1.4), this.groundMats.pavementDark);
-    cross.position.set(0, 0.025, 0);
-    parent.add(street, cross);
-
-    const sidewalkA = new Mesh(new BoxGeometry(unit * 0.35, 0.06, span * 0.7), this.groundMats.pavement);
-    sidewalkA.position.set(-unit * 1.05, 0.04, 0);
-    const sidewalkB = sidewalkA.clone();
-    sidewalkB.position.x = unit * 1.05;
-    parent.add(sidewalkA, sidewalkB);
-
     const towers: {
       x: number;
       z: number;
@@ -2143,22 +2953,54 @@ export class MazeWorld {
       style: "glass" | "brick" | "stone";
       stepped?: boolean;
     }[] = [
-      { x: -2.4, z: 2.0, w: 1.7, d: 1.5, h: 2.4, style: "brick" },
-      { x: -0.7, z: 2.2, w: 1.3, d: 1.3, h: 3.2, style: "glass", stepped: true },
-      { x: 1.9, z: 1.9, w: 1.8, d: 1.5, h: 1.9, style: "stone" },
-      { x: -2.2, z: -1.9, w: 1.6, d: 1.4, h: 2.7, style: "glass" },
-      { x: 0.2, z: -2.2, w: 1.5, d: 1.5, h: 3.6, style: "stone", stepped: true },
-      { x: 2.3, z: -1.7, w: 1.5, d: 1.3, h: 2.1, style: "brick" },
-      { x: 2.4, z: 0.2, w: 1.2, d: 1.2, h: 2.9, style: "glass" },
-      { x: -2.5, z: 0.1, w: 1.3, d: 1.2, h: 1.7, style: "brick" },
+      { x: -2.8, z: 2.2, w: 1.2, d: 1.1, h: 1.55, style: "brick" },
+      { x: 2.7, z: 2.0, w: 1.15, d: 1.05, h: 1.7, style: "glass" },
+      { x: -2.9, z: -1.5, w: 1.1, d: 1.0, h: 1.35, style: "stone" },
+      { x: 2.85, z: -1.65, w: 1.2, d: 1.1, h: 1.85, style: "brick", stepped: true },
     ];
-
     for (const tower of towers) {
-      parent.add(this.makeCityTower(tower.x * unit, tower.z * unit, tower.w * unit, tower.d * unit, tower.h, tower.style, tower.stepped === true));
+      parent.add(
+        this.makeCityTower(
+          tower.x * unit,
+          tower.z * unit,
+          tower.w * unit,
+          tower.d * unit,
+          tower.h,
+          tower.style,
+          tower.stepped === true,
+        ),
+      );
     }
 
-    for (const [x, z] of [[-1.1, 1.1], [1.1, 1.1], [-1.1, -1.1], [1.1, -1.1]] as const) {
+    for (const [x, z] of [
+      [-1.35, 1.2],
+      [1.35, 1.15],
+      [-1.5, -0.85],
+      [1.45, -0.9],
+    ] as const) {
       parent.add(makeStreetLamp(x * unit, z * unit, this.groundMats.buildingLit, this.groundMats.lamp));
+    }
+
+    const count = Math.round(40 + span * 2.2);
+    const keepOut = lakeR * 1.7;
+    for (let i = 0; i < count; i += 1) {
+      const angle = (i * 2.399) % (Math.PI * 2);
+      const radius = (0.14 + ((i * 17) % 100) / 100 * 0.78) * span * 0.46;
+      const x = Math.cos(angle) * radius;
+      const z = Math.sin(angle) * radius;
+      if (Math.hypot(x - lakeX, z - lakeZ) < keepOut) continue;
+      const mat = this.flowerMats[i % this.flowerMats.length];
+      if (!mat) continue;
+      const bloom = new Group();
+      const stem = new Mesh(new BoxGeometry(0.03, 0.12, 0.03), this.groundMats.grassDark);
+      stem.position.y = 0.06;
+      const flower = new Mesh(facet(new SphereGeometry(0.07 + (i % 3) * 0.015, 5, 4)), mat);
+      flower.position.y = 0.14;
+      flower.userData.baseY = 0.14;
+      bloom.add(stem, flower);
+      bloom.position.set(x, 0, z);
+      parent.add(bloom);
+      this.meadowFlowers.push(flower);
     }
   }
 
@@ -2389,52 +3231,96 @@ export class MazeWorld {
   }
 
   private addAuroraSpace(parent: Group, span: number): void {
-    const auroraMats = [
-      this.groundMats.auroraGreen,
-      this.groundMats.auroraTeal,
-      this.groundMats.auroraViolet,
-      this.groundMats.auroraPink,
-      this.groundMats.auroraBlue,
+    const planets: {
+      x: number;
+      y: number;
+      z: number;
+      r: number;
+      body: MeshToonMaterial;
+      shade: MeshToonMaterial;
+      rock: MeshToonMaterial;
+      spin: number;
+      bob: number;
+    }[] = [
+      {
+        x: -span * 0.28,
+        y: 1.55,
+        z: -span * 0.08,
+        r: span * 0.11,
+        body: this.groundMats.moonDust,
+        shade: this.groundMats.moonDustDark,
+        rock: this.groundMats.moonRock,
+        spin: 0.14,
+        bob: 0.1,
+      },
+      {
+        x: span * 0.32,
+        y: 2.05,
+        z: span * 0.06,
+        r: span * 0.08,
+        body: this.groundMats.venusGround,
+        shade: this.groundMats.venusGroundDark,
+        rock: this.groundMats.venusRock,
+        spin: 0.22,
+        bob: 0.14,
+      },
+      {
+        x: span * 0.08,
+        y: 1.35,
+        z: span * 0.28,
+        r: span * 0.065,
+        body: this.groundMats.seabedLit,
+        shade: this.groundMats.seabedDark,
+        rock: this.groundMats.seabed,
+        spin: 0.18,
+        bob: 0.12,
+      },
+      {
+        x: -span * 0.18,
+        y: 2.35,
+        z: span * 0.22,
+        r: span * 0.05,
+        body: this.groundMats.coral,
+        shade: this.groundMats.bromeliad,
+        rock: this.groundMats.coralLit,
+        spin: 0.28,
+        bob: 0.16,
+      },
+      {
+        x: span * 0.22,
+        y: 1.75,
+        z: -span * 0.26,
+        r: span * 0.07,
+        body: this.groundMats.lavender,
+        shade: this.groundMats.lavenderDark,
+        rock: this.groundMats.orchid,
+        spin: 0.16,
+        bob: 0.11,
+      },
+      {
+        x: -span * 0.34,
+        y: 1.15,
+        z: span * 0.14,
+        r: span * 0.045,
+        body: this.groundMats.canopyBright,
+        shade: this.groundMats.canopy,
+        rock: this.groundMats.canopyLit,
+        spin: 0.32,
+        bob: 0.13,
+      },
     ];
-    const ribbonCount = 14;
-    for (let i = 0; i < ribbonCount; i += 1) {
-      const points: Vector3[] = [];
-      const alongDepth = i % 3 !== 1;
-      const lane = ((i % 7) - 3) * span * 0.09;
-      for (let t = 0; t <= 16; t += 1) {
-        const u = t / 16;
-        if (alongDepth) {
-          const z = -span * 0.52 + u * span * 1.04;
-          const x = lane
-            + Math.sin(u * Math.PI * 2.6 + i * 0.9) * span * 0.26
-            + Math.sin(u * Math.PI * 1.2 + i * 1.4) * span * 0.08;
-          const y = 0.55
-            + Math.sin(u * Math.PI * 2.8 + i * 0.65) * 0.7
-            + Math.cos(u * Math.PI * 1.4 + i) * 0.22
-            + (i % 5) * 0.16;
-          points.push(new Vector3(x, y, z));
-        } else {
-          const x = -span * 0.5 + u * span;
-          const z = lane * 1.15
-            + Math.sin(u * Math.PI * 2.1 + i) * span * 0.22
-            + Math.sin(u * Math.PI * 0.9 + i * 0.7) * span * 0.1;
-          const y = 0.75
-            + Math.sin(u * Math.PI * 2.4 + i * 0.55) * 0.6
-            + (i % 4) * 0.18;
-          points.push(new Vector3(x, y, z));
-        }
-      }
-      const curve = new CatmullRomCurve3(points);
-      const ribbon = new Mesh(
-        new TubeGeometry(curve, 56, 0.055 + (i % 4) * 0.022, 6, false),
-        auroraMats[i % auroraMats.length]!,
-      );
-      ribbon.userData.flickerScale = false;
-      ribbon.userData.auroraRibbon = true;
-      ribbon.userData.driftPhase = i * 0.85;
-      ribbon.userData.driftSpeed = 0.28 + (i % 4) * 0.08;
-      parent.add(ribbon);
-      this.meadowFlames.push(ribbon);
+
+    for (const [index, spec] of planets.entries()) {
+      const planet = makePlanet(spec.r, spec.body, spec.shade, spec.rock);
+      planet.position.set(spec.x, spec.y, spec.z);
+      planet.userData.planetFloat = true;
+      planet.userData.baseY = spec.y;
+      planet.userData.driftPhase = index * 1.15 + 0.4;
+      planet.userData.driftSpeed = 0.45 + (index % 3) * 0.08;
+      planet.userData.bobAmp = spec.bob;
+      planet.userData.spin = spec.spin;
+      parent.add(planet);
+      this.meadowFlames.push(planet);
     }
 
     for (let i = 0; i < 28; i += 1) {
@@ -2466,7 +3352,7 @@ export class MazeWorld {
       parent.add(rock);
     }
 
-    const light = new PointLight(token("--maze-aurora-green"), 2.8, 14, 2);
+    const light = new PointLight(token("--maze-aurora-blue"), 2.6, 14, 2);
     light.position.set(0, 2.2, 0);
     parent.add(light);
     this.meadowLight = light;
@@ -2481,76 +3367,126 @@ export class MazeWorld {
   }
 
   private addRainforest(parent: Group, span: number, river: CatmullRomCurve3): void {
-    const rim = span * 0.46;
     const kinds: TreeKind[] = ["oak", "pine", "willow", "oak", "birch", "autumn", "pine", "willow"];
-    for (let i = 0; i < 34; i += 1) {
-      const a = i * 2.05 + 0.15;
-      const dist = rim * (0.42 + (i % 6) * 0.09);
-      const x = Math.cos(a) * dist;
-      const z = Math.sin(a) * dist * 0.9;
-      if (nearStream(x, z, river, 0.8)) continue;
-      const scale = 1.35 + (i % 5) * 0.2 + (i % 3) * 0.1;
-      parent.add(makeTree(kinds[i % kinds.length]!, x, z, scale, this.treeMats));
+    const lush: TreeMats = {
+      ...this.treeMats,
+      leaf: this.groundMats.canopy,
+      leafLit: this.groundMats.canopyLit,
+      pine: this.groundMats.canopy,
+      pineLit: this.groundMats.canopyBright,
+    };
+    const vivid: TreeMats[] = [
+      {
+        ...this.treeMats,
+        leaf: this.groundMats.orchid,
+        leafLit: this.groundMats.bromeliad,
+        pine: this.groundMats.orchid,
+        pineLit: this.groundMats.canopyBright,
+        autumn: this.groundMats.bromeliad,
+        autumnLit: this.groundMats.orchid,
+      },
+      {
+        ...this.treeMats,
+        leaf: this.groundMats.seabedLit,
+        leafLit: this.groundMats.anemone,
+        pine: this.groundMats.seabedLit,
+        pineLit: this.groundMats.canopyBright,
+        autumn: this.groundMats.anemone,
+        autumnLit: this.groundMats.seabedLit,
+      },
+      {
+        ...this.treeMats,
+        leaf: this.groundMats.bromeliad,
+        leafLit: this.groundMats.coralLit,
+        pine: this.groundMats.bromeliad,
+        pineLit: this.groundMats.coral,
+        autumn: this.groundMats.coral,
+        autumnLit: this.groundMats.coralLit,
+      },
+      {
+        ...this.treeMats,
+        leaf: this.groundMats.lavender,
+        leafLit: this.groundMats.orchid,
+        pine: this.groundMats.lavender,
+        pineLit: this.groundMats.bromeliad,
+        autumn: this.groundMats.orchid,
+        autumnLit: this.groundMats.lavender,
+      },
+      {
+        ...this.treeMats,
+        leaf: this.groundMats.canopyBright,
+        leafLit: this.treeMats.autumnLit,
+        pine: this.groundMats.canopyLit,
+        pineLit: this.groundMats.canopyBright,
+        autumn: this.groundMats.canopyBright,
+        autumnLit: this.treeMats.autumnLit,
+      },
+    ];
+
+    const cols = 7;
+    const rows = 7;
+    const xMin = -span * 0.42;
+    const xMax = span * 0.42;
+    const zMin = -span * 0.42;
+    const zMax = span * 0.42;
+    let treeIndex = 0;
+    for (let r = 0; r < rows; r += 1) {
+      for (let c = 0; c < cols; c += 1) {
+        const x = xMin + (c / (cols - 1)) * (xMax - xMin);
+        const z = zMin + (r / (rows - 1)) * (zMax - zMin);
+        if (nearStream(x, z, river, 0.85)) continue;
+        const kind = kinds[treeIndex % kinds.length]!;
+        const scale = 1.2 + ((c + r) % 3) * 0.14 + (treeIndex % 2) * 0.08;
+        const fancy = treeIndex % 5 === 0 || treeIndex % 7 === 3;
+        const mats = fancy ? vivid[treeIndex % vivid.length]! : lush;
+        parent.add(makeTree(kind, x, z, scale, mats));
+        treeIndex += 1;
+      }
     }
-    for (let i = 0; i < 10; i += 1) {
-      const a = i * 1.85 + 0.4;
-      const x = Math.cos(a) * rim * 0.72;
-      const z = Math.sin(a) * rim * 0.68;
-      if (nearStream(x, z, river, 0.75)) continue;
-      parent.add(makePalm(x, z, 1.35 + (i % 4) * 0.15, this.treeMats.trunk, this.palmMat, this.palmLitMat));
-    }
+
     for (let i = 0; i < 8; i += 1) {
-      const a = i * 1.4 + 0.2;
-      const x = Math.cos(a) * rim * 0.22;
-      const z = Math.sin(a) * rim * 0.2;
-      if (nearStream(x, z, river, 0.65)) continue;
-      parent.add(makeTree(i % 2 === 0 ? "willow" : "oak", x, z, 1.05 + (i % 3) * 0.12, this.treeMats));
-    }
-
-    for (let i = 0; i < 14; i += 1) {
-      const a = i * 2.2;
-      const x = Math.cos(a) * rim * 0.55;
-      const z = Math.sin(a) * rim * 0.5;
+      const c = 1 + (i % 5);
+      const r = 1 + Math.floor(i / 5) * 3 + (i % 2);
+      const x = xMin + (c / (cols - 1)) * (xMax - xMin) + span * 0.035;
+      const z = zMin + (r / (rows - 1)) * (zMax - zMin) + span * 0.025;
       if (nearStream(x, z, river, 0.7)) continue;
-      const canopy = new Group();
-      const mats = [this.groundMats.canopy, this.groundMats.canopyLit, this.groundMats.canopyBright];
-      voxel(canopy, mats[i % 3]!, 0.22, 0.12, 0.22, 0, 1.5, 0);
-      voxel(canopy, mats[(i + 1) % 3]!, 0.16, 0.1, 0.16, 0.14, 1.65, 0.08);
-      voxel(canopy, mats[(i + 2) % 3]!, 0.14, 0.1, 0.14, -0.12, 1.6, -0.06);
-      canopy.position.set(x, 0, z);
-      parent.add(canopy);
+      const leaf = i % 2 === 0 ? this.palmMat : this.groundMats.canopyBright;
+      const lit = i % 3 === 0 ? this.groundMats.orchid : this.palmLitMat;
+      parent.add(makePalm(x, z, 1.2 + (i % 4) * 0.12, this.treeMats.trunk, leaf, lit));
     }
 
-    for (let i = 0; i < 12; i += 1) {
-      const a = i * 1.75 + 0.6;
-      const x = Math.cos(a) * rim * 0.48;
-      const z = Math.sin(a) * rim * 0.44;
+    for (let i = 0; i < 10; i += 1) {
+      const c = i % 6;
+      const r = 1 + Math.floor(i / 6) * 4;
+      const x = xMin + ((c + 0.5) / (cols - 1)) * (xMax - xMin);
+      const z = zMin + ((r + 0.5) / (rows - 1)) * (zMax - zMin);
       if (nearStream(x, z, river, 0.65)) continue;
       const vine = new Mesh(
         new BoxGeometry(0.04, 0.7 + (i % 4) * 0.15, 0.04),
         this.groundMats.vine,
       );
       vine.position.set(x, 0.45, z);
-      parent.add(vine);
-      this.meadowFlowers.push(vine);
       vine.userData.baseY = vine.position.y;
       vine.userData.spin = false;
+      parent.add(vine);
+      this.meadowFlowers.push(vine);
       const bloom = new Mesh(
         new BoxGeometry(0.08, 0.08, 0.08),
         i % 2 === 0 ? this.groundMats.bromeliad : this.groundMats.orchid,
       );
       bloom.position.set(x + 0.06, 0.55 + (i % 3) * 0.12, z);
+      bloom.userData.baseY = bloom.position.y;
       parent.add(bloom);
       this.meadowFlowers.push(bloom);
-      bloom.userData.baseY = bloom.position.y;
     }
 
-    for (let i = 0; i < 10; i += 1) {
-      const a = i * 2.05 + 0.9;
-      const x = Math.cos(a) * rim * 0.36;
-      const z = Math.sin(a) * rim * 0.32;
+    for (let i = 0; i < 8; i += 1) {
+      const c = 2 + (i % 4);
+      const r = 2 + Math.floor(i / 4) * 2;
+      const x = xMin + (c / (cols - 1)) * (xMax - xMin) + span * 0.03;
+      const z = zMin + (r / (rows - 1)) * (zMax - zMin) - span * 0.02;
       if (nearStream(x, z, river, 0.6)) continue;
-      parent.add(makeMushroomPatch(x, z, 0.7 + (i % 3) * 0.15, {
+      parent.add(makeMushroomPatch(x, z, 0.75 + (i % 3) * 0.15, {
         stem: this.groundMats.mushroom,
         cap: i % 3 === 0 ? this.groundMats.orchid : i % 3 === 1 ? this.groundMats.bromeliad : this.groundMats.canopyBright,
         spot: this.groundMats.mushroomSpot,
@@ -2561,30 +3497,31 @@ export class MazeWorld {
   }
 
   private addFunForest(parent: Group, span: number, stream: CatmullRomCurve3): void {
-    const rim = span * 0.44;
     const kinds: TreeKind[] = ["oak", "pine", "birch", "willow", "autumn", "pine", "oak", "birch"];
-    for (let i = 0; i < 22; i += 1) {
-      const a = i * 2.35 + 0.2;
-      const dist = rim * (0.55 + (i % 5) * 0.09);
-      const x = Math.cos(a) * dist;
-      const z = Math.sin(a) * dist * 0.92;
-      if (nearStream(x, z, stream, 0.85)) continue;
-      const kind = kinds[i % kinds.length]!;
-      const scale = 1.25 + (i % 4) * 0.22 + (i % 3) * 0.08;
-      parent.add(makeTree(kind, x, z, scale, this.treeMats));
-    }
-    for (let i = 0; i < 6; i += 1) {
-      const a = i * 1.15 + 0.5;
-      const x = Math.cos(a) * rim * 0.28;
-      const z = Math.sin(a) * rim * 0.24;
-      if (nearStream(x, z, stream, 0.7)) continue;
-      parent.add(makeTree(i % 2 === 0 ? "birch" : "oak", x, z, 0.95 + (i % 3) * 0.1, this.treeMats));
+    const cols = 7;
+    const rows = 7;
+    const xMin = -span * 0.42;
+    const xMax = span * 0.42;
+    const zMin = -span * 0.42;
+    const zMax = span * 0.42;
+    let treeIndex = 0;
+    for (let r = 0; r < rows; r += 1) {
+      for (let c = 0; c < cols; c += 1) {
+        const x = xMin + (c / (cols - 1)) * (xMax - xMin);
+        const z = zMin + (r / (rows - 1)) * (zMax - zMin);
+        if (nearStream(x, z, stream, 0.85)) continue;
+        const kind = kinds[treeIndex % kinds.length]!;
+        const scale = 1.15 + ((c + r) % 3) * 0.12;
+        parent.add(makeTree(kind, x, z, scale, this.treeMats));
+        treeIndex += 1;
+      }
     }
 
     for (let i = 0; i < 8; i += 1) {
-      const a = i * 2.1 + 0.7;
-      const x = Math.cos(a) * rim * 0.48;
-      const z = Math.sin(a) * rim * 0.42;
+      const c = 1 + (i % 5);
+      const r = 1 + Math.floor(i / 5) * 3 + (i % 2);
+      const x = xMin + (c / (cols - 1)) * (xMax - xMin) + span * 0.04;
+      const z = zMin + (r / (rows - 1)) * (zMax - zMin) + span * 0.03;
       if (nearStream(x, z, stream, 0.65)) continue;
       parent.add(makeMushroomPatch(x, z, 0.85 + (i % 3) * 0.2, {
         stem: this.groundMats.mushroom,
@@ -2594,16 +3531,17 @@ export class MazeWorld {
     }
 
     for (let i = 0; i < 5; i += 1) {
-      const a = i * 1.7;
-      const x = Math.cos(a) * rim * 0.62;
-      const z = Math.sin(a) * rim * 0.55;
+      const c = i + 1;
+      const r = rows - 2;
+      const x = xMin + (c / (cols - 1)) * (xMax - xMin);
+      const z = zMin + (r / (rows - 1)) * (zMax - zMin) + span * 0.05;
       if (nearStream(x, z, stream, 0.7)) continue;
       const log = new Mesh(
         new BoxGeometry(0.55 + (i % 3) * 0.12, 0.12, 0.14),
         this.treeMats.trunk,
       );
       log.position.set(x, 0.08, z);
-      log.rotation.y = a + 0.4;
+      log.rotation.y = i * 0.55;
       parent.add(log);
       const moss = new Mesh(new BoxGeometry(0.2, 0.04, 0.1), this.groundMats.mossLit);
       moss.position.set(x + 0.08, 0.16, z);
@@ -2611,12 +3549,15 @@ export class MazeWorld {
     }
 
     for (let i = 0; i < 12; i += 1) {
-      const a = i * 1.9 + 0.3;
+      const c = i % 6;
+      const r = 1 + Math.floor(i / 6) * 4;
       const bush = new Group();
       voxel(bush, this.groundMats.moss, 0.12, 0.1, 0.12, 0, 0.12, 0);
       voxel(bush, this.groundMats.mossLit, 0.1, 0.08, 0.1, 0.08, 0.18, 0.04);
       voxel(bush, this.treeMats.leaf, 0.08, 0.08, 0.08, -0.06, 0.2, -0.04);
-      bush.position.set(Math.cos(a) * rim * 0.38, 0, Math.sin(a) * rim * 0.34);
+      const x = xMin + ((c + 0.5) / (cols - 1)) * (xMax - xMin);
+      const z = zMin + ((r + 0.5) / (rows - 1)) * (zMax - zMin);
+      bush.position.set(x, 0, z);
       if (!nearStream(bush.position.x, bush.position.z, stream, 0.6)) parent.add(bush);
     }
 
@@ -2770,6 +3711,8 @@ export class MazeWorld {
   private clearMeadow(): void {
     this.clearFireworks();
     this.clearRain();
+    this.dropLightningBolt();
+    this.lightningLight = null;
     if (this.meadow) {
       this.board.remove(this.meadow);
       this.meadow.traverse((child) => this.disposeGenerated(child));
@@ -2807,6 +3750,10 @@ export class MazeWorld {
 
   private placeCamera(): void {
     if (!this.tower) return;
+    if (this.homeBackdrop) {
+      this.placeHomeCamera();
+      return;
+    }
     if (this.escaped && this.meadowCamLive) {
       this.placeMeadowCamera();
       return;
@@ -2843,6 +3790,41 @@ export class MazeWorld {
     shadow.bottom = -range;
     shadow.updateProjectionMatrix();
     this.key.target.position.copy(look);
+  }
+
+  private placeHomeCamera(): void {
+    const tower = this.tower;
+    if (!tower) return;
+    const meadowY = this.meadow?.position.y ?? -MEADOW_DROP;
+    const orbit = this.homeOrbit + (this.glanceDOrbit * Math.PI) / 180;
+    // 0.5× ultrawide vibe: low, close-ish, mild up-tilt so the barren floor stays in shot.
+    const up = clamp(this.glanceDAngle / MEADOW_GLANCE_PITCH_MAX, 0, 1);
+    const down = clamp(-this.glanceDAngle / Math.abs(MEADOW_GLANCE_PITCH_MIN), 0, 1);
+    const lookY = meadowY + HOME_TOWER_H * (0.34 + up * 0.14 - down * 0.08);
+    this.meadowCamLook.set(0, lookY, 0);
+
+    const eyeY = meadowY + 0.85 + down * 0.35 + up * 0.55;
+    const dist = HOME_TOWER_H * (0.72 + up * 0.3 - down * 0.06);
+    this.meadowCamEye.set(
+      Math.sin(orbit) * dist,
+      eyeY,
+      Math.cos(orbit) * dist,
+    );
+    this.meadowCamEye.y = Math.max(this.meadowCamEye.y, meadowY + 0.55);
+    this.meadowCamEye.applyQuaternion(this.board.quaternion);
+    this.meadowCamLook.applyQuaternion(this.board.quaternion);
+
+    this.camera.position.copy(this.meadowCamEye);
+    this.camera.lookAt(this.meadowCamLook);
+
+    const range = Math.max(tower.width * 2.8, HOME_TOWER_H) * 0.9;
+    const shadow = this.key.shadow.camera as OrthographicCamera;
+    shadow.left = -range;
+    shadow.right = range;
+    shadow.top = range;
+    shadow.bottom = -range;
+    shadow.updateProjectionMatrix();
+    this.key.target.position.copy(this.meadowCamLook);
   }
 
   private placeMeadowCamera(): void {
@@ -3128,7 +4110,8 @@ export class MazeWorld {
       || child.geometry === this.wingGeometry
       || child.geometry === this.sparkGeometry
       || child.geometry === this.rainGeometry
-      || child.geometry === this.warpGateGeometry;
+      || child.geometry === this.warpGateGeometry
+      || child.geometry === this.exitGateGeometry;
     if (!shared) child.geometry.dispose();
     if (child.userData.chunkMat instanceof MeshToonMaterial) child.userData.chunkMat.dispose();
     if (
@@ -3157,7 +4140,9 @@ export class MazeWorld {
       obj.traverse((child) => this.disposeGenerated(child));
     }
     this.goalRings.length = 0;
+    this.goalGates.length = 0;
     this.goalLights.length = 0;
+    this.exitBreached = false;
     this.meadow = null;
     this.meadowFlowers.length = 0;
     this.meadowAnimals.length = 0;
@@ -3371,6 +4356,8 @@ export class MazeWorld {
   private clearGoalMarkers(): void {
     for (const ring of this.goalRings) ring.removeFromParent();
     this.goalRings.length = 0;
+    for (const gate of this.goalGates) gate.removeFromParent();
+    this.goalGates.length = 0;
     for (const light of this.goalLights) {
       light.visible = false;
       light.removeFromParent();
@@ -3381,6 +4368,9 @@ export class MazeWorld {
   private pruneGoalMarkers(): void {
     for (let i = this.goalRings.length - 1; i >= 0; i -= 1) {
       if (!this.goalRings[i]?.parent) this.goalRings.splice(i, 1);
+    }
+    for (let i = this.goalGates.length - 1; i >= 0; i -= 1) {
+      if (!this.goalGates[i]?.parent) this.goalGates.splice(i, 1);
     }
     for (let i = this.goalLights.length - 1; i >= 0; i -= 1) {
       if (!this.goalLights[i]?.parent) this.goalLights.splice(i, 1);
@@ -4086,16 +5076,20 @@ function paintFloor(ctx: CanvasRenderingContext2D, size: number, kind: WinSceneK
   }
 
   if (kind === "city") {
-    const base = token("--maze-pavement");
-    const shade = soft(base, token("--maze-pavement-dark"), 0.28);
-    const lit = soft(base, token("--maze-building-lit"), 0.14);
+    const base = token("--maze-grass");
+    const shade = soft(base, token("--maze-grass-dark"), 0.28);
+    const lit = soft(base, token("--maze-leaf-lit"), 0.24);
+    const bloom = soft(base, token("--maze-flower-1"), 0.18);
+    const petal = soft(base, token("--maze-flower-2"), 0.14);
     ctx.fillStyle = base;
     ctx.fillRect(0, 0, size, size);
     for (let y = 0; y < size; y += 1) {
       for (let x = 0; x < size; x += 1) {
-        if (x % 8 === 0 || y % 8 === 0) px(shade, x, y);
-        if (hash(x, y) > 0.9) px(shade, x, y);
-        if (hash(x + 3, y + 1) > 0.96) px(lit, x, y);
+        const n = hash(x, y);
+        if (n > 0.82) px(shade, x, y);
+        else if (n > 0.66) px(lit, x, y);
+        if (n > 0.94) px(bloom, x, y);
+        if (n > 0.975) px(petal, x, y);
       }
     }
     return;
@@ -4267,6 +5261,78 @@ function makeStreetLamp(
   voxel(post, pole, 0.12, 0.03, 0.03, 0.08, 0.9, 0);
   voxel(post, lamp, 0.06, 0.06, 0.06, 0.16, 0.86, 0);
   return post;
+}
+
+function makePlanet(
+  radius: number,
+  body: MeshToonMaterial,
+  shade: MeshToonMaterial,
+  rock: MeshToonMaterial,
+): Group {
+  const planet = new Group();
+  const core = new Mesh(facet(new SphereGeometry(radius, 12, 10)), body);
+  planet.add(core);
+
+  const craters = [
+    { a: 0.55, b: 0.35, r: 0.3 },
+    { a: 2.35, b: -0.25, r: 0.22 },
+    { a: -1.4, b: 0.7, r: 0.18 },
+    { a: 3.7, b: 0.15, r: 0.26 },
+    { a: 1.1, b: -0.75, r: 0.16 },
+  ];
+  const axis = new Vector3(0, 1, 0);
+  const face = new Vector3(0, 0, 1);
+  for (const crater of craters) {
+    const cr = radius * crater.r;
+    const depth = cr * 0.7;
+    const dir = new Vector3(
+      Math.cos(crater.a) * Math.cos(crater.b),
+      Math.sin(crater.b),
+      Math.sin(crater.a) * Math.cos(crater.b),
+    ).normalize();
+
+    // Punch a well into the surface so the crater reads as a recess.
+    const well = new Mesh(
+      new CylinderGeometry(cr * 0.72, cr * 0.98, depth, 12, 1, true),
+      rock,
+    );
+    well.quaternion.setFromUnitVectors(axis, dir);
+    well.position.copy(dir).multiplyScalar(radius - depth * 0.45);
+
+    const floor = new Mesh(new CircleGeometry(cr * 0.72, 12), shade);
+    floor.quaternion.setFromUnitVectors(face, dir);
+    floor.position.copy(dir).multiplyScalar(radius - depth * 0.92);
+
+    const bowl = new Mesh(new CircleGeometry(cr * 0.95, 14), shade);
+    bowl.quaternion.setFromUnitVectors(face, dir);
+    bowl.position.copy(dir).multiplyScalar(radius - depth * 0.55);
+
+    const lip = new Mesh(new RingGeometry(cr * 0.92, cr * 1.08, 18), rock);
+    lip.quaternion.setFromUnitVectors(face, dir);
+    lip.position.copy(dir).multiplyScalar(radius - depth * 0.08);
+
+    planet.add(well, bowl, floor, lip);
+  }
+  return planet;
+}
+
+function makeBench(
+  x: number,
+  z: number,
+  facing: number,
+  wood: MeshToonMaterial,
+  seat: MeshToonMaterial,
+): Group {
+  const bench = new Group();
+  bench.position.set(x, 0, z);
+  bench.rotation.y = facing;
+  voxel(bench, wood, 0.04, 0.18, 0.04, -0.22, 0.18, 0.08);
+  voxel(bench, wood, 0.04, 0.18, 0.04, 0.22, 0.18, 0.08);
+  voxel(bench, wood, 0.04, 0.18, 0.04, -0.22, 0.18, -0.08);
+  voxel(bench, wood, 0.04, 0.18, 0.04, 0.22, 0.18, -0.08);
+  voxel(bench, seat, 0.52, 0.04, 0.22, 0, 0.28, 0);
+  voxel(bench, seat, 0.52, 0.16, 0.04, 0, 0.4, -0.1);
+  return bench;
 }
 
 function makeMushroomPatch(
@@ -4983,14 +6049,7 @@ function makeCrumbleMat(): MeshToonMaterial {
 }
 
 function makeCrumbleTexture(): Texture {
-  const size = 32;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Crumble texture canvas unavailable");
-  paintCrumble(ctx, size);
-  const tex = new CanvasTexture(canvas);
+  const tex = new CanvasTexture(makeCrumbleCanvas());
   tex.colorSpace = SRGBColorSpace;
   tex.magFilter = NearestFilter;
   tex.minFilter = NearestFilter;
@@ -4999,80 +6058,6 @@ function makeCrumbleTexture(): Texture {
   tex.generateMipmaps = false;
   tex.needsUpdate = true;
   return tex;
-}
-
-function paintCrumble(ctx: CanvasRenderingContext2D, size: number): void {
-  const base = token("--maze-crumble");
-  const shade = mixHex(base, "#000000", 0.22);
-  const deep = mixHex(base, "#000000", 0.55);
-  const seam = token("--maze-crumble-crack");
-  const lit = mixHex(base, "#ffffff", 0.18);
-  const grit = mixHex(base, token("--maze-crumble-mark"), 0.14);
-  const edge = mixHex(base, "#000000", 0.35);
-  const hash = (x: number, y: number): number => {
-    const n = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
-    return n - Math.floor(n);
-  };
-  const px = (hex: string, x: number, y: number): void => {
-    if (x < 0 || y < 0 || x >= size || y >= size) return;
-    ctx.fillStyle = hex;
-    ctx.fillRect(x, y, 1, 1);
-  };
-  ctx.fillStyle = base;
-  ctx.fillRect(0, 0, size, size);
-  for (let y = 0; y < size; y += 1) {
-    for (let x = 0; x < size; x += 1) {
-      const n = hash(x, y);
-      if (n > 0.82) px(shade, x, y);
-      else if (n > 0.68) px(lit, x, y);
-      else if (n > 0.58) px(grit, x, y);
-    }
-  }
-  const stroke = (x0: number, y0: number, x1: number, y1: number, color: string, width = 1): void => {
-    const steps = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0), 1) * 2;
-    for (let i = 0; i <= steps; i += 1) {
-      const t = i / steps;
-      const x = Math.round(x0 + (x1 - x0) * t);
-      const y = Math.round(y0 + (y1 - y0) * t);
-      for (let oy = -width; oy <= width; oy += 1) {
-        for (let ox = -width; ox <= width; ox += 1) {
-          if (Math.abs(ox) + Math.abs(oy) > width) continue;
-          px(color, x + ox, y + oy);
-        }
-      }
-    }
-  };
-  // Irregular piece seams so the intact slab already reads as fractured stone.
-  stroke(10, 0, 12, 14, seam, 1);
-  stroke(11, 14, 9, 31, seam, 1);
-  stroke(21, 0, 19, 16, seam, 1);
-  stroke(20, 16, 22, 31, seam, 1);
-  stroke(0, 10, 14, 12, seam, 1);
-  stroke(14, 11, 31, 9, seam, 1);
-  stroke(0, 21, 16, 19, seam, 1);
-  stroke(16, 20, 31, 22, seam, 1);
-  // Branching cracks through the tiles.
-  stroke(3, 2, 10, 7, deep, 1);
-  stroke(10, 7, 6, 12, deep, 0);
-  stroke(12, 14, 17, 10, deep, 1);
-  stroke(17, 10, 15, 5, deep, 0);
-  stroke(20, 4, 28, 8, deep, 1);
-  stroke(22, 16, 28, 13, deep, 0);
-  stroke(21, 18, 26, 25, deep, 1);
-  stroke(4, 18, 9, 24, deep, 1);
-  stroke(9, 24, 14, 22, deep, 0);
-  stroke(16, 22, 20, 28, deep, 1);
-  stroke(1, 27, 7, 29, shade, 0);
-  stroke(24, 1, 29, 5, shade, 0);
-  stroke(27, 27, 30, 30, shade, 0);
-  for (let y = 0; y < size; y += 1) {
-    for (let x = 0; x < size; x += 1) {
-      const chip = hash(x + 3, y + 9);
-      if (chip > 0.955) px(deep, x, y);
-      if (chip > 0.985) px(seam, x, y);
-      if (x === 0 || y === 0 || x === size - 1 || y === size - 1) px(edge, x, y);
-    }
-  }
 }
 
 function makeCrumbleWell(
@@ -5088,7 +6073,8 @@ function makeCrumbleWell(
   const mid = (top + floor) / 2;
   const hy = (top - floor) / 2;
   const half = CELL / 2;
-  const wallAlong = half - 0.01;
+  // Overlap past half so walls seal at corners (matches pitCell in layout.ts).
+  const wallAlong = half + 0.01;
   const wallInset = half - thickness / 2;
   const voidHalf = half + 0.02;
   const originY = piece.y;
@@ -5109,7 +6095,7 @@ function makeCrumbleWell(
   well.add(voidFloor);
   const lipT = 0.03;
   const lipY = 0.014 - originY;
-  const lipAlong = half - 0.01;
+  const lipAlong = half + 0.01;
   const lipInset = half - lipT / 2;
   const lips: Array<[number, number, number, number, number, number]> = [
     [0, lipY, -lipInset, lipAlong, 0.012, lipT / 2],
@@ -5163,6 +6149,23 @@ function makeVoidStarMat(resolution: Vector2, camDir: Vector3): ShaderMaterial {
         return fract(p.x * p.y);
       }
 
+      // Soft point inside a cell; always visible, pulses brighter for drama.
+      float softStar(vec2 uv, float seed, float radius, float density) {
+        vec2 cell = floor(uv);
+        float n = hash21(cell + seed);
+        if (n < density) return 0.0;
+        vec2 local = fract(uv) - 0.5;
+        vec2 offset = vec2(hash21(cell + seed + 1.7), hash21(cell + seed + 3.1)) - 0.5;
+        local -= offset * 0.55;
+        float d = length(local);
+        float core = smoothstep(radius, 0.0, d);
+        float phase = uTime * (1.8 + n * 3.4) + n * 12.0;
+        // Floor stays lit; crest punches hard so the twinkle reads dramatic.
+        float pulse = 0.55 + 0.45 * pow(0.5 + 0.5 * sin(phase), 2.0);
+        float flash = 0.2 * pow(max(0.0, sin(phase * 0.65 + n * 4.0)), 6.0);
+        return core * min(1.0, pulse + flash);
+      }
+
       void main() {
         vec2 screen = (vClip.xy / max(vClip.w, 0.0001)) * 0.5 + 0.5;
         float aspect = max(uResolution.x, 1.0) / max(uResolution.y, 1.0);
@@ -5175,23 +6178,19 @@ function makeVoidStarMat(resolution: Vector2, camDir: Vector3): ShaderMaterial {
         base += uCamDir.xz * vec2(0.22, 0.16);
         base -= uCamDir.y * 0.08;
 
-        vec2 farUv = base * 42.0 + vec2(uTime * 0.03, -uTime * 0.02);
-        vec2 nearUv = base * 78.0 + uCamDir.xz * 4.5 + vec2(-uTime * 0.05, uTime * 0.04);
-
-        vec2 farCell = floor(farUv);
-        vec2 nearCell = floor(nearUv);
-        float farN = hash21(farCell);
-        float nearN = hash21(nearCell + 17.0);
-        float twinkle = 0.65 + 0.35 * sin(uTime * (2.4 + farN * 3.1) + farN * 6.28);
-
-        float farStar = step(0.955, farN) * twinkle;
-        float nearStar = step(0.978, nearN) * (0.7 + 0.3 * sin(uTime * 3.2 + nearN * 8.0));
-        float dust = step(0.82, hash21(floor(base * 28.0 + uCamDir.zx * 3.0))) * 0.045;
-
         vec3 color = uDeep;
-        color += uGlow * dust;
-        color = mix(color, uDim, farStar * 0.85);
-        color = mix(color, uStar, nearStar);
+        float dust = hash21(floor(base * 26.0 + uCamDir.zx * 3.0));
+        color += uGlow * step(0.88, dust) * 0.05;
+
+        float far = softStar(base * 48.0 + vec2(uTime * 0.02, -uTime * 0.014), 0.0, 0.13, 0.78);
+        float mid = softStar(base * 72.0 + uCamDir.xz * 3.0 + vec2(-uTime * 0.03, uTime * 0.022), 11.0, 0.095, 0.82);
+        float near = softStar(base * 104.0 + vec2(uTime * 0.016, uTime * 0.024), 29.0, 0.065, 0.86);
+        float spark = softStar(base * 130.0 + uCamDir.xz * 1.5 + vec2(-uTime * 0.022, -uTime * 0.018), 47.0, 0.05, 0.88);
+
+        color = mix(color, uDim, clamp(far, 0.0, 1.0));
+        color = mix(color, mix(uDim, uStar, 0.55), clamp(mid, 0.0, 1.0));
+        color = mix(color, uStar, clamp(near, 0.0, 1.0));
+        color = mix(color, uStar, clamp(spark, 0.0, 1.0));
 
         gl_FragColor = vec4(color, 1.0);
       }

@@ -7,6 +7,7 @@ async function boot(): Promise<void> {
   const chrome = document.querySelector<HTMLElement>("#chrome");
   const overlay = document.querySelector<HTMLElement>("#overlay");
   const pause = document.querySelector<HTMLElement>("#pause");
+  const home = document.querySelector<HTMLElement>("#home");
   const intro = document.querySelector<HTMLElement>("#tower-intro");
   const sheet = document.querySelector<HTMLElement>("#sheet");
   const picker = document.querySelector<HTMLElement>("#picker");
@@ -18,6 +19,7 @@ async function boot(): Promise<void> {
     || !chrome
     || !overlay
     || !pause
+    || !home
     || !intro
     || !sheet
     || !picker
@@ -33,6 +35,7 @@ async function boot(): Promise<void> {
     chrome,
     overlay,
     pause,
+    home,
     intro,
     sheet,
     picker,

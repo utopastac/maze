@@ -1,5 +1,6 @@
 import {
   deleteCampaignProgress,
+  isCampaignAutosave,
   listCampaignProgress,
   type CampaignProgress,
 } from "../core/campaignProgress.ts";
@@ -10,9 +11,11 @@ import styles from "./towerIntro.module.css";
 export interface TowerIntroCallbacks {
   onNewGame: () => void;
   onLoad: (save: CampaignProgress) => void;
-  onClose: () => void;
+  onPractice: () => void;
+  onBack: () => void;
 }
 
+/** Full tower landing screen — not a modal over play. */
 export class TowerIntro {
   private readonly root: HTMLElement;
   private readonly callbacks: TowerIntroCallbacks;
@@ -25,28 +28,28 @@ export class TowerIntro {
     this.callbacks = callbacks;
     this.root.className = styles.root;
     this.root.innerHTML = `
-      <div class="${styles.scrim}" data-scrim></div>
-      <div class="${styles.card}">
+      <div class="${styles.page}">
         <header class="${styles.head}">
-          <div>
-            <h2 class="${styles.title}">Tower</h2>
-            <p class="${styles.meta}" data-meta>100 floors. Save progress on this device.</p>
+          <button type="button" class="glass-btn ${styles.back}" data-back aria-label="Back to home">${iconSvg("home")}</button>
+          <div class="${styles.headCopy}">
+            <h1 class="${styles.title}">Tower</h1>
+            <p class="${styles.meta}" data-meta>100 floors. Load a save, start fresh, or practice any floor.</p>
           </div>
-          <button type="button" class="glass-btn ${styles.close}" data-close aria-label="Close">${iconSvg("close")}</button>
         </header>
         <div class="${styles.body}">
           <div class="${styles.list}" data-list></div>
           <div class="${styles.actions}">
             <button type="button" class="glass-pill metal-ring ${styles.primary}" data-new>New game</button>
+            <button type="button" class="glass-pill ${styles.secondary}" data-practice>Practice</button>
           </div>
         </div>
       </div>
     `;
     this.metaEl = this.require("[data-meta]");
     this.listEl = this.require("[data-list]");
-    this.require("[data-close]").addEventListener("click", () => this.callbacks.onClose());
-    this.require("[data-scrim]").addEventListener("click", () => this.callbacks.onClose());
+    this.require("[data-back]").addEventListener("click", () => this.callbacks.onBack());
     this.require("[data-new]").addEventListener("click", () => this.callbacks.onNewGame());
+    this.require("[data-practice]").addEventListener("click", () => this.callbacks.onPractice());
   }
 
   isOpen(): boolean {
@@ -73,7 +76,7 @@ export class TowerIntro {
   private renderList(): void {
     const saves = listCampaignProgress();
     this.metaEl.textContent = saves.length === 0
-      ? "100 floors. Save progress on this device."
+      ? "100 floors. Load a save, start fresh, or practice any floor."
       : `${saves.length} ${saves.length === 1 ? "save" : "saves"} · tap to load`;
     this.listEl.replaceChildren();
     if (saves.length === 0) {
@@ -89,19 +92,23 @@ export class TowerIntro {
   }
 
   private mountItem(save: CampaignProgress): HTMLElement {
+    const auto = isCampaignAutosave(save.id);
     const row = document.createElement("div");
-    row.className = styles.save;
+    row.className = auto ? `${styles.save} ${styles.saveAutosave}` : styles.save;
     row.setAttribute("role", "button");
     row.tabIndex = 0;
     row.setAttribute(
       "aria-label",
-      `Load floor ${save.floor}, ${save.lives} hearts, ${formatTime(save.seconds)}`,
+      `${auto ? "Autosave, " : ""}Load floor ${save.floor}, ${save.lives} hearts, ${formatTime(save.seconds)}`,
     );
 
     const copy = document.createElement("div");
     copy.className = styles.saveCopy;
+    const title = auto
+      ? `<span class="${styles.saveTitle}">Autosave · Floor ${save.floor}</span>`
+      : `<span class="${styles.saveTitle}">Floor ${save.floor}</span>`;
     copy.innerHTML = `
-      <span class="${styles.saveTitle}">Floor ${save.floor}</span>
+      ${title}
       <span class="${styles.saveDetail}">${save.lives} ${save.lives === 1 ? "heart" : "hearts"} · ${formatTime(save.seconds)}${save.drops > 0 ? ` · ${save.drops} ${save.drops === 1 ? "drop" : "drops"}` : ""}</span>
       <span class="${styles.saveDetail}">${formatSavedAt(save.savedAt)}</span>
     `;
@@ -109,7 +116,7 @@ export class TowerIntro {
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = styles.delete;
-    remove.setAttribute("aria-label", `Delete save on floor ${save.floor}`);
+    remove.setAttribute("aria-label", auto ? "Delete autosave" : `Delete save on floor ${save.floor}`);
     remove.innerHTML = iconSvg("close", 14);
     remove.addEventListener("click", (event) => {
       event.preventDefault();

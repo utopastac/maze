@@ -23,6 +23,19 @@
       transform: translate3d(0, 0, 0);
     }
   }
+
+  &[data-mode="free"] {
+    & [data-campaign-only],
+    & [data-campaign-body] {
+      display: none;
+    }
+  }
+
+  &[data-mode="campaign"] {
+    & [data-free-only] {
+      display: none;
+    }
+  }
 }
 
 .scrim {
@@ -80,7 +93,10 @@
   margin: 2px 0 0;
   color: var(--ink-faint);
   font-size: 13px;
-  min-height: 1.2em;
+
+  &[hidden] {
+    display: none;
+  }
 }
 
 .stats {
@@ -156,7 +172,6 @@
   place-items: center;
   padding: 12px;
   border-radius: var(--control-radius);
-  background: color-mix(in srgb, var(--ink) 6%, transparent);
   container-type: size;
 
   & > * {
@@ -171,6 +186,8 @@
   flex: 0 0 auto;
   display: flex;
   flex-wrap: wrap;
+  flex-direction: row-reverse;
+  justify-content: flex-start;
   gap: 10px;
   padding: 12px 16px 16px;
   border-top: 1px solid var(--glass-border);
