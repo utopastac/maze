@@ -1179,9 +1179,9 @@ export class PlayHud {
     this.homeScrim.scale.set(viewW * 1.2, viewH * 1.2, 1);
     this.homeScrim.position.set(cx, viewH * 0.5, -2);
 
-    const actions = this.homeMenuMode === "tower" ? TOWER_HOME_ACTIONS : HOME_ACTIONS;
-    const titleText = this.homeMenuMode === "tower" ? "TOWER" : "MAZESPIRE";
-    const rows: { height: number; after: number; place: (y: number) => void }[] = [];
+    const towerMode = this.homeMenuMode === "tower";
+    const actions = towerMode ? TOWER_HOME_ACTIONS : HOME_ACTIONS;
+    const titleText = towerMode ? "TOWER" : "MAZESPIRE";
     const titleH = HOME_TITLE_PX * u;
     if (!this.homeTitlePlate) {
       this.homeTitlePlate = new ArchLabel(titleText, "#ffffff", titleH);
@@ -1189,16 +1189,6 @@ export class PlayHud {
     } else {
       this.homeTitlePlate.set(titleText, "#ffffff", titleH);
     }
-    rows.push({
-      height: titleH,
-      after: HOME_TITLE_BTN_GAP * u,
-      place: (y) => {
-        if (!this.homeTitlePlate) return;
-        this.homeTitlePlate.root.position.set(cx, y, 3);
-        this.homeTitlePlate.root.rotation.x = -0.08;
-        this.homeTitlePlate.root.rotation.y = 0.04;
-      },
-    });
 
     const btnH = HOME_BTN_PX * u;
     const goal = tokenColor("--maze-goal", "#ffbc61");
@@ -1206,14 +1196,10 @@ export class PlayHud {
     const face = tokenColor("--ink", "#ffffff");
     const hits: HomeHit[] = [];
     let menuWidth = 0;
-    for (let i = 0; i < this.homeBtnRows.length; i += 1) {
+
+    const syncBtn = (i: number, action: PlayHudHomeAction): StartButton | null => {
       const row = this.homeBtnRows[i];
-      if (!row) continue;
-      const action = actions[i];
-      if (!action) {
-        row.visible = false;
-        continue;
-      }
+      if (!row) return null;
       const label = HOME_LABELS[action];
       const primary = action === "tower" || action === "towerNew";
       const fill = primary ? goal : face;
@@ -1225,51 +1211,129 @@ export class PlayHud {
       } else {
         btn.set(label, fill, voidInk, btnH);
       }
-      menuWidth = Math.max(menuWidth, btn.width);
-      const index = i;
-      const act = action;
+      return btn;
+    };
+
+    for (let i = 0; i < this.homeBtnRows.length; i += 1) {
+      const row = this.homeBtnRows[i];
+      if (!row) continue;
+      if (!actions[i]) row.visible = false;
+    }
+
+    if (towerMode) {
+      // Title up top; New / Load / Back as a bottom bar so the summit stays clear.
+      if (this.homeTitlePlate) {
+        this.homeTitlePlate.root.position.set(cx, viewH * 0.84, 3);
+        this.homeTitlePlate.root.rotation.x = -0.08;
+        this.homeTitlePlate.root.rotation.y = 0.04;
+      }
+      const gap = btnGap * 1.6;
+      const widths: number[] = [];
+      for (let i = 0; i < actions.length; i += 1) {
+        const action = actions[i];
+        if (!action) continue;
+        const btn = syncBtn(i, action);
+        widths[i] = btn?.width ?? 0;
+        menuWidth += widths[i] ?? 0;
+      }
+      menuWidth += gap * Math.max(0, actions.length - 1);
+      const barY = viewH * 0.14;
+      let x = cx - menuWidth * 0.5;
+      for (let i = 0; i < actions.length; i += 1) {
+        const action = actions[i];
+        const btn = this.homeBtns[i];
+        const row = this.homeBtnRows[i];
+        const w = widths[i] ?? 0;
+        if (!action || !btn || !row) continue;
+        const px = x + w * 0.5;
+        row.visible = true;
+        row.userData.baseY = barY;
+        row.position.set(px, barY, 4 + i * 0.05);
+        row.rotation.x = -0.08;
+        btn.root.rotation.x = -0.1;
+        const bufY = this.bufferH - (barY + btnH * 0.5) / s;
+        hits.push({
+          action,
+          x: (px - w * 0.5) / s,
+          y: bufY,
+          w: w / s,
+          h: btnH / s,
+        });
+        x += w + gap;
+      }
+    } else {
+      const rows: { height: number; after: number; place: (y: number) => void }[] = [];
       rows.push({
-        height: btnH,
-        after: index < actions.length - 1 ? btnGap : 0,
+        height: titleH,
+        after: HOME_TITLE_BTN_GAP * u,
         place: (y) => {
-          const current = this.homeBtns[index];
-          const slot = this.homeBtnRows[index];
-          if (!current || !slot) return;
-          slot.visible = true;
-          slot.userData.baseY = y;
-          slot.position.set(cx, y, 4 + index * 0.05);
-          slot.rotation.x = -0.08;
-          current.root.rotation.x = -0.1;
-          const bufY = this.bufferH - (y + btnH * 0.5) / s;
-          hits.push({
-            action: act,
-            x: (cx - current.width * 0.5) / s,
-            y: bufY,
-            w: current.width / s,
-            h: btnH / s,
-          });
+          if (!this.homeTitlePlate) return;
+          this.homeTitlePlate.root.position.set(cx, y, 3);
+          this.homeTitlePlate.root.rotation.x = -0.08;
+          this.homeTitlePlate.root.rotation.y = 0.04;
         },
       });
+      for (let i = 0; i < actions.length; i += 1) {
+        const action = actions[i];
+        if (!action) continue;
+        const btn = syncBtn(i, action);
+        if (!btn) continue;
+        menuWidth = Math.max(menuWidth, btn.width);
+        const index = i;
+        const act = action;
+        rows.push({
+          height: btnH,
+          after: index < actions.length - 1 ? btnGap : 0,
+          place: (y) => {
+            const current = this.homeBtns[index];
+            const slot = this.homeBtnRows[index];
+            if (!current || !slot) return;
+            slot.visible = true;
+            slot.userData.baseY = y;
+            slot.position.set(cx, y, 4 + index * 0.05);
+            slot.rotation.x = -0.08;
+            current.root.rotation.x = -0.1;
+            const bufY = this.bufferH - (y + btnH * 0.5) / s;
+            hits.push({
+              action: act,
+              x: (cx - current.width * 0.5) / s,
+              y: bufY,
+              w: current.width / s,
+              h: btnH / s,
+            });
+          },
+        });
+      }
+      const totalH = rows.reduce((sum, row, i) => {
+        const after = i < rows.length - 1 ? row.after : 0;
+        return sum + row.height + after;
+      }, 0);
+      let y = viewH * 0.58 + totalH * 0.5;
+      for (let i = 0; i < rows.length; i += 1) {
+        const row = rows[i];
+        if (!row) continue;
+        y -= row.height * 0.5;
+        row.place(y);
+        y -= row.height * 0.5 + (i < rows.length - 1 ? row.after : 0);
+      }
     }
+
     this.homeHits = hits;
-
-    const totalH = rows.reduce((sum, row, i) => {
-      const after = i < rows.length - 1 ? row.after : 0;
-      return sum + row.height + after;
-    }, 0);
-    let y = viewH * 0.58 + totalH * 0.5;
-    for (let i = 0; i < rows.length; i += 1) {
-      const row = rows[i];
-      if (!row) continue;
-      y -= row.height * 0.5;
-      row.place(y);
-      y -= row.height * 0.5 + (i < rows.length - 1 ? row.after : 0);
-    }
-
-    this.layoutHomeDecor(viewW, viewH, u, menuWidth);
+    this.layoutHomeDecor(viewW, viewH, u, menuWidth, towerMode);
   }
 
-  private layoutHomeDecor(viewW: number, viewH: number, u: number, menuWidth: number): void {
+  private layoutHomeDecor(
+    viewW: number,
+    viewH: number,
+    u: number,
+    menuWidth: number,
+    towerMode = false,
+  ): void {
+    if (towerMode) {
+      for (const heart of this.homeDecorHearts) heart.visible = false;
+      for (const coin of this.homeDecorCoins) coin.visible = false;
+      return;
+    }
     const icon = HOME_DECOR_ICON * u;
     const gutter = Math.max(icon * 1.4, (viewW - menuWidth) * 0.22);
     const spots = [
@@ -1665,11 +1729,13 @@ class ArchLabel {
   private readonly shadeMat: MeshBasicMaterial;
   private readonly face: Mesh;
   private readonly shade: Mesh;
-  private readonly texture: CanvasTexture;
+  private texture: CanvasTexture;
   private readonly paintCanvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private readonly scratch = document.createElement("canvas");
   private readonly scratchCtx: CanvasRenderingContext2D;
+  private canvasW = 0;
+  private canvasH = 0;
   width = 1;
   private height = 1;
   private text = "";
@@ -1711,6 +1777,19 @@ class ArchLabel {
     this.set(text, fill, height);
   }
 
+  private rebindTexture(): void {
+    this.texture.dispose();
+    this.texture = new CanvasTexture(this.paintCanvas);
+    this.texture.colorSpace = SRGBColorSpace;
+    this.texture.magFilter = LinearFilter;
+    this.texture.minFilter = LinearFilter;
+    this.texture.generateMipmaps = false;
+    this.faceMat.map = this.texture;
+    this.shadeMat.map = this.texture;
+    this.faceMat.needsUpdate = true;
+    this.shadeMat.needsUpdate = true;
+  }
+
   set(text: string, fill: string, height: number): void {
     if (text === this.text && fill === this.fill && Math.abs(height - this.height) < 1e-6) return;
     this.text = text;
@@ -1728,8 +1807,12 @@ class ArchLabel {
     const contentW = widths.reduce((sum, w, i) => sum + w + (i > 0 ? tracking : 0), 0);
     const w = Math.max(8, Math.ceil(contentW + padX * 2));
     const h = Math.max(8, Math.ceil(px * 1.3 + padY));
+    const resized = this.canvasW !== w || this.canvasH !== h;
     this.paintCanvas.width = w;
     this.paintCanvas.height = h;
+    this.canvasW = w;
+    this.canvasH = h;
+    if (resized) this.rebindTexture();
     this.ctx.clearRect(0, 0, w, h);
 
     // Draw each glyph into scratch at full size, then blit with vertical scale from the top.
@@ -1786,10 +1869,12 @@ class StartLabel {
   private readonly shadeMat: MeshBasicMaterial;
   private readonly face: Mesh;
   private readonly shade: Mesh;
-  private readonly texture: CanvasTexture;
+  private texture: CanvasTexture;
   private readonly paintCanvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private readonly heavy: boolean;
+  private canvasW = 0;
+  private canvasH = 0;
   width = 1;
   private height = 1;
   private text = "";
@@ -1827,6 +1912,19 @@ class StartLabel {
     this.set(text, fill, height);
   }
 
+  private rebindTexture(): void {
+    this.texture.dispose();
+    this.texture = new CanvasTexture(this.paintCanvas);
+    this.texture.colorSpace = SRGBColorSpace;
+    this.texture.magFilter = LinearFilter;
+    this.texture.minFilter = LinearFilter;
+    this.texture.generateMipmaps = false;
+    this.faceMat.map = this.texture;
+    this.shadeMat.map = this.texture;
+    this.faceMat.needsUpdate = true;
+    this.shadeMat.needsUpdate = true;
+  }
+
   set(text: string, fill: string, height: number): void {
     if (text === this.text && fill === this.fill && Math.abs(height - this.height) < 1e-6) return;
     this.text = text;
@@ -1843,8 +1941,12 @@ class StartLabel {
     const textW = this.ctx.measureText(text).width;
     const w = Math.max(8, Math.ceil(textW + padX * 2));
     const h = Math.max(8, Math.ceil(px * 1.25 + padY));
+    const resized = this.canvasW !== w || this.canvasH !== h;
     this.paintCanvas.width = w;
     this.paintCanvas.height = h;
+    this.canvasW = w;
+    this.canvasH = h;
+    if (resized) this.rebindTexture();
     this.ctx.clearRect(0, 0, w, h);
     this.ctx.font = font;
     this.ctx.textAlign = "center";
@@ -1873,9 +1975,11 @@ class StartButton {
   private readonly shadeMat: MeshBasicMaterial;
   private readonly face: Mesh;
   private readonly shade: Mesh;
-  private readonly texture: CanvasTexture;
+  private texture: CanvasTexture;
   private readonly paintCanvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
+  private canvasW = 0;
+  private canvasH = 0;
   width = 1;
   private height = 1;
   private text = "";
@@ -1913,6 +2017,19 @@ class StartButton {
     this.set(text, faceFill, ink, height);
   }
 
+  private rebindTexture(): void {
+    this.texture.dispose();
+    this.texture = new CanvasTexture(this.paintCanvas);
+    this.texture.colorSpace = SRGBColorSpace;
+    this.texture.magFilter = LinearFilter;
+    this.texture.minFilter = LinearFilter;
+    this.texture.generateMipmaps = false;
+    this.faceMat.map = this.texture;
+    this.shadeMat.map = this.texture;
+    this.faceMat.needsUpdate = true;
+    this.shadeMat.needsUpdate = true;
+  }
+
   set(text: string, faceFill: string, ink: string, height: number): void {
     if (
       text === this.text
@@ -1932,8 +2049,13 @@ class StartButton {
     const textW = this.ctx.measureText(text).width;
     const w = Math.max(8, Math.ceil(textW + padX * 2));
     const h = Math.max(8, Math.ceil(px + padY * 2));
+    const resized = this.canvasW !== w || this.canvasH !== h;
     this.paintCanvas.width = w;
     this.paintCanvas.height = h;
+    this.canvasW = w;
+    this.canvasH = h;
+    // Resizing invalidates the GPU texture — rebind or prior labels ghost through.
+    if (resized) this.rebindTexture();
     this.ctx.clearRect(0, 0, w, h);
 
     const radius = h * 0.5;

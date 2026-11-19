@@ -5,6 +5,7 @@ import {
   type SettingGroup,
   type SettingKey,
 } from "../core/playSettings.ts";
+import { iconSvg, type IconName } from "./icons.ts";
 import styles from "./settingsPanel.module.css";
 
 export interface SettingsPanelCallbacks {
@@ -12,6 +13,13 @@ export interface SettingsPanelCallbacks {
 }
 
 const GROUPS: readonly SettingGroup[] = ["Controls", "Physics", "Camera", "Picture"];
+
+const GROUP_ICONS: Record<SettingGroup, IconName> = {
+  Controls: "keyboard",
+  Physics: "gauge",
+  Camera: "camera",
+  Picture: "settings",
+};
 
 /** Full settings screen — not a floating sheet over play. */
 export class SettingsPanel {
@@ -42,13 +50,14 @@ export class SettingsPanel {
     const tabs = GROUPS.map((group, index) => `
       <button
         type="button"
-        class="${styles.tab}"
+        class="${styles.tab}${group === this.active ? ` ${styles.tabActive}` : ""}"
         role="tab"
         id="settings-tab-${index}"
         data-tab="${group}"
         aria-controls="settings-panel-${index}"
         aria-selected="${group === this.active ? "true" : "false"}"
-      >${group}</button>
+        title="${group}"
+      >${iconSvg(GROUP_ICONS[group])}<span>${group}</span></button>
     `).join("");
     const panels = GROUPS.map((group, index) => `
       <section
@@ -63,22 +72,32 @@ export class SettingsPanel {
       </section>
     `).join("");
     this.root.innerHTML = `
-      <div class="${styles.page}">
+      <div class="${styles.scrim}" data-scrim></div>
+      <div class="${styles.card}">
         <header class="${styles.head}">
-          <h1 class="${styles.title}">Settings</h1>
+          <h2 class="${styles.title}">Settings</h2>
+          <div class="${styles.headActions}">
+            <button type="button" class="glass-pill ${styles.defaults}" data-defaults>Reset to defaults</button>
+            <button type="button" class="glass-pill metal-ring ${styles.save}" data-save>Done</button>
+            <button type="button" class="glass-btn ${styles.close}" data-close aria-label="Close settings">${iconSvg("close")}</button>
+          </div>
         </header>
-        <div
-          class="${styles.segments}"
-          role="tablist"
-          aria-label="Settings sections"
-          data-tabs
-        >${tabs}</div>
-        <div class="${styles.body}">
-          ${panels}
-        </div>
-        <div class="${styles.footer}">
-          <button type="button" class="glass-pill ${styles.defaults}" data-defaults>Defaults</button>
-          <button type="button" class="glass-pill metal-ring ${styles.save}" data-save>Done</button>
+        <div class="${styles.main}">
+          <aside class="${styles.side}">
+            <h3 class="${styles.sideTitle}">Sections</h3>
+            <div
+              class="${styles.segments}"
+              role="tablist"
+              aria-label="Settings sections"
+              aria-orientation="vertical"
+              data-tabs
+            >${tabs}</div>
+          </aside>
+          <div class="${styles.body}">
+            <div class="${styles.controls}">
+              ${panels}
+            </div>
+          </div>
         </div>
       </div>
     `;
@@ -154,7 +173,10 @@ export class SettingsPanel {
       }
     }
 
-    this.root.querySelector("[data-save]")?.addEventListener("click", () => this.callbacks.onSave());
+    const leave = (): void => this.callbacks.onSave();
+    this.root.querySelector("[data-save]")?.addEventListener("click", leave);
+    this.root.querySelector("[data-close]")?.addEventListener("click", leave);
+    this.root.querySelector("[data-scrim]")?.addEventListener("click", leave);
     this.root.querySelector("[data-defaults]")?.addEventListener("click", () => {
       this.settings.reset();
       this.refresh();

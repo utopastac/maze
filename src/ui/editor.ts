@@ -170,6 +170,23 @@ const TOOLS: readonly { id: EditorTool; label: string; icon: IconName }[] = [
   ...PALETTE,
 ];
 
+const isBuildTool = (id: EditorTool): boolean =>
+  id === "wall"
+  || id === "pit"
+  || id === "block"
+  || id === "boost"
+  || id === "warp"
+  || id === "ice"
+  || id === "crumble"
+  || id === "switch";
+
+const isPowerUpTool = (id: EditorTool): boolean =>
+  id === "heart" || id === "coin" || id === "star" || id === "wings";
+
+const MAIN_TOOLS = TOOLS.filter((tool) => !isBuildTool(tool.id) && !isPowerUpTool(tool.id));
+const BUILD_TOOLS = TOOLS.filter((tool) => isBuildTool(tool.id));
+const POWER_UP_TOOLS = TOOLS.filter((tool) => isPowerUpTool(tool.id));
+
 const HINT_BRUSH: Record<EditorTool, string> = {
   move: "Click a cell for tile options. Drag tiles or row/column handles to edit.",
   erase: "Click tiles or walls to clear them.",
@@ -336,6 +353,10 @@ export class LevelEditor {
               <section class="${styles.panel} ${styles.toolsPanel}">
                 <h2 class="${styles.panelTitle}">Tools</h2>
                 <div class="${styles.palette}" role="list" aria-label="Tools" data-palette></div>
+                <h3 class="${styles.paletteSection}">Build</h3>
+                <div class="${styles.palette}" role="list" aria-label="Build tools" data-palette-build></div>
+                <h3 class="${styles.paletteSection}">Power up</h3>
+                <div class="${styles.palette}" role="list" aria-label="Power ups" data-palette-power></div>
               </section>
             </div>
           </aside>
@@ -854,20 +875,27 @@ export class LevelEditor {
   }
 
   private mountPalette(): void {
-    const host = this.require("[data-palette]");
-    for (const tool of TOOLS) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = styles.swatch;
-      button.dataset.palette = tool.id;
-      button.dataset.kind = tool.id;
-      button.setAttribute("role", "radio");
-      button.title = tool.label;
-      button.innerHTML = `${iconSvg(tool.icon)}<span>${tool.label}</span>`;
-      button.addEventListener("click", () => this.setBrush(tool.id));
-      this.paletteButtons.set(tool.id, button);
-      host.append(button);
-    }
+    const main = this.require("[data-palette]");
+    const build = this.require("[data-palette-build]");
+    const power = this.require("[data-palette-power]");
+    const mount = (host: HTMLElement, tools: readonly { id: EditorTool; label: string; icon: IconName }[]): void => {
+      for (const tool of tools) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = styles.swatch;
+        button.dataset.palette = tool.id;
+        button.dataset.kind = tool.id;
+        button.setAttribute("role", "radio");
+        button.title = tool.label;
+        button.innerHTML = `${iconSvg(tool.icon)}<span>${tool.label}</span>`;
+        button.addEventListener("click", () => this.setBrush(tool.id));
+        this.paletteButtons.set(tool.id, button);
+        host.append(button);
+      }
+    };
+    mount(main, MAIN_TOOLS);
+    mount(build, BUILD_TOOLS);
+    mount(power, POWER_UP_TOOLS);
   }
 
   private mountTileMenu(): void {

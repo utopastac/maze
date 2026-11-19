@@ -7,10 +7,12 @@ import {
   ArrowRight,
   ArrowUp,
   BrickWall,
+  Camera,
   Castle,
   ChevronDown,
   ChevronUp,
   Circle,
+  Gauge,
   ClipboardCopy,
   ClipboardPaste,
   Coins,
@@ -92,6 +94,8 @@ export type IconName =
   | "save"
   | "saved"
   | "keyboard"
+  | "camera"
+  | "gauge"
   | "wins"
   | "copy"
   | "paste"
@@ -116,6 +120,8 @@ const NODES: Record<IconName, IconNode> = {
   wings: Feather,
   motion: Smartphone,
   settings: SlidersHorizontal,
+  camera: Camera,
+  gauge: Gauge,
   edit: Pencil,
   author: NotebookPen,
   wins: Images,

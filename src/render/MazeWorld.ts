@@ -775,7 +775,7 @@ export class MazeWorld {
     if (!this.reduceMotion) {
       this.homeOrbit += dt * (this.homeView === "tower" ? 0.045 : 0.09);
       if (this.homeViewBlend < 1) {
-        this.homeViewBlend = Math.min(1, this.homeViewBlend + dt / 1.15);
+        this.homeViewBlend = Math.min(1, this.homeViewBlend + dt / 2.75);
       }
     } else {
       this.homeViewBlend = 1;
@@ -2500,7 +2500,9 @@ export class MazeWorld {
 
     this.addBarrenRocks(group, span);
     // Tower footprint still keyed to the playable tower span, not the expanded ground.
-    this.addOminousTower(group, Math.max(tower.width, tower.depth) * 2.8);
+    const towerSpan = Math.max(tower.width, tower.depth) * 2.8;
+    this.addOminousTower(group, towerSpan);
+    this.addHomeShacks(group, span, towerSpan * 0.36);
 
     const light = new PointLight("#eef4ff", 0, span * 3.2, 1.6);
     light.position.set(0, 1.5, span * 0.15);
@@ -2518,6 +2520,51 @@ export class MazeWorld {
     this.board.add(group);
     this.meadow = group;
     for (let i = 0; i < 64; i += 1) this.spawnRaindrop(group);
+  }
+
+  /** A few slumped hovels clinging to the barren ring around the tower. */
+  private addHomeShacks(parent: Group, span: number, towerBase: number): void {
+    const keepOut = towerBase * 0.62;
+    const rim = span * 0.34;
+    const wood = this.groundMats.wreck;
+    const woodDark = this.groundMats.wreckDark;
+    const stone = this.groundMats.moonRock;
+    const shade = this.groundMats.failCrack;
+    const spots: {
+      x: number;
+      z: number;
+      scale: number;
+      yaw: number;
+      lean: number;
+      kind: "hut" | "lean" | "ruin";
+    }[] = [
+      { x: rim * -0.72, z: rim * 0.55, scale: 1.15, yaw: 0.55, lean: 0.12, kind: "hut" },
+      { x: rim * 0.68, z: rim * 0.42, scale: 0.95, yaw: -0.85, lean: -0.18, kind: "lean" },
+      { x: rim * -0.35, z: rim * -0.78, scale: 1.05, yaw: 2.5, lean: 0.08, kind: "hut" },
+      { x: rim * 0.82, z: rim * -0.35, scale: 0.88, yaw: -1.9, lean: 0.22, kind: "ruin" },
+      { x: rim * 0.15, z: rim * 0.88, scale: 0.78, yaw: 0.2, lean: -0.1, kind: "lean" },
+    ];
+    for (const spot of spots) {
+      if (Math.hypot(spot.x, spot.z) < keepOut) continue;
+      parent.add(
+        makeSadShack(spot.x, spot.z, spot.scale, spot.yaw, spot.lean, spot.kind, {
+          wood,
+          woodDark,
+          stone,
+          shade,
+        }),
+      );
+    }
+    // Lonely fence posts and a crumbled wall stub near the path.
+    const stub = new Group();
+    stub.position.set(rim * -0.15, 0, rim * 0.62);
+    stub.rotation.y = 0.4;
+    voxel(stub, woodDark, 0.03, 0.22, 0.03, -0.28, 0.22, 0);
+    voxel(stub, woodDark, 0.03, 0.18, 0.03, 0.05, 0.18, 0.04);
+    voxel(stub, wood, 0.03, 0.14, 0.03, 0.32, 0.14, -0.02);
+    voxel(stub, wood, 0.28, 0.015, 0.015, 0, 0.28, 0.02);
+    voxel(stub, shade, 0.18, 0.08, 0.12, 0.55, 0.08, 0.1);
+    parent.add(stub);
   }
 
   private addBarrenRocks(parent: Group, span: number): void {
@@ -2672,21 +2719,101 @@ export class MazeWorld {
       parent.add(mesh);
     }
 
-    // Crown + spire catch lightning and mark the summit.
-    const tipSize = baseSize * 0.28;
-    const crown = new Mesh(
-      new BoxGeometry(tipSize, 0.12, tipSize),
-      this.materials.frame,
-    );
-    crown.position.y = HOME_TOWER_H + 0.04;
-    crown.castShadow = organicProps;
-    parent.add(crown);
-    const spire = new Mesh(
-      new BoxGeometry(0.08, 0.65, 0.08),
-      this.groundMats.failNeon,
-    );
-    spire.position.y = HOME_TOWER_H + 0.42;
-    parent.add(spire);
+    this.addSinisterSummit(parent, baseSize * 0.28);
+  }
+
+  /** Blocky idol crowning the storm tower — horns, hunched shoulders, glowing eyes. */
+  private addSinisterSummit(parent: Group, tipSize: number): void {
+    const stone = this.materials.frame;
+    const shade = this.groundMats.failCrack;
+    const bone = this.groundMats.moonRock;
+    const glow = this.groundMats.failNeon;
+    const idol = new Group();
+    idol.position.y = HOME_TOWER_H;
+
+    const add = (
+      w: number,
+      h: number,
+      d: number,
+      x: number,
+      y: number,
+      z: number,
+      mat: MeshToonMaterial | MeshBasicMaterial,
+      rotY = 0,
+    ): Mesh => {
+      const mesh = new Mesh(new BoxGeometry(w, h, d), mat);
+      mesh.position.set(x, y, z);
+      if (rotY !== 0) mesh.rotation.y = rotY;
+      mesh.castShadow = organicProps;
+      mesh.receiveShadow = organicProps;
+      idol.add(mesh);
+      return mesh;
+    };
+
+    // Pedestal / sacrifice slab.
+    add(tipSize * 1.15, 0.1, tipSize * 1.15, 0, 0.05, 0, shade);
+    add(tipSize * 0.78, 0.14, tipSize * 0.78, 0, 0.16, 0, stone);
+
+    // Crouched torso + rib cage.
+    add(tipSize * 0.42, 0.38, tipSize * 0.34, 0, 0.42, 0.02, stone);
+    add(tipSize * 0.5, 0.12, tipSize * 0.4, 0, 0.58, 0.0, shade);
+
+    // Hunched shoulders / cloak.
+    add(tipSize * 0.72, 0.16, tipSize * 0.28, 0, 0.66, -0.02, bone);
+    add(tipSize * 0.22, 0.28, tipSize * 0.18, -tipSize * 0.28, 0.55, 0.04, shade);
+    add(tipSize * 0.22, 0.28, tipSize * 0.18, tipSize * 0.28, 0.55, 0.04, shade);
+
+    // Arms braced on the slab — clawed.
+    add(tipSize * 0.14, 0.12, tipSize * 0.36, -tipSize * 0.34, 0.34, 0.18, stone, 0.35);
+    add(tipSize * 0.14, 0.12, tipSize * 0.36, tipSize * 0.34, 0.34, 0.18, stone, -0.35);
+    add(tipSize * 0.08, 0.06, tipSize * 0.16, -tipSize * 0.4, 0.28, 0.34, bone);
+    add(tipSize * 0.08, 0.06, tipSize * 0.16, tipSize * 0.4, 0.28, 0.34, bone);
+    for (const side of [-1, 1] as const) {
+      for (let c = 0; c < 3; c += 1) {
+        add(
+          0.035,
+          0.03,
+          0.09,
+          side * tipSize * (0.36 + c * 0.04),
+          0.26,
+          0.4,
+          shade,
+        );
+      }
+    }
+
+    // Elongated skull.
+    add(tipSize * 0.3, 0.28, tipSize * 0.26, 0, 0.86, 0.04, bone);
+    add(tipSize * 0.18, 0.12, tipSize * 0.2, 0, 0.74, 0.14, shade);
+    // Jaw / fangs.
+    add(tipSize * 0.08, 0.1, 0.05, -tipSize * 0.06, 0.7, 0.22, bone);
+    add(tipSize * 0.08, 0.1, 0.05, tipSize * 0.06, 0.7, 0.22, bone);
+
+    // Sweeping horns.
+    add(tipSize * 0.1, 0.42, tipSize * 0.1, -tipSize * 0.22, 1.08, -0.04, stone, 0.4);
+    add(tipSize * 0.1, 0.42, tipSize * 0.1, tipSize * 0.22, 1.08, -0.04, stone, -0.4);
+    add(tipSize * 0.07, 0.22, tipSize * 0.07, -tipSize * 0.34, 1.28, -0.08, shade, 0.55);
+    add(tipSize * 0.07, 0.22, tipSize * 0.07, tipSize * 0.34, 1.28, -0.08, shade, -0.55);
+
+    // Glowing eyes — catch lightning / mark the summit.
+    add(0.06, 0.05, 0.04, -tipSize * 0.07, 0.9, 0.16, glow);
+    add(0.06, 0.05, 0.04, tipSize * 0.07, 0.9, 0.16, glow);
+
+    // Small dorsal spine / crown spikes.
+    for (let i = 0; i < 4; i += 1) {
+      const t = i / 3;
+      add(
+        0.045,
+        0.12 + t * 0.08,
+        0.045,
+        (t - 0.5) * tipSize * 0.2,
+        1.02 + t * 0.04,
+        -0.1,
+        shade,
+      );
+    }
+
+    parent.add(idol);
   }
 
   private applyHomeLighting(): void {
@@ -4041,12 +4168,20 @@ export class MazeWorld {
     const down = clamp(-this.glanceDAngle / Math.abs(MEADOW_GLANCE_PITCH_MIN), 0, 1);
 
     if (this.homeView === "tower") {
-      // Rise up the shaft and look at the crown for the New/Load menu.
-      const lookY = meadowY + HOME_TOWER_H * (0.9 + up * 0.06 - down * 0.05);
-      const eyeY = meadowY + HOME_TOWER_H * (0.48 + up * 0.12 - down * 0.06);
-      const dist = HOME_TOWER_H * (0.52 + up * 0.28 - down * 0.04);
-      this.homeViewLook.set(0, lookY, 0);
-      this.homeViewEye.set(Math.sin(orbit) * dist, eyeY, Math.cos(orbit) * dist);
+      // Close high crane — look past the summit so the tower sits left of frame.
+      const lookY = meadowY + HOME_TOWER_H * (1.02 + up * 0.03 - down * 0.03);
+      const eyeY = meadowY + HOME_TOWER_H * (1.14 + up * 0.08 - down * 0.05);
+      const dist = HOME_TOWER_H * (0.28 + up * 0.08 - down * 0.03);
+      const rightX = Math.cos(orbit);
+      const rightZ = -Math.sin(orbit);
+      const lookOff = HOME_TOWER_H * 0.16;
+      const side = HOME_TOWER_H * 0.04;
+      this.homeViewLook.set(rightX * lookOff, lookY, rightZ * lookOff);
+      this.homeViewEye.set(
+        Math.sin(orbit) * dist + rightX * side,
+        eyeY,
+        Math.cos(orbit) * dist + rightZ * side,
+      );
     } else {
       // 0.5× ultrawide vibe: low, close-ish, mild up-tilt so the barren floor stays in shot.
       const lookY = meadowY + HOME_TOWER_H * (0.34 + up * 0.14 - down * 0.08);
@@ -4060,7 +4195,7 @@ export class MazeWorld {
     this.homeViewEye.applyQuaternion(this.board.quaternion);
     this.homeViewLook.applyQuaternion(this.board.quaternion);
 
-    const t = easeOutCubic(this.homeViewBlend);
+    const t = easeInOutCubic(this.homeViewBlend);
     if (t < 1) {
       this.meadowCamEye.lerpVectors(this.homeViewFromEye, this.homeViewEye, t);
       this.meadowCamLook.lerpVectors(this.homeViewFromLook, this.homeViewLook, t);
@@ -4657,6 +4792,11 @@ function wrapDegrees(value: number): number {
 function easeOutCubic(t: number): number {
   const u = 1 - Math.min(1, Math.max(0, t));
   return 1 - u * u * u;
+}
+
+function easeInOutCubic(t: number): number {
+  const x = Math.min(1, Math.max(0, t));
+  return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
 }
 
 interface PickupBit {
@@ -5629,6 +5769,71 @@ function makeCrow(
   voxel(crow, body, 0.012, 0.03, 0.012, 0.02, 0.02, 0.03);
   voxel(crow, body, 0.012, 0.03, 0.012, 0.02, 0.02, -0.03);
   return crow;
+}
+
+function makeSadShack(
+  x: number,
+  z: number,
+  scale: number,
+  yaw: number,
+  lean: number,
+  kind: "hut" | "lean" | "ruin",
+  mats: {
+    wood: MeshToonMaterial;
+    woodDark: MeshToonMaterial;
+    stone: MeshToonMaterial;
+    shade: MeshToonMaterial;
+  },
+): Group {
+  const shack = new Group();
+  shack.position.set(x, 0, z);
+  shack.scale.setScalar(scale);
+  shack.rotation.y = yaw;
+  shack.rotation.z = lean;
+
+  if (kind === "lean") {
+    // Open lean-to: three posts and a slumped tarp of planks.
+    voxel(shack, mats.woodDark, 0.04, 0.28, 0.04, -0.28, 0.28, -0.18);
+    voxel(shack, mats.woodDark, 0.04, 0.22, 0.04, 0.28, 0.22, -0.18);
+    voxel(shack, mats.woodDark, 0.04, 0.18, 0.04, -0.05, 0.18, 0.22);
+    voxel(shack, mats.wood, 0.34, 0.03, 0.28, 0, 0.42, 0);
+    voxel(shack, mats.woodDark, 0.3, 0.025, 0.22, 0.04, 0.48, -0.04);
+    voxel(shack, mats.shade, 0.12, 0.08, 0.1, 0.22, 0.08, 0.18);
+    voxel(shack, mats.stone, 0.1, 0.05, 0.14, -0.2, 0.05, 0.2);
+    return shack;
+  }
+
+  if (kind === "ruin") {
+    // Half-collapsed stone shell, no roof left.
+    voxel(shack, mats.stone, 0.32, 0.18, 0.04, 0, 0.18, -0.28);
+    voxel(shack, mats.stone, 0.04, 0.22, 0.26, -0.3, 0.22, 0);
+    voxel(shack, mats.shade, 0.04, 0.14, 0.2, 0.3, 0.14, 0.04);
+    voxel(shack, mats.woodDark, 0.22, 0.03, 0.18, 0.08, 0.36, -0.05);
+    voxel(shack, mats.wood, 0.08, 0.03, 0.2, -0.18, 0.08, 0.22);
+    voxel(shack, mats.shade, 0.1, 0.06, 0.08, 0.18, 0.06, 0.2);
+    return shack;
+  }
+
+  // Closed hut — sagging roof, dark doorway, one cracked window.
+  voxel(shack, mats.wood, 0.36, 0.22, 0.28, 0, 0.22, 0);
+  voxel(shack, mats.woodDark, 0.38, 0.04, 0.3, 0, 0.44, 0);
+  // Pitched roof planks, slightly askew.
+  voxel(shack, mats.woodDark, 0.42, 0.03, 0.18, 0, 0.56, -0.08);
+  voxel(shack, mats.wood, 0.4, 0.03, 0.16, 0.02, 0.62, 0.06);
+  voxel(shack, mats.shade, 0.12, 0.02, 0.14, -0.12, 0.68, 0);
+  // Door void + boards.
+  voxel(shack, mats.shade, 0.08, 0.14, 0.02, 0, 0.16, 0.29);
+  voxel(shack, mats.woodDark, 0.1, 0.02, 0.015, 0, 0.22, 0.3);
+  voxel(shack, mats.woodDark, 0.1, 0.02, 0.015, 0, 0.12, 0.3);
+  // Window hole.
+  voxel(shack, mats.shade, 0.07, 0.06, 0.015, -0.18, 0.28, 0.29);
+  // Chimney stump.
+  voxel(shack, mats.stone, 0.07, 0.14, 0.07, 0.18, 0.72, -0.08);
+  voxel(shack, mats.shade, 0.05, 0.04, 0.05, 0.18, 0.84, -0.08);
+  // Debris at the stoop.
+  voxel(shack, mats.wood, 0.1, 0.03, 0.06, 0.22, 0.04, 0.34);
+  voxel(shack, mats.stone, 0.08, 0.04, 0.08, -0.24, 0.04, 0.3);
+  return shack;
 }
 
 function makeBrokenGate(

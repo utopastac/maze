@@ -2,7 +2,7 @@ import { listSavedLevels, loadSavedLevel, deleteSavedLevel, type SavedLevel } fr
 import { FLOOR_THEME_META, parseFloorTheme } from "../core/theme.ts";
 import type { Tower } from "../core/tower.ts";
 import { iconSvg } from "./icons.ts";
-import { renderMazeThumbnail } from "./mazeThumbnail.ts";
+import { renderMazeBoardPreview } from "./mazeBoardPreview.ts";
 import styles from "./savedLevels.module.css";
 
 export interface SavedLevelsCallbacks {
@@ -13,8 +13,12 @@ export interface SavedLevelsCallbacks {
 export class SavedLevelsPanel {
   private readonly root: HTMLElement;
   private readonly callbacks: SavedLevelsCallbacks;
-  private readonly metaEl: HTMLElement;
   private readonly list: HTMLElement;
+  private readonly confirmRoot: HTMLElement;
+  private readonly confirmTitle: HTMLElement;
+  private readonly confirmBody: HTMLElement;
+  private readonly confirmOk: HTMLButtonElement;
+  private pendingDeleteId: string | null = null;
   private open = false;
 
   constructor(root: HTMLElement, callbacks: SavedLevelsCallbacks) {
@@ -27,17 +31,39 @@ export class SavedLevelsPanel {
         <header class="${styles.head}">
           <div>
             <h2 class="${styles.title}">Saved levels</h2>
-            <p class="${styles.meta}" data-meta>Levels you saved from the editor.</p>
           </div>
           <button type="button" class="glass-btn ${styles.close}" data-close aria-label="Close saved levels">${iconSvg("close")}</button>
         </header>
         <div class="${styles.list}" data-list></div>
       </div>
+      <div class="${styles.confirm}" data-confirm hidden>
+        <div class="${styles.confirmScrim}" data-confirm-scrim></div>
+        <div
+          class="${styles.confirmCard}"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="saved-confirm-title"
+          aria-describedby="saved-confirm-body"
+        >
+          <p class="${styles.confirmTitle}" id="saved-confirm-title" data-confirm-title></p>
+          <p class="${styles.confirmBody}" id="saved-confirm-body" data-confirm-body></p>
+          <div class="${styles.confirmActions}">
+            <button type="button" class="glass-pill ${styles.confirmCancel}" data-confirm-cancel>Cancel</button>
+            <button type="button" class="glass-pill metal-ring ${styles.confirmOk}" data-confirm-ok>Delete</button>
+          </div>
+        </div>
+      </div>
     `;
-    this.metaEl = this.require("[data-meta]");
     this.list = this.require("[data-list]");
+    this.confirmRoot = this.require("[data-confirm]");
+    this.confirmTitle = this.require("[data-confirm-title]");
+    this.confirmBody = this.require("[data-confirm-body]");
+    this.confirmOk = this.require("[data-confirm-ok]");
     this.require("[data-close]").addEventListener("click", () => this.callbacks.onClose());
     this.require("[data-scrim]").addEventListener("click", () => this.callbacks.onClose());
+    this.require("[data-confirm-scrim]").addEventListener("click", () => this.hideDeleteConfirm());
+    this.require("[data-confirm-cancel]").addEventListener("click", () => this.hideDeleteConfirm());
+    this.confirmOk.addEventListener("click", () => this.commitDeleteConfirm());
   }
 
   isOpen(): boolean {
@@ -46,6 +72,7 @@ export class SavedLevelsPanel {
 
   show(): void {
     this.open = true;
+    this.hideDeleteConfirm();
     this.renderList();
     this.root.hidden = false;
     this.root.dataset.phase = "out";
@@ -56,6 +83,7 @@ export class SavedLevelsPanel {
 
   hide(): void {
     this.open = false;
+    this.hideDeleteConfirm();
     this.list.replaceChildren();
     delete this.root.dataset.phase;
     this.root.hidden = true;
@@ -63,9 +91,6 @@ export class SavedLevelsPanel {
 
   private renderList(): void {
     const entries = listSavedLevels();
-    this.metaEl.textContent = entries.length === 0
-      ? "Save a level from the editor to keep it here."
-      : `${entries.length} saved · tap to play`;
     this.list.replaceChildren();
     if (entries.length === 0) {
       const empty = document.createElement("p");
@@ -94,7 +119,12 @@ export class SavedLevelsPanel {
 
     const thumb = document.createElement("div");
     thumb.className = styles.thumb;
-    if (floor) thumb.append(renderMazeThumbnail(floor));
+    if (floor) {
+      thumb.append(renderMazeBoardPreview(floor, {
+        showGoal: true,
+        landing: entry.floors > 1,
+      }));
+    }
 
     const label = document.createElement("div");
     label.className = styles.label;
@@ -113,8 +143,7 @@ export class SavedLevelsPanel {
     remove.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      deleteSavedLevel(entry.id);
-      this.renderList();
+      this.openDeleteConfirm(entry);
     });
 
     const play = (): void => {
@@ -138,6 +167,28 @@ export class SavedLevelsPanel {
 
     wrap.append(thumb, label, remove);
     return wrap;
+  }
+
+  private openDeleteConfirm(entry: SavedLevel): void {
+    this.pendingDeleteId = entry.id;
+    this.confirmTitle.textContent = "Delete this level?";
+    this.confirmBody.textContent = `“${entry.name}” will be removed from this device.`;
+    this.confirmOk.textContent = "Delete";
+    this.confirmRoot.hidden = false;
+    this.confirmOk.focus();
+  }
+
+  private hideDeleteConfirm(): void {
+    this.pendingDeleteId = null;
+    this.confirmRoot.hidden = true;
+  }
+
+  private commitDeleteConfirm(): void {
+    const id = this.pendingDeleteId;
+    this.hideDeleteConfirm();
+    if (!id) return;
+    deleteSavedLevel(id);
+    this.renderList();
   }
 
   private require<T extends Element>(selector: string): T {

@@ -55,7 +55,9 @@ export function renderMazeBoardPreview(maze: Maze, opts: { showGoal?: boolean; l
   sheet.dataset.theme = theme;
   sheet.style.setProperty("--cols", String(maze.cols));
   sheet.style.setProperty("--rows", String(maze.rows));
-  sheet.style.setProperty("--edge", "10px");
+  // Thin outer rim — full editor edge/frame reads as a slab in card thumbs.
+  sheet.style.setProperty("--edge", "4px");
+  sheet.style.setProperty("--frame", "3px");
   sheet.style.setProperty("--rail", "0px");
   sheet.style.setProperty("--cell-max", "56px");
 

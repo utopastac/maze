@@ -197,6 +197,15 @@
   padding: 10px 8px;
 }
 
+.paletteSection {
+  margin: 10px 2px 0;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
 .root[data-mode="campaign"] .sideCols {
   grid-template-columns: minmax(0, 1fr);
 }
