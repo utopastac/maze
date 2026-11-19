@@ -520,6 +520,11 @@ body,
   pointer-events: auto;
 }
 
+/* Load modal floats over the in-world Tower submenu. */
+#app[data-screen="home"] #tower-intro {
+  z-index: 12;
+}
+
 #app[data-screen="tower"] #play-hud,
 #app[data-screen="settings"] #play-hud,
 #app[data-screen="create"] #play-hud,

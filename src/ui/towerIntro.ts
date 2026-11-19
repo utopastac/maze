@@ -15,49 +15,86 @@ export interface TowerIntroCallbacks {
   onBack: () => void;
 }
 
-/** Full tower landing screen — not a modal over play. */
+/** Tower save list — full page (legacy) or load modal over the home backdrop. */
 export class TowerIntro {
   private readonly root: HTMLElement;
   private readonly callbacks: TowerIntroCallbacks;
   private readonly metaEl: HTMLElement;
   private readonly listEl: HTMLElement;
+  private readonly pageEl: HTMLElement;
   private open = false;
+  private modal = false;
 
   constructor(root: HTMLElement, callbacks: TowerIntroCallbacks) {
     this.root = root;
     this.callbacks = callbacks;
     this.root.className = styles.root;
     this.root.innerHTML = `
-      <div class="${styles.page}">
+      <div class="${styles.page}" data-page>
         <header class="${styles.head}">
-          <button type="button" class="glass-btn ${styles.back}" data-back aria-label="Back to home">${iconSvg("home")}</button>
+          <button type="button" class="glass-btn ${styles.back}" data-back aria-label="Back">${iconSvg("close")}</button>
           <div class="${styles.headCopy}">
-            <h1 class="${styles.title}">Tower</h1>
+            <h1 class="${styles.title}" data-title>Tower</h1>
             <p class="${styles.meta}" data-meta>100 floors. Load a save, start fresh, or practice any floor.</p>
           </div>
         </header>
         <div class="${styles.body}">
           <div class="${styles.list}" data-list></div>
-          <div class="${styles.actions}">
+          <div class="${styles.actions}" data-actions>
             <button type="button" class="glass-pill metal-ring ${styles.primary}" data-new>New game</button>
             <button type="button" class="glass-pill ${styles.secondary}" data-practice>Practice</button>
           </div>
         </div>
       </div>
     `;
+    this.pageEl = this.require("[data-page]");
     this.metaEl = this.require("[data-meta]");
     this.listEl = this.require("[data-list]");
     this.require("[data-back]").addEventListener("click", () => this.callbacks.onBack());
     this.require("[data-new]").addEventListener("click", () => this.callbacks.onNewGame());
     this.require("[data-practice]").addEventListener("click", () => this.callbacks.onPractice());
+    this.root.addEventListener("click", (event) => {
+      if (!this.modal || event.target !== this.root) return;
+      this.callbacks.onBack();
+    });
   }
 
   isOpen(): boolean {
     return this.open;
   }
 
+  isModal(): boolean {
+    return this.open && this.modal;
+  }
+
   show(): void {
+    this.openAs(false);
+  }
+
+  /** Save picker floating over the storm-tower home scene. */
+  showLoadModal(): void {
+    this.openAs(true);
+  }
+
+  hide(): void {
+    this.open = false;
+    this.modal = false;
+    this.listEl.replaceChildren();
+    delete this.root.dataset.phase;
+    delete this.root.dataset.mode;
+    this.root.hidden = true;
+  }
+
+  private openAs(modal: boolean): void {
     this.open = true;
+    this.modal = modal;
+    this.root.dataset.mode = modal ? "modal" : "page";
+    this.require("[data-title]").textContent = modal ? "Load game" : "Tower";
+    this.require<HTMLElement>("[data-actions]").hidden = modal;
+    this.require<HTMLButtonElement>("[data-back]").setAttribute(
+      "aria-label",
+      modal ? "Close load menu" : "Back to home",
+    );
     this.renderList();
     this.root.hidden = false;
     this.root.dataset.phase = "out";
@@ -66,18 +103,17 @@ export class TowerIntro {
     });
   }
 
-  hide(): void {
-    this.open = false;
-    this.listEl.replaceChildren();
-    delete this.root.dataset.phase;
-    this.root.hidden = true;
-  }
-
   private renderList(): void {
     const saves = listCampaignProgress();
-    this.metaEl.textContent = saves.length === 0
-      ? "100 floors. Load a save, start fresh, or practice any floor."
-      : `${saves.length} ${saves.length === 1 ? "save" : "saves"} · tap to load`;
+    if (this.modal) {
+      this.metaEl.textContent = saves.length === 0
+        ? "No saved games yet."
+        : `${saves.length} ${saves.length === 1 ? "save" : "saves"} · tap to load`;
+    } else {
+      this.metaEl.textContent = saves.length === 0
+        ? "100 floors. Load a save, start fresh, or practice any floor."
+        : `${saves.length} ${saves.length === 1 ? "save" : "saves"} · tap to load`;
+    }
     this.listEl.replaceChildren();
     if (saves.length === 0) {
       const empty = document.createElement("p");

@@ -140,7 +140,14 @@ type LineDrag = {
   pointerId: number;
 };
 
-type BoardConfirm = "clear" | "random";
+type BoardConfirm = "clear" | "random" | "remove-floor";
+
+type HistoryEntry = {
+  tower: Tower;
+  floorIndex: number;
+};
+
+const HISTORY_LIMIT = 100;
 
 const PALETTE: readonly { id: PaletteKind; label: string; icon: IconName }[] = [
   { id: "pit", label: "Pit", icon: "pit" },
@@ -279,8 +286,15 @@ export class LevelEditor {
   private noticeTimer = 0;
   private readonly confirmRoot: HTMLElement;
   private readonly confirmTitle: HTMLElement;
+  private readonly confirmBody: HTMLElement;
   private readonly confirmOk: HTMLButtonElement;
+  private readonly undoBtn: HTMLButtonElement;
+  private readonly redoBtn: HTMLButtonElement;
   private boardConfirm: BoardConfirm | null = null;
+  private pendingRemoveFloor = 0;
+  private past: HistoryEntry[] = [];
+  private future: HistoryEntry[] = [];
+  private historyOpen = false;
 
   constructor(root: HTMLElement, callbacks: EditorCallbacks) {
     installCrumblePreviewCss();
@@ -320,62 +334,16 @@ export class LevelEditor {
                 <nav class="${styles.floorNav}" data-floors role="tablist" aria-label="Floors"></nav>
               </section>
               <section class="${styles.panel} ${styles.toolsPanel}">
-                <label class="${styles.themeField}">
-                  <select class="${styles.themeSelect}" data-theme-select aria-label="Floor theme"></select>
-                </label>
-                <div class="${styles.settingsField}" data-settings>
-                  <button
-                    type="button"
-                    class="${styles.settingsTrigger}"
-                    data-settings-open
-                    aria-haspopup="dialog"
-                    aria-expanded="false"
-                    aria-controls="editor-floor-settings"
-                  >Settings</button>
-                  <div
-                    class="${styles.settingsPanel}"
-                    id="editor-floor-settings"
-                    data-settings-panel
-                    hidden
-                    role="dialog"
-                    aria-label="Floor settings"
-                  >
-                    <label class="${styles.settingsToggle}">
-                      <span>Custom physics</span>
-                      <input type="checkbox" data-physics-enable aria-label="Custom physics for this floor" />
-                      <span class="${styles.switch}" aria-hidden="true"></span>
-                    </label>
-                    <div class="${styles.physicsFields}" data-physics-fields></div>
-                  </div>
-                </div>
                 <h2 class="${styles.panelTitle}">Tools</h2>
                 <div class="${styles.palette}" role="list" aria-label="Tools" data-palette></div>
-                <div class="${styles.hint}" data-hint aria-live="polite">
-                  <p class="${styles.hintTitle}" data-hint-title></p>
-                  <p class="${styles.hintBody}" data-hint-body></p>
-                </div>
               </section>
             </div>
           </aside>
           <div class="${styles.stage}">
             <header class="${styles.stageBar}">
-              <div class="${styles.sizes}" data-sizes>
-                <div class="${styles.size}">
-                  <span class="${styles.label}">Cols</span>
-                  <div class="${styles.stepper}">
-                    <button type="button" class="glass-btn ${styles.step}" data-axis="cols" data-delta="-1" aria-label="Fewer columns">${iconSvg("minus")}</button>
-                    <span class="${styles.count}" data-cols>7</span>
-                    <button type="button" class="glass-btn ${styles.step}" data-axis="cols" data-delta="1" aria-label="More columns">${iconSvg("plus")}</button>
-                  </div>
-                </div>
-                <div class="${styles.size}">
-                  <span class="${styles.label}">Rows</span>
-                  <div class="${styles.stepper}">
-                    <button type="button" class="glass-btn ${styles.step}" data-axis="rows" data-delta="-1" aria-label="Fewer rows">${iconSvg("minus")}</button>
-                    <span class="${styles.count}" data-rows>7</span>
-                    <button type="button" class="glass-btn ${styles.step}" data-axis="rows" data-delta="1" aria-label="More rows">${iconSvg("plus")}</button>
-                  </div>
-                </div>
+              <div class="${styles.stageHistory}">
+                <button type="button" class="glass-pill ${styles.headBtn}" data-undo title="Undo (Ctrl+Z)" disabled>Undo</button>
+                <button type="button" class="glass-pill ${styles.headBtn}" data-redo title="Redo (Ctrl+Shift+Z)" disabled>Redo</button>
               </div>
               <div class="${styles.stageActions}">
                 <button type="button" class="glass-pill ${styles.headBtn}" data-paste title="Paste a model into the editor">${iconSvg("paste")}Paste</button>
@@ -388,8 +356,60 @@ export class LevelEditor {
             </header>
             <div class="${styles.stageBody}">
               <div class="${styles.stageTop}">
-                <button type="button" class="${styles.stageBtn}" data-random>Random</button>
-                <button type="button" class="${styles.stageBtn}" data-clear>Clear</button>
+                <div class="${styles.stageTopGroup}">
+                  <label class="${styles.themeField}">
+                    <select class="${styles.themeSelect}" data-theme-select aria-label="Floor theme"></select>
+                  </label>
+                  <div class="${styles.settingsField}" data-settings>
+                    <button
+                      type="button"
+                      class="${styles.stageIconBtn}"
+                      data-settings-open
+                      aria-haspopup="dialog"
+                      aria-expanded="false"
+                      aria-controls="editor-floor-settings"
+                      aria-label="Floor settings"
+                      title="Settings"
+                    >${iconSvg("settings")}</button>
+                    <div
+                      class="${styles.settingsPanel}"
+                      id="editor-floor-settings"
+                      data-settings-panel
+                      hidden
+                      role="dialog"
+                      aria-label="Floor settings"
+                    >
+                      <label class="${styles.settingsToggle}">
+                        <span>Custom physics</span>
+                        <input type="checkbox" data-physics-enable aria-label="Custom physics for this floor" />
+                        <span class="${styles.switch}" aria-hidden="true"></span>
+                      </label>
+                      <div class="${styles.physicsFields}" data-physics-fields></div>
+                    </div>
+                  </div>
+                  <div class="${styles.sizes}" data-sizes>
+                    <div class="${styles.size}">
+                      <span class="${styles.label}">Cols</span>
+                      <div class="${styles.stepper}">
+                        <button type="button" class="glass-btn ${styles.step}" data-axis="cols" data-delta="-1" aria-label="Fewer columns">${iconSvg("minus")}</button>
+                        <span class="${styles.count}" data-cols>7</span>
+                        <button type="button" class="glass-btn ${styles.step}" data-axis="cols" data-delta="1" aria-label="More columns">${iconSvg("plus")}</button>
+                      </div>
+                    </div>
+                    <div class="${styles.size}">
+                      <span class="${styles.label}">Rows</span>
+                      <div class="${styles.stepper}">
+                        <button type="button" class="glass-btn ${styles.step}" data-axis="rows" data-delta="-1" aria-label="Fewer rows">${iconSvg("minus")}</button>
+                        <span class="${styles.count}" data-rows>7</span>
+                        <button type="button" class="glass-btn ${styles.step}" data-axis="rows" data-delta="1" aria-label="More rows">${iconSvg("plus")}</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="${styles.stageTopGroup}">
+                  <button type="button" class="${styles.stageBtn}" data-random>Random</button>
+                  <button type="button" class="${styles.stageBtn}" data-clear>Clear</button>
+                </div>
               </div>
               <div class="${styles.boardWrap}" data-board-wrap>
                 <div class="${styles.sheet}" data-sheet data-theme="${DEFAULT_FLOOR_THEME}">
@@ -408,6 +428,10 @@ export class LevelEditor {
                 </div>
                 <div class="${styles.tileMenu}" data-tile-menu hidden role="menu" aria-label="Place tile"></div>
               </div>
+              <div class="${styles.toast}" data-hint hidden aria-live="polite">
+                <p class="${styles.toastTitle}" data-hint-title></p>
+                <p class="${styles.toastBody}" data-hint-body></p>
+              </div>
             </div>
           </div>
         </div>
@@ -422,7 +446,7 @@ export class LevelEditor {
           aria-describedby="editor-confirm-body"
         >
           <p class="${styles.confirmTitle}" id="editor-confirm-title" data-confirm-title></p>
-          <p class="${styles.confirmBody}" id="editor-confirm-body">This will clear all changes to the board.</p>
+          <p class="${styles.confirmBody}" id="editor-confirm-body" data-confirm-body></p>
           <div class="${styles.confirmActions}">
             <button type="button" class="glass-pill ${styles.confirmCancel}" data-confirm-cancel>Cancel</button>
             <button type="button" class="glass-pill metal-ring ${styles.confirmOk}" data-confirm-ok>Confirm</button>
@@ -460,7 +484,10 @@ export class LevelEditor {
     this.tileMenu = this.require("[data-tile-menu]");
     this.confirmRoot = this.require("[data-confirm]");
     this.confirmTitle = this.require("[data-confirm-title]");
+    this.confirmBody = this.require("[data-confirm-body]");
     this.confirmOk = this.require("[data-confirm-ok]");
+    this.undoBtn = this.require("[data-undo]");
+    this.redoBtn = this.require("[data-redo]");
     this.mountPalette();
     this.mountTileMenu();
     this.mountThemes();
@@ -472,6 +499,12 @@ export class LevelEditor {
     });
     this.require("[data-random]").addEventListener("click", () => {
       this.openBoardConfirm("random");
+    });
+    this.undoBtn.addEventListener("click", () => {
+      this.undo();
+    });
+    this.redoBtn.addEventListener("click", () => {
+      this.redo();
     });
     this.require("[data-confirm-scrim]").addEventListener("click", () => {
       this.hideBoardConfirm();
@@ -522,7 +555,7 @@ export class LevelEditor {
         return;
       }
       if (index === "remove") {
-        this.removeFloorAt(Number(button.dataset.index));
+        this.openBoardConfirm("remove-floor", Number(button.dataset.index));
         return;
       }
       this.selectFloor(Number(index));
@@ -626,6 +659,7 @@ export class LevelEditor {
     }
     this.floorIndex = 0;
     this.brush = "move";
+    this.resetHistory();
     this.syncName();
     this.syncSize();
     this.syncFloors();
@@ -652,7 +686,7 @@ export class LevelEditor {
     this.hideSettingsPanel();
     this.hideBoardConfirm();
     this.hideGap();
-    this.clearNotice();
+    this.hideToast();
     delete this.chrome.dataset.dragging;
     delete this.root.dataset.phase;
     this.root.hidden = true;
@@ -668,11 +702,27 @@ export class LevelEditor {
     this.callbacks.onClose();
   };
 
-  private openBoardConfirm(kind: BoardConfirm): void {
+  private openBoardConfirm(kind: BoardConfirm, removeIndex?: number): void {
     if (this.pairing()) return;
+    if (kind === "remove-floor") {
+      if (this.mode === "campaign") return;
+      const index = removeIndex ?? this.floorIndex;
+      if (!Number.isInteger(index) || this.tower.floors.length <= FLOOR_MIN) return;
+      if (index < 0 || index >= this.tower.floors.length) return;
+      this.pendingRemoveFloor = index;
+      this.confirmTitle.textContent = "Remove this floor?";
+      this.confirmBody.textContent = `This will delete ${floorName(index)} from the tower.`;
+      this.confirmOk.textContent = "Remove";
+    } else if (kind === "clear") {
+      this.confirmTitle.textContent = "Clear the board?";
+      this.confirmBody.textContent = "This will clear all changes to the board.";
+      this.confirmOk.textContent = "Clear";
+    } else {
+      this.confirmTitle.textContent = "Randomize the board?";
+      this.confirmBody.textContent = "This will replace the board with a new maze.";
+      this.confirmOk.textContent = "Random";
+    }
     this.boardConfirm = kind;
-    this.confirmTitle.textContent = kind === "clear" ? "Clear the board?" : "Randomize the board?";
-    this.confirmOk.textContent = kind === "clear" ? "Clear" : "Random";
     this.confirmRoot.hidden = false;
     this.confirmOk.focus();
   }
@@ -684,13 +734,92 @@ export class LevelEditor {
 
   private commitBoardConfirm(): void {
     const kind = this.boardConfirm;
+    const removeIndex = this.pendingRemoveFloor;
     this.hideBoardConfirm();
     if (kind === "clear") this.clearBoard();
     else if (kind === "random") this.randomizeBoard();
+    else if (kind === "remove-floor") this.removeFloorAt(removeIndex);
+  }
+
+  private resetHistory(): void {
+    this.past = [];
+    this.future = [];
+    this.historyOpen = false;
+    this.syncHistoryButtons();
+  }
+
+  /** Snapshot before a one-shot mutation (always starts a new undo step). */
+  private snapshot(): void {
+    this.historyOpen = false;
+    this.past.push({ tower: cloneTower(this.tower), floorIndex: this.floorIndex });
+    if (this.past.length > HISTORY_LIMIT) this.past.shift();
+    this.future = [];
+    this.syncHistoryButtons();
+  }
+
+  /** Snapshot once for a continuous gesture (paint stroke, wall drag, slider). */
+  private beginEdit(): void {
+    if (this.historyOpen) return;
+    this.snapshot();
+    this.historyOpen = true;
+  }
+
+  private endEdit(): void {
+    this.historyOpen = false;
+  }
+
+  private syncHistoryButtons(): void {
+    this.undoBtn.disabled = this.past.length === 0;
+    this.redoBtn.disabled = this.future.length === 0;
+  }
+
+  private undo(): void {
+    if (!this.isOpen() || this.boardConfirm || this.past.length === 0) return;
+    this.endEdit();
+    this.future.push({ tower: cloneTower(this.tower), floorIndex: this.floorIndex });
+    const entry = this.past.pop()!;
+    this.restoreHistory(entry);
+  }
+
+  private redo(): void {
+    if (!this.isOpen() || this.boardConfirm || this.future.length === 0) return;
+    this.endEdit();
+    this.past.push({ tower: cloneTower(this.tower), floorIndex: this.floorIndex });
+    const entry = this.future.pop()!;
+    this.restoreHistory(entry);
+  }
+
+  private restoreHistory(entry: HistoryEntry): void {
+    this.tower = cloneTower(entry.tower);
+    this.floorIndex = Math.min(entry.floorIndex, this.tower.floors.length - 1);
+    this.stroke = null;
+    this.wallDrag = null;
+    this.clearTileDrag();
+    this.hideTileMenu();
+    this.hideBoardConfirm();
+    this.hideSettingsPanel();
+    this.clearLineSelect();
+    this.hideGap();
+    this.brushHover = null;
+    this.boostMenuAt = null;
+    this.boostGesture = null;
+    const pair = this.pairing();
+    if (pair) this.brush = pair;
+    else if (this.brush === "warp" || this.brush === "switch") this.brush = "move";
+    this.syncName();
+    this.syncSize();
+    this.syncFloors();
+    this.syncPalette();
+    this.syncThemes();
+    this.syncPhysics();
+    this.renderBoard();
+    this.refreshHint();
+    this.syncHistoryButtons();
   }
 
   private clearBoard(): void {
     if (this.pairing()) return;
+    this.snapshot();
     clearInterior(this.draft);
     this.hideTileMenu();
     this.clearLineSelect();
@@ -699,6 +828,7 @@ export class LevelEditor {
 
   private randomizeBoard(): void {
     if (this.pairing()) return;
+    this.snapshot();
     const draft = this.draft;
     const theme = draft.theme;
     const physics = cloneFloorPhysics(draft.physics);
@@ -867,6 +997,10 @@ export class LevelEditor {
 
   private cancelPairing(): boolean {
     if (!this.pairing()) return false;
+    if (this.past.length > 0) {
+      this.undo();
+      return true;
+    }
     cancelPendingPair(this.draft);
     this.brush = "move";
     this.stroke = null;
@@ -883,6 +1017,7 @@ export class LevelEditor {
     const point = this.tileMenuAt;
     this.hideTileMenu();
     if (!point) return;
+    this.snapshot();
     if (kind === "clear") clearFloor(this.draft, point);
     else if (kind === "pit") setPit(this.draft, point, true);
     else if (kind === "boost") {
@@ -911,6 +1046,7 @@ export class LevelEditor {
   private pickBoostDir(dir: Direction): void {
     const point = this.tileMenuAt;
     if (!point) return;
+    this.snapshot();
     this.boostDir = dir;
     setBoost(this.draft, point, dir);
     this.hideTileMenu();
@@ -930,6 +1066,8 @@ export class LevelEditor {
   }
 
   private setTheme(theme: FloorThemeId): void {
+    if (this.draft.theme === theme) return;
+    this.snapshot();
     this.draft.theme = theme;
     this.syncThemes();
   }
@@ -981,6 +1119,7 @@ export class LevelEditor {
     this.settingsPanel.hidden = true;
     this.settingsOpen.setAttribute("aria-expanded", "false");
     delete this.settingsOpen.dataset.open;
+    this.endEdit();
   }
 
   private onSettingsPointerDown = (event: PointerEvent): void => {
@@ -991,6 +1130,7 @@ export class LevelEditor {
   };
 
   private setPhysicsEnabled(enabled: boolean): void {
+    this.snapshot();
     if (enabled) this.draft.physics = defaultFloorPhysics();
     else delete this.draft.physics;
     this.syncPhysics();
@@ -998,6 +1138,7 @@ export class LevelEditor {
 
   private setPhysicsValue(key: PhysicsSettingKey, value: number): void {
     const next = clampSetting(key, value);
+    this.beginEdit();
     const physics = this.draft.physics ?? defaultFloorPhysics();
     physics[key] = next;
     this.draft.physics = physics;
@@ -1027,13 +1168,15 @@ export class LevelEditor {
   private setBrush(kind: EditorTool): void {
     const pair = this.pairing();
     if (pair && kind !== pair) return;
+    const changed = this.brush !== kind;
     this.brush = kind;
     if (pair && this.brush !== pair) this.brush = pair;
     if (!this.hoverBrush()) this.brushHover = null;
     this.hideTileMenu();
     this.syncPalette();
     this.syncCells();
-    this.refreshHint();
+    if (changed && !this.pairing()) this.toastTool();
+    else this.refreshHint();
   }
 
   private commitName(): void {
@@ -1090,6 +1233,7 @@ export class LevelEditor {
   }
 
   private applyTower(tower: Tower): void {
+    this.snapshot();
     this.tower = cloneTower(tower);
     this.floorIndex = 0;
     this.stroke = null;
@@ -1110,38 +1254,56 @@ export class LevelEditor {
   }
 
   private flash(message: string): void {
-    this.setHint("", message);
-    window.clearTimeout(this.noticeTimer);
-    this.noticeTimer = window.setTimeout(() => {
-      this.noticeTimer = 0;
-      if (this.isOpen()) this.refreshHint();
-    }, 1600);
+    this.showToast("", message, 1600);
   }
 
-  private clearNotice(): void {
-    window.clearTimeout(this.noticeTimer);
-    this.noticeTimer = 0;
+  private toastTool(): void {
+    this.showToast(HINT_TITLE[this.brush], HINT_BRUSH[this.brush], 2400);
   }
 
-  private setHint(title: string, body: string): void {
+  private showToast(title: string, body: string, duration: number | "sticky" = 2400): void {
     this.hintTitle.textContent = title;
     this.hintTitle.hidden = !title;
     this.hintBody.textContent = body;
-    this.hint.hidden = !title && !body;
+    this.hint.hidden = false;
+    this.hint.dataset.phase = "out";
+    requestAnimationFrame(() => {
+      if (!this.isOpen() || this.hint.hidden) return;
+      this.hint.dataset.phase = "in";
+    });
+    window.clearTimeout(this.noticeTimer);
+    if (duration === "sticky") {
+      this.noticeTimer = 0;
+      return;
+    }
+    this.noticeTimer = window.setTimeout(() => {
+      this.noticeTimer = 0;
+      this.hideToast();
+    }, duration);
+  }
+
+  private hideToast(): void {
+    window.clearTimeout(this.noticeTimer);
+    this.noticeTimer = 0;
+    delete this.hint.dataset.phase;
+    this.hint.hidden = true;
   }
 
   private refreshHint(): void {
-    if (this.noticeTimer !== 0) return;
     const pair = this.pairing();
     if (pair === "warp") {
-      this.setHint(HINT_TITLE["warp-pair"], "Click two cells to link a warp. Click a warp to remove that end.");
+      this.showToast(
+        HINT_TITLE["warp-pair"],
+        "Click two cells to link a warp. Click a warp to remove that end.",
+        "sticky",
+      );
       return;
     }
     if (pair === "switch") {
-      this.setHint(HINT_TITLE["switch-pair"], "Click a wall to link. Esc cancels.");
+      this.showToast(HINT_TITLE["switch-pair"], "Click a wall to link. Esc cancels.", "sticky");
       return;
     }
-    this.setHint(HINT_TITLE[this.brush], HINT_BRUSH[this.brush]);
+    if (this.noticeTimer === 0) this.hideToast();
   }
 
   private get draft(): Maze {
@@ -1164,9 +1326,11 @@ export class LevelEditor {
     if (this.pairing()) return;
     if (kind === "col") {
       if (this.draft.cols >= MAZE_MAX) return;
+      this.snapshot();
       this.tower = insertFloorColumn(this.tower, this.floorIndex, at);
     } else {
       if (this.draft.rows >= MAZE_MAX) return;
+      this.snapshot();
       this.tower = insertFloorRow(this.tower, this.floorIndex, at);
     }
     this.clearLineSelect();
@@ -1177,6 +1341,7 @@ export class LevelEditor {
 
   private removeColumn(index: number): void {
     if (this.draft.cols <= MAZE_MIN) return;
+    this.snapshot();
     this.tower = deleteFloorColumn(this.tower, this.floorIndex, index);
     this.clearLineSelect();
     this.hideGap();
@@ -1186,6 +1351,7 @@ export class LevelEditor {
 
   private removeRow(index: number): void {
     if (this.draft.rows <= MAZE_MIN) return;
+    this.snapshot();
     this.tower = deleteFloorRow(this.tower, this.floorIndex, index);
     this.clearLineSelect();
     this.hideGap();
@@ -1244,6 +1410,7 @@ export class LevelEditor {
     this.lineDrag = null;
     delete this.chrome.dataset.dragging;
     if (drag.moved && drag.over !== drag.from) {
+      this.snapshot();
       if (drag.kind === "col") this.tower = moveFloorColumn(this.tower, this.floorIndex, drag.from, drag.over);
       else this.tower = moveFloorRow(this.tower, this.floorIndex, drag.from, drag.over);
       this.renderBoard();
@@ -1544,6 +1711,7 @@ export class LevelEditor {
 
   private changeFloors(delta: number): void {
     if (this.mode === "campaign" || this.pairing()) return;
+    this.snapshot();
     if (delta > 0) {
       this.tower = addFloor(this.tower);
       this.floorIndex = this.tower.floors.length - 1;
@@ -1606,6 +1774,7 @@ export class LevelEditor {
   private removeFloorAt(index: number): void {
     if (this.mode === "campaign" || this.pairing()) return;
     if (!Number.isInteger(index) || this.tower.floors.length <= FLOOR_MIN) return;
+    this.snapshot();
     this.tower = removeFloor(this.tower, index);
     this.floorIndex = Math.min(this.floorIndex, this.tower.floors.length - 1);
     this.clearLineSelect();
@@ -1646,6 +1815,7 @@ export class LevelEditor {
       button.setAttribute("aria-checked", String(on));
     }
     this.syncFloorLocks(pairing !== null);
+    this.syncHistoryButtons();
     this.board.dataset.brush = this.brush;
     if (pairing) this.board.dataset.pairing = pairing;
     else delete this.board.dataset.pairing;
@@ -1688,6 +1858,7 @@ export class LevelEditor {
 
   private changeMaxHearts(delta: number): void {
     if (!Number.isFinite(delta) || delta === 0) return;
+    this.snapshot();
     setMaxHearts(this.tower, maxHeartsOf(this.tower) + delta);
     this.syncHeartNeed();
   }
@@ -1936,6 +2107,7 @@ export class LevelEditor {
     if (pair === "switch") {
       const wall = elementAt(event.clientX, event.clientY, "data-wall");
       if (wall?.dataset.link === "true") {
+        this.snapshot();
         this.stroke = "close";
         this.bindSwitch(wall);
         if (!pendingSwitch(this.draft)) this.brush = "move";
@@ -2149,14 +2321,19 @@ export class LevelEditor {
     this.boostMenuAt = null;
     this.boostGesture = null;
     if (drag && drag.moved) {
-      if (this.canDropAt(drag.over, drag.lift)) this.commitLift(drag.from, drag.over, drag.lift);
+      if (this.canDropAt(drag.over, drag.lift)) {
+        this.snapshot();
+        this.commitLift(drag.from, drag.over, drag.lift);
+      }
       this.clearTileDrag();
       this.syncCells();
       this.syncWalls();
+      this.endEdit();
       return;
     }
     const clickAt = drag?.from ?? (!hadWallDrag && !hadStroke ? this.cellAt(event.clientX, event.clientY) : null);
     this.clearTileDrag();
+    this.endEdit();
     if (boostGesture === "paint" && boostMenuAt && this.brush === "boost" && !this.pairing()) {
       this.openBoostDirMenu(boostMenuAt);
       return;
@@ -2185,6 +2362,7 @@ export class LevelEditor {
         const c = Number(wall.dataset.c);
         const r = Number(wall.dataset.r);
         if (Number.isInteger(c) && Number.isInteger(r) && interiorClosed(this.draft, axis, c, r)) {
+          this.beginEdit();
           setInteriorWall(this.draft, axis, c, r, false);
           this.syncCells();
           this.syncWalls();
@@ -2193,6 +2371,7 @@ export class LevelEditor {
       }
       const point = this.cellAt(x, y);
       if (!point) return;
+      this.beginEdit();
       clearFloor(this.draft, point);
       this.syncCells();
       this.syncWalls();
@@ -2208,6 +2387,7 @@ export class LevelEditor {
     if (brush === "switch") {
       const wall = elementAt(x, y, "data-wall");
       if (wall) {
+        this.beginEdit();
         this.stroke = "close";
         this.bindSwitch(wall);
         this.syncCells();
@@ -2225,6 +2405,7 @@ export class LevelEditor {
         this.stroke = "close";
         return;
       }
+      this.beginEdit();
       if (this.boostGesture === null && existing?.kind === "boost") {
         const next = NEXT_DIR[existing.dir];
         this.boostDir = next;
@@ -2241,6 +2422,7 @@ export class LevelEditor {
       this.syncWalls();
       return;
     }
+    this.beginEdit();
     if (brush === "warp" || brush === "switch") this.stroke = "close";
     if (brush === "pit") setPit(this.draft, point, true);
     else if (brush === "ice") setIce(this.draft, point);
@@ -2348,6 +2530,7 @@ export class LevelEditor {
     const c = Number(wall.dataset.c);
     const r = Number(wall.dataset.r);
     if (!Number.isInteger(c) || !Number.isInteger(r)) return;
+    this.beginEdit();
     this.stroke = interiorClosed(this.draft, axis, c, r) ? "open" : "close";
     this.wallDrag = {
       axis,
@@ -2437,8 +2620,22 @@ export class LevelEditor {
       return;
     }
     const meta = event.metaKey || event.ctrlKey;
-    if (!meta || event.altKey || event.shiftKey) return;
+    if (!meta || event.altKey) return;
     const key = event.key.toLowerCase();
+    if (key === "z") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.shiftKey) this.redo();
+      else this.undo();
+      return;
+    }
+    if (key === "y" && !event.shiftKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.redo();
+      return;
+    }
+    if (event.shiftKey) return;
     if (key === "c") {
       event.preventDefault();
       event.stopPropagation();

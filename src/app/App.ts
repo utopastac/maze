@@ -209,7 +209,10 @@ export class App {
       onNewGame: () => this.beginCampaignNew(),
       onLoad: (save) => this.beginCampaignLoad(save),
       onPractice: () => this.openPracticeSelect(),
-      onBack: () => this.goHome(),
+      onBack: () => {
+        if (this.intro.isModal()) this.closeTowerLoadModal();
+        else this.goHome();
+      },
     });
     this.canvas.addEventListener("pointerdown", this.onPointerDown);
     this.canvas.addEventListener("pointermove", this.onPointerMove);
@@ -330,6 +333,8 @@ export class App {
     }
 
     if (route.kind === "tower") {
+      // Stay on the home shell so the storm viewport + HUD stay visible.
+      this.setShellScreen("home");
       this.openTowerScreen();
       return;
     }
@@ -438,39 +443,57 @@ export class App {
     }
     this.setShellScreen("home");
     this.home.show();
-    this.view?.enterHomeBackdrop();
+    this.home.setMode("main");
+    if (this.view?.isHomeBackdrop()) this.view.setHomeView("menu");
+    else this.view?.enterHomeBackdrop();
     this.playHud.setVisible(true);
     this.playHud.setHomeMenu(true);
+    this.playHud.setHomeMenuMode("main");
     this.playHudCanvas.style.cursor = "default";
   }
 
   private closeHome(shatter = false): void {
     if (!this.home.isOpen()) return;
+    this.closeTowerLoadModal();
     if (shatter && this.playHud.isHomeMenuOpen()) this.playHud.shatterHomeMenu();
     else this.playHud.setHomeMenu(false);
     this.home.hide();
     this.playHud.setHomeHover(null);
     this.playHudCanvas.style.cursor = "";
-    if (this.route.kind !== "home") this.view?.leaveHomeBackdrop();
+    if (this.route.kind !== "home" && this.route.kind !== "tower") {
+      this.view?.leaveHomeBackdrop();
+    }
   }
 
   private pickHome(action: PlayHudHomeAction): void {
     if (!this.home.isOpen()) return;
-    this.closeHome(true);
     switch (action) {
       case "tower":
         this.setRoute({ kind: "tower" });
         break;
+      case "towerNew":
+        this.beginCampaignNew();
+        break;
+      case "towerLoad":
+        this.openTowerLoadModal();
+        break;
+      case "towerBack":
+        this.goHome();
+        break;
       case "play":
+        this.closeHome(true);
         this.setRoute({ kind: "play" });
         break;
       case "create":
+        this.closeHome(true);
         this.setRoute({ kind: "create" });
         break;
       case "saved":
+        this.closeHome(true);
         this.setRoute({ kind: "saved" });
         break;
       case "settings":
+        this.closeHome(true);
         this.setRoute({ kind: "settings" });
         break;
     }
@@ -542,15 +565,14 @@ export class App {
     this.seconds = 0;
     this.drops = 0;
     this.running = false;
-    this.awaitingStart = this.mode !== "campaign";
+    this.awaitingStart = true;
     this.browsingWins = false;
     this.tilt.snap();
     this.overlay.hide();
     this.hud.setCelebrate(false);
     this.hud.setWinsSelected(false);
     this.hud.setWinGallery(false);
-    if (this.awaitingStart) this.hud.hideHint();
-    else this.hud.showHint();
+    this.hud.hideHint();
     this.clearShareNote();
     this.hud.setNote("");
     this.hud.setStats(0, 0);
@@ -603,23 +625,45 @@ export class App {
 
   private openTowerScreen(): void {
     this.closeAllMenus(false);
-    this.closeHome(false);
-    this.parkWorld();
-    this.playHud.setVisible(false);
-    this.setShellScreen("tower");
-    this.intro.show();
+    this.closeTowerLoadModal();
+    if (!this.home.isOpen() || !this.view?.isHomeBackdrop()) {
+      this.parkWorld();
+      this.home.show();
+      this.view?.enterHomeBackdrop();
+    }
+    // Keep the storm viewport/HUD visible — Tower is an in-world camera beat.
+    this.setShellScreen("home");
+    this.home.setMode("tower");
+    this.view?.setHomeView("tower");
+    this.playHud.setVisible(true);
+    this.playHud.setHomeMenu(true);
+    this.playHud.setHomeMenuMode("tower");
+    this.playHudCanvas.style.cursor = "default";
   }
 
   private closeTowerIntro(returnHome = true): void {
     if (!this.intro.isOpen()) return;
+    const wasModal = this.intro.isModal();
     this.intro.hide();
+    if (wasModal) return;
     if (returnHome && this.route.kind === "tower") {
       this.goHome();
     }
   }
 
+  private openTowerLoadModal(): void {
+    this.intro.showLoadModal();
+  }
+
+  private closeTowerLoadModal(): void {
+    if (!this.intro.isModal()) return;
+    this.intro.hide();
+  }
+
   private beginCampaignNew(): void {
-    this.closeTowerIntro(false);
+    this.closeTowerLoadModal();
+    this.closeHome(true);
+    this.view?.leaveHomeBackdrop();
     this.playReturn = null;
     this.campaignSaveId = null;
     this.lives = CAMPAIGN_LIVES;
@@ -632,7 +676,9 @@ export class App {
   }
 
   private beginCampaignLoad(save: CampaignProgress): void {
-    this.closeTowerIntro(false);
+    this.closeTowerLoadModal();
+    this.closeHome(true);
+    this.view?.leaveHomeBackdrop();
     const fresh = loadCampaignProgress(save.id) ?? save;
     this.resumeCampaign(fresh);
   }
@@ -1629,13 +1675,13 @@ export class App {
   }
 
   private onHomePointerDown = (event: PointerEvent): void => {
-    if (event.button !== 0 || !this.home.isOpen()) return;
+    if (event.button !== 0 || !this.home.isOpen() || this.intro.isOpen()) return;
     const action = this.playHud.hitTestHome(event.clientX, event.clientY);
     if (action) this.pickHome(action);
   };
 
   private onHomePointerMove = (event: PointerEvent): void => {
-    if (!this.home.isOpen()) return;
+    if (!this.home.isOpen() || this.intro.isOpen()) return;
     const action = this.playHud.hitTestHome(event.clientX, event.clientY);
     this.playHud.setHomeHover(action);
     this.playHudCanvas.style.cursor = action ? "pointer" : "default";
@@ -1704,13 +1750,15 @@ export class App {
       || this.settingsOverlay
     ) {
       if (event.key.toLowerCase() === "escape") {
-        // Nested first: settings → pause → other menus → home destinations.
+        // Nested first: settings → pause → load modal → tower submenu → other menus.
         if (this.panel.isOpen() || this.settingsOverlay) this.leaveSettings();
         else if (this.pause.isOpen()) this.closePause();
         else if (this.picker.isOpen()) this.closeLevelSelect();
         else if (this.library.isOpen()) this.closeSavedLevels();
         else if (this.editor.isOpen()) this.finishEditing();
+        else if (this.intro.isModal()) this.closeTowerLoadModal();
         else if (this.intro.isOpen()) this.closeTowerIntro();
+        else if (this.home.isOpen() && this.playHud.homeMenuModeOf() === "tower") this.goHome();
       }
       return;
     }

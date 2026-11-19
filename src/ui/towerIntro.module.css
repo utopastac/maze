@@ -16,6 +16,23 @@
   pointer-events: none;
   transition: opacity 0.28s ease;
 
+  &[data-mode="modal"] {
+    z-index: 12;
+    align-items: center;
+    background: color-mix(in srgb, var(--maze-void) 55%, transparent);
+    backdrop-filter: blur(6px);
+
+    & .page {
+      width: min(440px, 100%);
+      max-height: min(72vh, 560px);
+      padding: 8px 10px 12px;
+      border: 1px solid var(--glass-border);
+      border-radius: calc(var(--control-radius) + 6px);
+      background: color-mix(in srgb, var(--panel-fill) 88%, transparent);
+      box-shadow: var(--panel-shadow);
+    }
+  }
+
   &[data-phase="in"] {
     opacity: 1;
     pointer-events: auto;

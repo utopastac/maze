@@ -113,7 +113,17 @@ export type PlayHudStartGate = {
   coins: number;
 };
 
-export type PlayHudHomeAction = "tower" | "play" | "create" | "saved" | "settings";
+export type PlayHudHomeAction =
+  | "tower"
+  | "play"
+  | "create"
+  | "saved"
+  | "settings"
+  | "towerNew"
+  | "towerLoad"
+  | "towerBack";
+
+export type PlayHudHomeMenuMode = "main" | "tower";
 
 type HomeHit = {
   action: PlayHudHomeAction;
@@ -131,12 +141,21 @@ const HOME_ACTIONS: readonly PlayHudHomeAction[] = [
   "settings",
 ];
 
+const TOWER_HOME_ACTIONS: readonly PlayHudHomeAction[] = [
+  "towerNew",
+  "towerLoad",
+  "towerBack",
+];
+
 const HOME_LABELS: Record<PlayHudHomeAction, string> = {
   tower: "Tower",
   play: "Free play",
   create: "Create level",
   saved: "Saved levels",
   settings: "Settings",
+  towerNew: "New game",
+  towerLoad: "Load",
+  towerBack: "Back",
 };
 
 /**
@@ -188,6 +207,7 @@ export class PlayHud {
   private shown = false;
   private startGate = false;
   private homeMenu = false;
+  private homeMenuMode: PlayHudHomeMenuMode = "main";
   private startTitle = "";
   private startFloors = 1;
   private startLives: number | null = null;
@@ -366,10 +386,24 @@ export class PlayHud {
     if (!open) {
       this.homeHits = [];
       this.homeHover = null;
+      this.homeMenuMode = "main";
     }
     this.syncOverlayVisibility();
     this.layoutDirty = true;
     if (this.shown) this.paint(true);
+  }
+
+  /** Main title list vs. in-world Tower New/Load submenu. */
+  setHomeMenuMode(mode: PlayHudHomeMenuMode): void {
+    if (this.homeMenuMode === mode) return;
+    this.homeMenuMode = mode;
+    this.homeHover = null;
+    this.layoutDirty = true;
+    if (this.shown) this.paint(true);
+  }
+
+  homeMenuModeOf(): PlayHudHomeMenuMode {
+    return this.homeMenuMode;
   }
 
   /** Blow apart the start briefing, then hand off to the play HUD. */
@@ -545,12 +579,14 @@ export class PlayHud {
           this.homeTitlePlate.root.rotation.y = 0.04 + Math.sin(now * 0.0011) * 0.03;
           this.homeTitlePlate.root.rotation.x = -0.08 + Math.sin(now * 0.0009) * 0.02;
         }
+        const homeActions = this.homeMenuMode === "tower" ? TOWER_HOME_ACTIONS : HOME_ACTIONS;
         for (let i = 0; i < this.homeBtnRows.length; i += 1) {
           const row = this.homeBtnRows[i];
-          const action = HOME_ACTIONS[i];
-          if (!row || !action) continue;
+          const action = homeActions[i];
+          if (!row) continue;
+          if (!action || !row.visible) continue;
           const baseY = (row.userData.baseY as number) ?? 0;
-          const primary = action === "tower";
+          const primary = action === "tower" || action === "towerNew";
           const hover = this.homeHover === action;
           const bob = primary
             ? Math.sin(now * 0.0032) * u * 1.4
@@ -1143,13 +1179,15 @@ export class PlayHud {
     this.homeScrim.scale.set(viewW * 1.2, viewH * 1.2, 1);
     this.homeScrim.position.set(cx, viewH * 0.5, -2);
 
+    const actions = this.homeMenuMode === "tower" ? TOWER_HOME_ACTIONS : HOME_ACTIONS;
+    const titleText = this.homeMenuMode === "tower" ? "TOWER" : "MAZESPIRE";
     const rows: { height: number; after: number; place: (y: number) => void }[] = [];
     const titleH = HOME_TITLE_PX * u;
     if (!this.homeTitlePlate) {
-      this.homeTitlePlate = new ArchLabel("MAZESPIRE", "#ffffff", titleH);
+      this.homeTitlePlate = new ArchLabel(titleText, "#ffffff", titleH);
       this.homeLayer.add(this.homeTitlePlate.root);
     } else {
-      this.homeTitlePlate.set("MAZESPIRE", "#ffffff", titleH);
+      this.homeTitlePlate.set(titleText, "#ffffff", titleH);
     }
     rows.push({
       height: titleH,
@@ -1168,12 +1206,16 @@ export class PlayHud {
     const face = tokenColor("--ink", "#ffffff");
     const hits: HomeHit[] = [];
     let menuWidth = 0;
-    for (let i = 0; i < HOME_ACTIONS.length; i += 1) {
-      const action = HOME_ACTIONS[i];
+    for (let i = 0; i < this.homeBtnRows.length; i += 1) {
       const row = this.homeBtnRows[i];
-      if (!action || !row) continue;
+      if (!row) continue;
+      const action = actions[i];
+      if (!action) {
+        row.visible = false;
+        continue;
+      }
       const label = HOME_LABELS[action];
-      const primary = action === "tower";
+      const primary = action === "tower" || action === "towerNew";
       const fill = primary ? goal : face;
       let btn = this.homeBtns[i];
       if (!btn) {
@@ -1185,14 +1227,14 @@ export class PlayHud {
       }
       menuWidth = Math.max(menuWidth, btn.width);
       const index = i;
+      const act = action;
       rows.push({
         height: btnH,
-        after: index < HOME_ACTIONS.length - 1 ? btnGap : 0,
+        after: index < actions.length - 1 ? btnGap : 0,
         place: (y) => {
           const current = this.homeBtns[index];
           const slot = this.homeBtnRows[index];
-          const act = HOME_ACTIONS[index];
-          if (!current || !slot || !act) return;
+          if (!current || !slot) return;
           slot.visible = true;
           slot.userData.baseY = y;
           slot.position.set(cx, y, 4 + index * 0.05);
@@ -1339,11 +1381,13 @@ export class PlayHud {
     const goal = tokenHex("--maze-goal", "#ffbc61");
     const ink = tokenHex("--maze-void", "#000000");
     const face = tokenHex("--ink", "#ffffff");
+    const actions = this.homeMenuMode === "tower" ? TOWER_HOME_ACTIONS : HOME_ACTIONS;
     for (let i = 0; i < this.homeBtns.length; i += 1) {
       const btn = this.homeBtns[i];
-      const action = HOME_ACTIONS[i];
-      if (!btn || !action) continue;
-      const primary = action === "tower";
+      const row = this.homeBtnRows[i];
+      const action = actions[i];
+      if (!btn || !action || !row?.visible) continue;
+      const primary = action === "tower" || action === "towerNew";
       this.shatterPlate(
         btn.root,
         btn.width,

@@ -65,7 +65,7 @@
 
 .body {
   display: grid;
-  grid-template-columns: minmax(360px, 460px) minmax(0, 1fr);
+  grid-template-columns: minmax(288px, 348px) minmax(0, 1fr);
   gap: 0;
   align-items: stretch;
   min-height: 0;
@@ -162,7 +162,7 @@
   grid-column: 1;
   grid-row: 2;
   display: grid;
-  grid-template-columns: minmax(132px, 0.85fr) minmax(200px, 1.15fr);
+  grid-template-columns: minmax(0, 1fr) 132px;
   min-height: 0;
   overflow: hidden;
 }
@@ -193,7 +193,8 @@
 }
 
 .toolsPanel {
-  gap: 12px;
+  gap: 8px;
+  padding: 10px 8px;
 }
 
 .root[data-mode="campaign"] .sideCols {
@@ -308,6 +309,11 @@
   height: 36px;
   padding: 0 14px;
   font-size: 14px;
+
+  &:disabled {
+    opacity: 0.32;
+    cursor: default;
+  }
 }
 
 button.close {
@@ -321,18 +327,21 @@ button.close {
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-start;
-  gap: 10px 20px;
+  gap: 8px 14px;
+  margin-left: 4px;
+  padding-left: 12px;
+  border-left: 1px solid var(--glass-border);
 }
 
 .size {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .label {
   color: var(--ink-faint);
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .stepper {
@@ -373,13 +382,18 @@ button.step {
   font-size: 13px;
   cursor: pointer;
 
+  &:disabled {
+    opacity: 0.32;
+    cursor: default;
+  }
+
   &:focus-visible {
     outline: 1px solid var(--seam);
     outline-offset: 1px;
   }
 
   @media (hover: hover) and (pointer: fine) {
-    &:hover {
+    &:hover:not(:disabled) {
       color: var(--ink);
       background: color-mix(in srgb, var(--glass) 80%, var(--ink) 8%);
     }
@@ -388,8 +402,8 @@ button.step {
 
 .palette {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
 }
 
 button.swatch {
@@ -397,23 +411,29 @@ button.swatch {
   border: 1px solid var(--glass-border);
   border-radius: var(--control-radius);
   margin: 0;
-  min-height: 72px;
-  padding: 10px 8px;
+  min-height: 36px;
+  padding: 6px 8px;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
+  justify-content: flex-start;
+  gap: 8px;
   background: var(--glass);
   color: var(--ink);
   font: inherit;
   font-size: 12px;
+  text-align: left;
   cursor: pointer;
   user-select: none;
 
   & :is(svg) {
-    width: 22px;
-    height: 22px;
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+  }
+
+  & span {
+    min-width: 0;
   }
 
   &:disabled {
@@ -455,23 +475,23 @@ button.swatch {
   display: block;
 }
 
-.themeSelect,
-.settingsTrigger {
+.themeSelect {
   appearance: none;
   display: flex;
   align-items: center;
-  width: 100%;
-  height: 40px;
-  padding: 0 36px 0 14px;
+  width: auto;
+  min-width: 8.5rem;
+  height: 32px;
+  padding: 0 28px 0 12px;
   border: 1px solid var(--glass-border);
   border-radius: var(--control-radius);
   background:
-    linear-gradient(45deg, transparent 50%, var(--ink-faint) 50%) calc(100% - 14px) calc(50% - 2px) / 6px 6px no-repeat,
-    linear-gradient(135deg, var(--ink-faint) 50%, transparent 50%) calc(100% - 10px) calc(50% - 2px) / 6px 6px no-repeat,
+    linear-gradient(45deg, transparent 50%, var(--ink-faint) 50%) calc(100% - 12px) calc(50% - 2px) / 5px 5px no-repeat,
+    linear-gradient(135deg, var(--ink-faint) 50%, transparent 50%) calc(100% - 8px) calc(50% - 2px) / 5px 5px no-repeat,
     var(--glass);
-  color: var(--ink);
+  color: var(--ink-dim);
   font: inherit;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1;
   cursor: pointer;
 
@@ -479,16 +499,24 @@ button.swatch {
     outline: 1px solid var(--seam);
     outline-offset: 1px;
   }
-}
 
-.themeSelect {
+  @media (hover: hover) and (pointer: fine) {
+    &:hover {
+      color: var(--ink);
+      background:
+        linear-gradient(45deg, transparent 50%, var(--ink-faint) 50%) calc(100% - 12px) calc(50% - 2px) / 5px 5px no-repeat,
+        linear-gradient(135deg, var(--ink-faint) 50%, transparent 50%) calc(100% - 8px) calc(50% - 2px) / 5px 5px no-repeat,
+        color-mix(in srgb, var(--glass) 80%, var(--ink) 8%);
+    }
+  }
+
   @supports (appearance: base-select) {
     &,
     &::picker(select) {
       appearance: base-select;
     }
 
-    padding: 0 14px;
+    padding: 0 12px;
     background: var(--glass);
 
     &::picker-icon {
@@ -526,7 +554,7 @@ button.swatch {
       background: transparent;
       color: var(--ink);
       font: inherit;
-      font-size: 14px;
+      font-size: 13px;
       cursor: pointer;
     }
 
@@ -554,27 +582,56 @@ button.swatch {
   }
 }
 
-.settingsTrigger {
-  display: flex;
+.stageIconBtn {
+  appearance: none;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--control-radius);
+  margin: 0;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: inline-flex;
   align-items: center;
-  text-align: left;
+  justify-content: center;
+  background: var(--glass);
+  color: var(--ink-dim);
+  font: inherit;
+  cursor: pointer;
+
+  & :is(svg) {
+    width: 16px;
+    height: 16px;
+  }
+
+  &:focus-visible {
+    outline: 1px solid var(--seam);
+    outline-offset: 1px;
+  }
 
   &[data-open="true"] {
     color: var(--seam);
     border-color: color-mix(in srgb, var(--seam) 55%, transparent);
-    background:
-      linear-gradient(45deg, transparent 50%, var(--seam) 50%) calc(100% - 14px) calc(50% - 2px) / 6px 6px no-repeat,
-      linear-gradient(135deg, var(--seam) 50%, transparent 50%) calc(100% - 10px) calc(50% - 2px) / 6px 6px no-repeat,
-      color-mix(in srgb, var(--glass) 70%, var(--seam) 12%);
+    background: color-mix(in srgb, var(--glass) 70%, var(--seam) 12%);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    &:hover {
+      color: var(--ink);
+      background: color-mix(in srgb, var(--glass) 80%, var(--ink) 8%);
+    }
+
+    &[data-open="true"]:hover {
+      background: color-mix(in srgb, var(--glass) 70%, var(--seam) 12%);
+    }
   }
 }
 
 .settingsPanel {
   position: absolute;
-  z-index: 5;
+  z-index: 6;
   top: calc(100% + 4px);
   left: 0;
-  right: 0;
+  width: 240px;
   display: grid;
   gap: 12px;
   padding: 12px;
@@ -689,6 +746,13 @@ button.swatch {
   box-sizing: border-box;
 }
 
+.stageHistory {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
 .stageActions {
   display: flex;
   align-items: center;
@@ -711,16 +775,24 @@ button.swatch {
   position: absolute;
   z-index: 5;
   top: 12px;
+  left: 12px;
   right: 12px;
   display: flex;
-  align-items: center;
-  justify-content: flex-end;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: 8px;
   pointer-events: none;
 
-  & .stageBtn {
+  & :is(.stageBtn, .stageIconBtn, .themeField, .settingsField, .sizes) {
     pointer-events: auto;
   }
+}
+
+.stageTopGroup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .confirm {
@@ -804,7 +876,7 @@ button.swatch {
   width: 100%;
   display: grid;
   place-items: center;
-  padding: 44px 16px 16px;
+  padding: 56px 16px 16px;
   box-sizing: border-box;
 }
 
@@ -1884,26 +1956,46 @@ button.tileMenuItem {
   }
 }
 
-.hint {
-  margin-top: auto;
-  padding: 12px;
+.toast {
+  position: absolute;
+  z-index: 7;
+  left: 50%;
+  bottom: 16px;
+  width: min(360px, calc(100% - 24px));
+  padding: 12px 14px;
   border: 1px solid var(--glass-border);
   border-radius: var(--control-radius);
-  background: color-mix(in srgb, var(--glass) 80%, var(--ink) 4%);
+  background: var(--panel-fill);
+  box-shadow: var(--panel-shadow);
   display: grid;
-  gap: 6px;
+  gap: 4px;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, 10px);
+  transition:
+    opacity 0.18s ease,
+    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+
+  &[data-phase="in"] {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+
+  &[hidden] {
+    display: none;
+  }
 }
 
-.hintTitle {
+.toastTitle {
   margin: 0;
   color: var(--seam);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
-.hintBody {
+.toastBody {
   margin: 0;
   color: var(--ink-dim);
   font-size: 13px;

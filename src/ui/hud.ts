@@ -77,7 +77,7 @@ export class Hud {
         <div class="${styles.winHead}">
           <div>
             <p class="${styles.winTitle}">Victory screens</p>
-            <p class="${styles.winMeta}" data-win-meta>1 / 15 · [ ]</p>
+            <p class="${styles.winMeta}" data-win-meta>1 / 16 · [ ]</p>
           </div>
           <button type="button" class="glass-btn ${styles.winClose}" data-win-close aria-label="Close victory screens" title="Close">${iconSvg("close")}</button>
         </div>

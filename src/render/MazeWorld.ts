@@ -188,6 +188,12 @@ export class MazeWorld {
   private failed = false;
   private homeBackdrop = false;
   private homeOrbit = 0;
+  private homeView: "menu" | "tower" = "menu";
+  private homeViewBlend = 1;
+  private readonly homeViewFromEye = new Vector3();
+  private readonly homeViewFromLook = new Vector3();
+  private readonly homeViewEye = new Vector3();
+  private readonly homeViewLook = new Vector3();
   private lightningCooldown = 1.2;
   private lightningFlash = 0;
   private lightningLight: PointLight | null = null;
@@ -643,7 +649,7 @@ export class MazeWorld {
 
   cycleWinScene(step = 1): boolean {
     if (!this.escaped) return false;
-    const count = WIN_SCENES.length;
+    const count = GALLERY_SCENES.length;
     this.winSceneIndex = ((this.winSceneIndex + step) % count + count) % count;
     this.applyWinScene(this.winSceneIndex);
     return true;
@@ -651,7 +657,7 @@ export class MazeWorld {
 
   setWinScene(index: number): boolean {
     if (!this.escaped) return false;
-    const count = WIN_SCENES.length;
+    const count = GALLERY_SCENES.length;
     if (count <= 0) return false;
     this.winSceneIndex = ((index % count) + count) % count;
     this.applyWinScene(this.winSceneIndex);
@@ -693,6 +699,8 @@ export class MazeWorld {
     this.escaped = true;
     this.failed = false;
     this.homeBackdrop = true;
+    this.homeView = "menu";
+    this.homeViewBlend = 1;
     this.homeOrbit = 0.55; // start on a corner so the pyramid taper reads clearly
     this.lightningCooldown = 0.6 + Math.random() * 1.4;
     this.ball.visible = false;
@@ -722,6 +730,8 @@ export class MazeWorld {
   leaveHomeBackdrop(): void {
     if (!this.homeBackdrop) return;
     this.homeBackdrop = false;
+    this.homeView = "menu";
+    this.homeViewBlend = 1;
     this.escaped = false;
     this.failed = false;
     this.meadowCamLive = false;
@@ -742,12 +752,34 @@ export class MazeWorld {
     this.syncVoidSky(this.lastTime);
   }
 
+  /** Crane between the title low-angle and the summit Tower menu shot. */
+  setHomeView(mode: "menu" | "tower"): void {
+    if (!this.homeBackdrop) return;
+    if (this.homeView === mode && this.homeViewBlend >= 1) return;
+    this.homeViewFromEye.copy(this.camera.position);
+    this.homeViewFromLook.copy(this.meadowCamLook);
+    this.homeView = mode;
+    this.homeViewBlend = this.reduceMotion ? 1 : 0;
+    this.placeCamera();
+  }
+
+  homeViewMode(): "menu" | "tower" {
+    return this.homeView;
+  }
+
   /** Tick rain, lightning, and orbit camera while the title backdrop is up. */
   updateHome(time: number): void {
     if (!this.homeBackdrop) return;
     const dt = Math.min(0.05, Math.max(0, time - this.lastTime));
     this.lastTime = time;
-    if (!this.reduceMotion) this.homeOrbit += dt * 0.09;
+    if (!this.reduceMotion) {
+      this.homeOrbit += dt * (this.homeView === "tower" ? 0.045 : 0.09);
+      if (this.homeViewBlend < 1) {
+        this.homeViewBlend = Math.min(1, this.homeViewBlend + dt / 1.15);
+      }
+    } else {
+      this.homeViewBlend = 1;
+    }
     this.tickLightning(dt);
     this.tickRain(dt);
     this.syncVoidSky(time);
@@ -759,22 +791,31 @@ export class MazeWorld {
   }
 
   winGalleryScenes(): readonly string[] {
-    return WIN_SCENES;
+    return GALLERY_SCENES;
   }
 
   winGalleryStatus(): { index: number; count: number; name: string } {
-    const count = WIN_SCENES.length;
+    const count = GALLERY_SCENES.length;
     const index = ((this.winSceneIndex % count) + count) % count;
     return {
       index,
       count,
-      name: WIN_SCENES[index] ?? "pasture",
+      name: GALLERY_SCENES[index] ?? "pasture",
     };
   }
 
   private applyWinScene(index: number): void {
-    const scene = WIN_SCENES[index] ?? "pasture";
-    this.buildWinScene(scene);
+    const count = GALLERY_SCENES.length;
+    const safe = ((index % count) + count) % count;
+    this.winSceneIndex = safe;
+    const scene = GALLERY_SCENES[safe] ?? "pasture";
+    if (scene === "fail") {
+      this.failed = true;
+      this.buildFailScene();
+    } else {
+      this.failed = false;
+      this.buildWinScene(scene);
+    }
     this.scene.background = this.voidSky.texture;
     this.syncVoidSky(this.lastTime);
   }
@@ -2212,22 +2253,221 @@ export class MazeWorld {
     carpet.receiveShadow = organicProps;
     group.add(carpet);
 
-    const rim = span * 0.34;
-    for (let i = 0; i < 7; i += 1) {
-      const a = i * 1.85 + 0.4;
-      const rock = new Mesh(
-        new BoxGeometry(0.14 + (i % 3) * 0.05, 0.08 + (i % 2) * 0.04, 0.12 + (i % 4) * 0.03),
-        i % 2 === 0 ? this.groundMats.failCrack : this.groundMats.failGround,
-      );
-      rock.position.set(Math.cos(a) * rim * 0.85, 0.06, Math.sin(a) * rim * 0.7);
-      rock.rotation.y = a * 0.4;
-      group.add(rock);
-    }
-
+    this.addFailRubble(group, span);
+    this.addFailDeadTrees(group, span);
+    this.addFailGraves(group, span);
+    this.addFailSkull(group, span);
+    this.addFailBones(group, span);
+    this.addFailGate(group, span);
+    this.addFailCoffin(group, span);
+    this.addFailLantern(group, span);
+    this.addFailGhost(group, span);
     this.addFailSign(group, span);
     this.board.add(group);
     this.meadow = group;
     for (let i = 0; i < 48; i += 1) this.spawnRaindrop(group);
+  }
+
+  private addFailRubble(parent: Group, span: number): void {
+    const rim = span * 0.4;
+    for (let i = 0; i < 42; i += 1) {
+      const a = i * 1.19 + 0.35;
+      const radius = rim * (0.22 + ((i * 23) % 100) / 100 * 0.78);
+      const rock = new Mesh(
+        new BoxGeometry(
+          0.1 + (i % 6) * 0.07,
+          0.05 + (i % 5) * 0.045,
+          0.08 + (i % 4) * 0.06,
+        ),
+        i % 4 === 0
+          ? this.groundMats.failCrack
+          : i % 4 === 1
+            ? this.groundMats.failGroundDark
+            : i % 4 === 2
+              ? this.groundMats.moonRock
+              : this.groundMats.failGround,
+      );
+      rock.position.set(
+        Math.cos(a) * radius,
+        0.04 + (i % 4) * 0.02,
+        Math.sin(a) * radius * 0.9,
+      );
+      rock.rotation.y = a * 0.7;
+      rock.rotation.z = ((i % 7) - 3) * 0.05;
+      rock.rotation.x = ((i % 5) - 2) * 0.04;
+      rock.castShadow = organicProps;
+      rock.receiveShadow = organicProps;
+      parent.add(rock);
+    }
+    for (let i = 0; i < 14; i += 1) {
+      const a = i * 1.73 + 0.9;
+      const pile = new Group();
+      pile.position.set(
+        Math.cos(a) * rim * (0.45 + (i % 3) * 0.12),
+        0,
+        Math.sin(a) * rim * (0.4 + (i % 4) * 0.1),
+      );
+      pile.rotation.y = a * 0.5;
+      const mat = i % 2 === 0 ? this.groundMats.failGround : this.groundMats.failGroundDark;
+      voxel(pile, mat, 0.22 + (i % 3) * 0.06, 0.08, 0.16, 0, 0.08, 0);
+      voxel(pile, this.groundMats.failCrack, 0.12, 0.07, 0.1, 0.14, 0.14, 0.04);
+      voxel(pile, this.groundMats.moonRock, 0.1, 0.05, 0.14, -0.12, 0.12, -0.06);
+      parent.add(pile);
+    }
+  }
+
+  private addFailDeadTrees(parent: Group, span: number): void {
+    const rim = span * 0.38;
+    const spots: { x: number; z: number; scale: number; lean: number }[] = [
+      { x: rim * -0.92, z: rim * -0.55, scale: 1.35, lean: 0.12 },
+      { x: rim * 0.88, z: rim * -0.48, scale: 1.2, lean: -0.18 },
+      { x: rim * -0.7, z: rim * 0.62, scale: 1.05, lean: 0.22 },
+      { x: rim * 0.78, z: rim * 0.55, scale: 1.45, lean: -0.08 },
+      { x: rim * -0.2, z: rim * -0.85, scale: 0.95, lean: 0.28 },
+      { x: rim * 0.35, z: rim * 0.78, scale: 1.1, lean: -0.25 },
+    ];
+    for (const spot of spots) {
+      parent.add(makeDeadTree(spot.x, spot.z, spot.scale, spot.lean, this.treeMats.trunk));
+    }
+  }
+
+  private addFailGraves(parent: Group, span: number): void {
+    const rim = span * 0.32;
+    const graves: {
+      x: number;
+      z: number;
+      scale: number;
+      yaw: number;
+      glyph: string[];
+    }[] = [
+      { x: rim * -0.55, z: rim * 0.15, scale: 1.35, yaw: 0.18, glyph: GRAVE_GLYPH_RIP },
+      { x: rim * 0.58, z: rim * -0.08, scale: 1.5, yaw: -0.22, glyph: GRAVE_GLYPH_CROSS },
+      { x: rim * 0.05, z: rim * 0.52, scale: 1.2, yaw: 0.05, glyph: GRAVE_GLYPH_R },
+    ];
+    for (const grave of graves) {
+      parent.add(
+        makeGrave(
+          grave.x,
+          grave.z,
+          grave.scale,
+          grave.yaw,
+          grave.glyph,
+          this.groundMats.failGround,
+          this.groundMats.failGroundDark,
+          this.groundMats.failCrack,
+          this.groundMats.moonRock,
+        ),
+      );
+    }
+  }
+
+  private addFailSkull(parent: Group, span: number): void {
+    const rim = span * 0.32;
+    const skull = makeComedySkull(
+      rim * 0.62,
+      rim * -0.72,
+      2.35,
+      -0.2,
+      0.18,
+      this.groundMats.plaster,
+      this.animalMats.sheep,
+      this.groundMats.failCrack,
+      this.animalMats.sheepFace,
+    );
+    skull.add(
+      makeCrow(
+        0.08,
+        1.18,
+        0.06,
+        0.55,
+        -0.4,
+        this.animalMats.cowSpot,
+        this.animalMats.sheepFace,
+        this.groundMats.failCrack,
+      ),
+    );
+    parent.add(skull);
+  }
+
+  private addFailBones(parent: Group, span: number): void {
+    const rim = span * 0.32;
+    const bone = this.groundMats.plaster;
+    const boneLit = this.animalMats.sheep;
+    parent.add(makeBone(rim * 0.38, rim * -0.42, 1.15, 0.9, 0.35, bone, boneLit));
+    parent.add(makeBone(rim * 0.78, rim * -0.55, 1.0, -0.55, -0.2, bone, boneLit));
+    parent.add(makeBone(rim * -0.28, rim * 0.22, 0.95, 1.35, 0.15, bone, boneLit));
+  }
+
+  private addFailGate(parent: Group, span: number): void {
+    const rim = span * 0.38;
+    parent.add(
+      makeBrokenGate(
+        rim * -0.15,
+        rim * 0.82,
+        1.35,
+        0.08,
+        this.groundMats.moonRock,
+        this.groundMats.failGroundDark,
+        this.groundMats.failCrack,
+      ),
+    );
+  }
+
+  private addFailCoffin(parent: Group, span: number): void {
+    const rim = span * 0.32;
+    parent.add(
+      makeOpenCoffin(
+        rim * -0.72,
+        rim * -0.35,
+        1.25,
+        0.55,
+        -0.28,
+        this.groundMats.wreck,
+        this.groundMats.wreckDark,
+        this.groundMats.plaster,
+        this.groundMats.failGroundDark,
+      ),
+    );
+  }
+
+  private addFailLantern(parent: Group, span: number): void {
+    const rim = span * 0.32;
+    const lantern = makeGraveLantern(
+      rim * -0.42,
+      rim * 0.22,
+      1.15,
+      0.2,
+      this.groundMats.wreckDark,
+      this.groundMats.moonRock,
+      this.groundMats.fire,
+      this.groundMats.fireCore,
+    );
+    parent.add(lantern);
+    for (const child of lantern.children) {
+      if (child instanceof Mesh && child.userData.lanternFlame) {
+        this.meadowFlames.push(child);
+      }
+    }
+    const light = new PointLight(token("--maze-fire"), 1.8, 6.5, 2);
+    light.position.set(rim * -0.42, 0.85, rim * 0.22);
+    parent.add(light);
+    this.meadowLight = light;
+  }
+
+  private addFailGhost(parent: Group, span: number): void {
+    const rim = span * 0.32;
+    const body = this.animalMats.jellyGlow;
+    const shade = this.groundMats.failNeon;
+    const eyes = this.groundMats.failCrack;
+    const ghost = makeGhost(rim * -0.35, rim * 0.05, 1.35, 0.4, body, shade, eyes);
+    ghost.userData.planetFloat = true;
+    ghost.userData.baseY = ghost.position.y;
+    ghost.userData.driftPhase = 0.6;
+    ghost.userData.driftSpeed = 1.35;
+    ghost.userData.bobAmp = 0.14;
+    ghost.userData.spin = 0.35;
+    parent.add(ghost);
+    this.meadowFlames.push(ghost);
   }
 
   private buildHomeScene(): void {
@@ -3797,22 +4037,37 @@ export class MazeWorld {
     if (!tower) return;
     const meadowY = this.meadow?.position.y ?? -MEADOW_DROP;
     const orbit = this.homeOrbit + (this.glanceDOrbit * Math.PI) / 180;
-    // 0.5× ultrawide vibe: low, close-ish, mild up-tilt so the barren floor stays in shot.
     const up = clamp(this.glanceDAngle / MEADOW_GLANCE_PITCH_MAX, 0, 1);
     const down = clamp(-this.glanceDAngle / Math.abs(MEADOW_GLANCE_PITCH_MIN), 0, 1);
-    const lookY = meadowY + HOME_TOWER_H * (0.34 + up * 0.14 - down * 0.08);
-    this.meadowCamLook.set(0, lookY, 0);
 
-    const eyeY = meadowY + 0.85 + down * 0.35 + up * 0.55;
-    const dist = HOME_TOWER_H * (0.72 + up * 0.3 - down * 0.06);
-    this.meadowCamEye.set(
-      Math.sin(orbit) * dist,
-      eyeY,
-      Math.cos(orbit) * dist,
-    );
-    this.meadowCamEye.y = Math.max(this.meadowCamEye.y, meadowY + 0.55);
-    this.meadowCamEye.applyQuaternion(this.board.quaternion);
-    this.meadowCamLook.applyQuaternion(this.board.quaternion);
+    if (this.homeView === "tower") {
+      // Rise up the shaft and look at the crown for the New/Load menu.
+      const lookY = meadowY + HOME_TOWER_H * (0.9 + up * 0.06 - down * 0.05);
+      const eyeY = meadowY + HOME_TOWER_H * (0.48 + up * 0.12 - down * 0.06);
+      const dist = HOME_TOWER_H * (0.52 + up * 0.28 - down * 0.04);
+      this.homeViewLook.set(0, lookY, 0);
+      this.homeViewEye.set(Math.sin(orbit) * dist, eyeY, Math.cos(orbit) * dist);
+    } else {
+      // 0.5× ultrawide vibe: low, close-ish, mild up-tilt so the barren floor stays in shot.
+      const lookY = meadowY + HOME_TOWER_H * (0.34 + up * 0.14 - down * 0.08);
+      const eyeY = meadowY + 0.85 + down * 0.35 + up * 0.55;
+      const dist = HOME_TOWER_H * (0.72 + up * 0.3 - down * 0.06);
+      this.homeViewLook.set(0, lookY, 0);
+      this.homeViewEye.set(Math.sin(orbit) * dist, eyeY, Math.cos(orbit) * dist);
+      this.homeViewEye.y = Math.max(this.homeViewEye.y, meadowY + 0.55);
+    }
+
+    this.homeViewEye.applyQuaternion(this.board.quaternion);
+    this.homeViewLook.applyQuaternion(this.board.quaternion);
+
+    const t = easeOutCubic(this.homeViewBlend);
+    if (t < 1) {
+      this.meadowCamEye.lerpVectors(this.homeViewFromEye, this.homeViewEye, t);
+      this.meadowCamLook.lerpVectors(this.homeViewFromLook, this.homeViewLook, t);
+    } else {
+      this.meadowCamEye.copy(this.homeViewEye);
+      this.meadowCamLook.copy(this.homeViewLook);
+    }
 
     this.camera.position.copy(this.meadowCamEye);
     this.camera.lookAt(this.meadowCamLook);
@@ -3834,16 +4089,17 @@ export class MazeWorld {
     const span = Math.max(tower.width, tower.depth) * 2.8;
     const orbit = (this.glanceDOrbit * Math.PI) / 180;
     // Fixed pivot so orbit/pitch only moves the eye, not the scene center.
+    // Rest far back from the WIN/FAIL wall so the whole meadow reads.
     const lookY = meadowY + Math.max(1.1, span * 0.09);
-    const lookZ = -span * 0.28;
+    const lookZ = -span * 0.22;
     this.meadowCamLook.set(0, lookY, lookZ);
 
     // Up mostly dollies back; elevation only tilts a little.
     const up = clamp(this.glanceDAngle / MEADOW_GLANCE_PITCH_MAX, 0, 1);
     const down = clamp(-this.glanceDAngle / Math.abs(MEADOW_GLANCE_PITCH_MIN), 0, 1);
-    const baseElev = (16 * Math.PI) / 180;
-    const elev = baseElev + up * ((20 * Math.PI) / 180) - down * ((16 * Math.PI) / 180);
-    const dist = span * (0.72 + up * 1.35 - down * 0.18);
+    const baseElev = (18 * Math.PI) / 180;
+    const elev = baseElev + up * ((18 * Math.PI) / 180) - down * ((16 * Math.PI) / 180);
+    const dist = span * (1.35 + up * 1.1 - down * 0.2);
     const floorGap = meadowY + MEADOW_EYE_MIN - lookY;
     const minElev = floorGap >= dist
       ? Math.PI / 2
@@ -4527,6 +4783,8 @@ const WIN_SCENES: WinSceneKind[] = [
   "disco",
 ];
 
+const GALLERY_SCENES = [...WIN_SCENES, "fail"] as const;
+
 const WIN_GLYPH_W = [
   "#...#",
   "#...#",
@@ -4597,6 +4855,31 @@ const FAIL_GLYPH_BANG = [
   ".#.",
   "...",
   ".#.",
+];
+
+const GRAVE_GLYPH_RIP = [
+  "###.#.#.###",
+  "#.#.#.#.#.#",
+  "###.#.#.###",
+  "#.#.#.#.#..",
+  "#.#.#.#.#..",
+];
+
+const GRAVE_GLYPH_CROSS = [
+  "..#..",
+  "..#..",
+  "#####",
+  "..#..",
+  "..#..",
+  "..#..",
+];
+
+const GRAVE_GLYPH_R = [
+  "####.",
+  "#...#",
+  "####.",
+  "#.#..",
+  "#..#.",
 ];
 
 const SCENE_ANIMALS: Record<WinSceneKind, AnimalKind[]> = {
@@ -5187,6 +5470,308 @@ function makeTree(kind: TreeKind, x: number, z: number, scale: number, mats: Tre
   else if (kind === "autumn") buildAutumn(tree, mats);
   else buildOak(tree, mats);
   return tree;
+}
+
+function makeDeadTree(
+  x: number,
+  z: number,
+  scale: number,
+  lean: number,
+  trunk: MeshToonMaterial,
+): Group {
+  const tree = new Group();
+  tree.position.set(x, 0, z);
+  tree.scale.setScalar(scale);
+  tree.rotation.z = lean;
+  voxel(tree, trunk, 0.09, 0.72, 0.09, 0, 0.72, 0);
+  voxel(tree, trunk, 0.14, 0.05, 0.08, 0.08, 0.06, 0.04);
+  voxel(tree, trunk, 0.1, 0.04, 0.12, -0.06, 0.05, -0.05);
+  voxel(tree, trunk, 0.32, 0.035, 0.035, 0.28, 1.15, 0.02);
+  voxel(tree, trunk, 0.12, 0.03, 0.03, 0.48, 1.22, 0.08);
+  voxel(tree, trunk, 0.26, 0.03, 0.03, -0.22, 1.32, -0.04);
+  voxel(tree, trunk, 0.03, 0.03, 0.22, 0.04, 1.42, 0.18);
+  voxel(tree, trunk, 0.03, 0.18, 0.03, -0.08, 1.55, -0.1);
+  voxel(tree, trunk, 0.18, 0.03, 0.03, 0.14, 0.95, -0.12);
+  return tree;
+}
+
+function makeGrave(
+  x: number,
+  z: number,
+  scale: number,
+  yaw: number,
+  glyph: string[],
+  stone: MeshToonMaterial,
+  stoneDark: MeshToonMaterial,
+  crack: MeshToonMaterial,
+  accent: MeshToonMaterial,
+): Group {
+  const grave = new Group();
+  grave.position.set(x, 0, z);
+  grave.scale.setScalar(scale);
+  grave.rotation.y = yaw;
+
+  voxel(grave, stoneDark, 0.42, 0.06, 0.28, 0, 0.06, 0.04);
+  voxel(grave, stone, 0.36, 0.05, 0.55, 0, 0.08, -0.08);
+  voxel(grave, accent, 0.32, 0.48, 0.08, 0, 0.62, -0.42);
+  voxel(grave, stoneDark, 0.36, 0.06, 0.1, 0, 1.12, -0.42);
+  voxel(grave, crack, 0.34, 0.02, 0.02, 0, 0.18, 0.22);
+
+  const rows = glyph.length;
+  let cols = 0;
+  for (const line of glyph) cols = Math.max(cols, line.length);
+  const cell = Math.min(0.055, 0.48 / Math.max(cols, 1));
+  const letterH = cell * rows;
+  const faceZ = -0.34;
+  for (let r = 0; r < rows; r += 1) {
+    const line = glyph[r] ?? "";
+    for (let c = 0; c < line.length; c += 1) {
+      if (line[c] !== "#") continue;
+      const gx = (c + 0.5 - cols * 0.5) * cell;
+      const gy = 0.95 - letterH * 0.5 - (r + 0.5) * cell;
+      voxel(grave, crack, cell * 0.42, cell * 0.42, 0.02, gx, gy, faceZ);
+    }
+  }
+  return grave;
+}
+
+function makeComedySkull(
+  x: number,
+  z: number,
+  scale: number,
+  yaw: number,
+  tip: number,
+  bone: MeshToonMaterial,
+  boneLit: MeshToonMaterial,
+  socket: MeshToonMaterial,
+  shade: MeshToonMaterial,
+): Group {
+  const skull = new Group();
+  skull.position.set(x, 0, z);
+  skull.scale.setScalar(scale);
+  skull.rotation.y = yaw;
+  skull.rotation.z = tip;
+
+  // Oversized dome + cheeks sitting on a little dirt mound.
+  voxel(skull, shade, 0.38, 0.08, 0.3, 0, 0.08, 0.02);
+  voxel(skull, bone, 0.42, 0.36, 0.34, 0, 0.62, 0);
+  voxel(skull, boneLit, 0.34, 0.18, 0.3, 0, 1.02, 0.02);
+  voxel(skull, bone, 0.46, 0.16, 0.28, 0, 0.48, 0.06);
+
+  // Uneven cartoon eye sockets.
+  voxel(skull, socket, 0.14, 0.15, 0.08, -0.16, 0.78, 0.28);
+  voxel(skull, socket, 0.11, 0.12, 0.08, 0.18, 0.74, 0.28);
+  voxel(skull, boneLit, 0.04, 0.04, 0.03, -0.14, 0.72, 0.34);
+  voxel(skull, boneLit, 0.035, 0.035, 0.03, 0.2, 0.7, 0.34);
+
+  // Tiny nose holes + goofy open jaw.
+  voxel(skull, socket, 0.035, 0.05, 0.04, -0.05, 0.52, 0.32);
+  voxel(skull, socket, 0.035, 0.05, 0.04, 0.05, 0.52, 0.32);
+  voxel(skull, bone, 0.28, 0.08, 0.16, 0, 0.28, 0.12);
+  voxel(skull, socket, 0.2, 0.06, 0.1, 0, 0.3, 0.22);
+
+  // Chunky teeth with one missing for the gag.
+  const teeth = [-0.16, -0.08, 0, 0.08, 0.16] as const;
+  for (const [index, tx] of teeth.entries()) {
+    if (index === 2) continue;
+    voxel(skull, boneLit, 0.03, 0.05, 0.03, tx, 0.22, 0.26);
+  }
+  voxel(skull, bone, 0.04, 0.03, 0.12, -0.26, 0.34, 0.02);
+  voxel(skull, bone, 0.04, 0.03, 0.12, 0.26, 0.34, 0.02);
+  return skull;
+}
+
+function makeBone(
+  x: number,
+  z: number,
+  scale: number,
+  yaw: number,
+  tip: number,
+  bone: MeshToonMaterial,
+  boneLit: MeshToonMaterial,
+): Group {
+  const group = new Group();
+  group.position.set(x, 0.06, z);
+  group.scale.setScalar(scale);
+  group.rotation.y = yaw;
+  group.rotation.z = tip;
+  voxel(group, bone, 0.28, 0.035, 0.035, 0, 0.04, 0);
+  voxel(group, boneLit, 0.07, 0.06, 0.06, -0.3, 0.05, 0);
+  voxel(group, boneLit, 0.07, 0.06, 0.06, 0.3, 0.05, 0);
+  voxel(group, bone, 0.04, 0.045, 0.03, -0.34, 0.08, 0.02);
+  voxel(group, bone, 0.04, 0.045, 0.03, -0.34, 0.08, -0.02);
+  voxel(group, bone, 0.04, 0.045, 0.03, 0.34, 0.08, 0.02);
+  voxel(group, bone, 0.04, 0.045, 0.03, 0.34, 0.08, -0.02);
+  return group;
+}
+
+function makeCrow(
+  x: number,
+  y: number,
+  z: number,
+  yaw: number,
+  tip: number,
+  body: MeshToonMaterial,
+  beak: MeshToonMaterial,
+  eye: MeshToonMaterial,
+): Group {
+  const crow = new Group();
+  crow.position.set(x, y, z);
+  crow.rotation.y = yaw;
+  crow.rotation.z = tip;
+  voxel(crow, body, 0.08, 0.05, 0.05, 0, 0.08, 0);
+  voxel(crow, body, 0.05, 0.045, 0.045, 0.08, 0.1, 0);
+  voxel(crow, beak, 0.04, 0.015, 0.015, 0.14, 0.09, 0);
+  voxel(crow, eye, 0.012, 0.012, 0.012, 0.1, 0.12, 0.035);
+  voxel(crow, body, 0.07, 0.015, 0.04, -0.02, 0.1, 0.07);
+  voxel(crow, body, 0.07, 0.015, 0.04, -0.02, 0.1, -0.07);
+  voxel(crow, body, 0.05, 0.015, 0.02, -0.12, 0.08, 0);
+  voxel(crow, body, 0.012, 0.03, 0.012, 0.02, 0.02, 0.03);
+  voxel(crow, body, 0.012, 0.03, 0.012, 0.02, 0.02, -0.03);
+  return crow;
+}
+
+function makeBrokenGate(
+  x: number,
+  z: number,
+  scale: number,
+  yaw: number,
+  iron: MeshToonMaterial,
+  post: MeshToonMaterial,
+  rust: MeshToonMaterial,
+): Group {
+  const gate = new Group();
+  gate.position.set(x, 0, z);
+  gate.scale.setScalar(scale);
+  gate.rotation.y = yaw;
+
+  voxel(gate, post, 0.06, 0.55, 0.06, -0.42, 0.55, 0);
+  voxel(gate, post, 0.06, 0.48, 0.06, 0.42, 0.48, 0);
+  voxel(gate, iron, 0.36, 0.04, 0.04, 0, 1.05, 0);
+  voxel(gate, rust, 0.04, 0.04, 0.04, -0.42, 1.12, 0);
+  voxel(gate, rust, 0.04, 0.04, 0.04, 0.42, 1.0, 0);
+
+  // Left door hangs open; right door is cracked and slumped.
+  const left = new Group();
+  left.position.set(-0.2, 0.55, 0.02);
+  left.rotation.y = -0.85;
+  voxel(left, iron, 0.18, 0.42, 0.03, 0, 0, 0);
+  for (const y of [-0.28, -0.08, 0.12, 0.3] as const) {
+    voxel(left, rust, 0.16, 0.015, 0.015, 0, y, 0.03);
+  }
+  for (const xBar of [-0.1, 0, 0.1] as const) {
+    voxel(left, iron, 0.015, 0.4, 0.015, xBar, 0, 0.03);
+  }
+  gate.add(left);
+
+  const right = new Group();
+  right.position.set(0.22, 0.42, 0);
+  right.rotation.z = 0.55;
+  right.rotation.y = 0.25;
+  voxel(right, iron, 0.16, 0.34, 0.03, 0, 0, 0);
+  voxel(right, rust, 0.14, 0.015, 0.015, 0, -0.12, 0.03);
+  voxel(right, rust, 0.14, 0.015, 0.015, 0, 0.1, 0.03);
+  voxel(right, iron, 0.015, 0.3, 0.015, -0.06, 0, 0.03);
+  voxel(right, iron, 0.015, 0.28, 0.015, 0.06, -0.02, 0.03);
+  gate.add(right);
+
+  // Fallen spear tip in the dirt.
+  voxel(gate, iron, 0.03, 0.03, 0.22, 0.55, 0.04, 0.18);
+  voxel(gate, rust, 0.04, 0.04, 0.04, 0.55, 0.05, 0.34);
+  return gate;
+}
+
+function makeOpenCoffin(
+  x: number,
+  z: number,
+  scale: number,
+  yaw: number,
+  tip: number,
+  wood: MeshToonMaterial,
+  woodDark: MeshToonMaterial,
+  lining: MeshToonMaterial,
+  dirt: MeshToonMaterial,
+): Group {
+  const coffin = new Group();
+  coffin.position.set(x, 0, z);
+  coffin.scale.setScalar(scale);
+  coffin.rotation.y = yaw;
+  coffin.rotation.z = tip;
+
+  voxel(coffin, dirt, 0.42, 0.08, 0.28, 0, 0.06, 0.04);
+  voxel(coffin, woodDark, 0.34, 0.08, 0.18, 0, 0.12, 0);
+  voxel(coffin, wood, 0.32, 0.03, 0.03, 0, 0.2, 0.16);
+  voxel(coffin, wood, 0.32, 0.03, 0.03, 0, 0.2, -0.16);
+  voxel(coffin, wood, 0.03, 0.03, 0.16, -0.32, 0.2, 0);
+  voxel(coffin, wood, 0.03, 0.03, 0.16, 0.32, 0.2, 0);
+  voxel(coffin, lining, 0.26, 0.02, 0.12, 0, 0.16, 0);
+
+  const lid = new Group();
+  lid.position.set(0.18, 0.28, 0.22);
+  lid.rotation.x = -1.05;
+  lid.rotation.y = 0.35;
+  voxel(lid, wood, 0.3, 0.03, 0.16, 0, 0, 0);
+  voxel(lid, woodDark, 0.08, 0.02, 0.04, 0, 0.04, 0);
+  coffin.add(lid);
+  return coffin;
+}
+
+function makeGraveLantern(
+  x: number,
+  z: number,
+  scale: number,
+  yaw: number,
+  post: MeshToonMaterial,
+  cage: MeshToonMaterial,
+  flame: MeshToonMaterial,
+  core: MeshToonMaterial,
+): Group {
+  const lantern = new Group();
+  lantern.position.set(x, 0, z);
+  lantern.scale.setScalar(scale);
+  lantern.rotation.y = yaw;
+
+  voxel(lantern, post, 0.035, 0.28, 0.035, 0, 0.28, 0);
+  voxel(lantern, cage, 0.1, 0.02, 0.1, 0, 0.58, 0);
+  voxel(lantern, cage, 0.08, 0.02, 0.08, 0, 0.78, 0);
+  voxel(lantern, post, 0.015, 0.1, 0.015, -0.07, 0.68, -0.07);
+  voxel(lantern, post, 0.015, 0.1, 0.015, 0.07, 0.68, -0.07);
+  voxel(lantern, post, 0.015, 0.1, 0.015, -0.07, 0.68, 0.07);
+  voxel(lantern, post, 0.015, 0.1, 0.015, 0.07, 0.68, 0.07);
+
+  const wick = new Mesh(new BoxGeometry(0.05, 0.1, 0.05), core);
+  wick.position.set(0, 0.66, 0);
+  wick.userData.lanternFlame = true;
+  const glowMesh = new Mesh(new BoxGeometry(0.07, 0.12, 0.07), flame);
+  glowMesh.position.set(0.01, 0.7, 0);
+  glowMesh.userData.lanternFlame = true;
+  lantern.add(wick, glowMesh);
+  return lantern;
+}
+
+function makeGhost(
+  x: number,
+  z: number,
+  scale: number,
+  yaw: number,
+  body: MeshToonMaterial,
+  trim: MeshToonMaterial,
+  eyes: MeshToonMaterial,
+): Group {
+  const ghost = new Group();
+  ghost.position.set(x, 0.55, z);
+  ghost.scale.setScalar(scale);
+  ghost.rotation.y = yaw;
+
+  voxel(ghost, body, 0.18, 0.22, 0.14, 0, 0.2, 0);
+  voxel(ghost, body, 0.14, 0.12, 0.12, 0, 0.48, 0);
+  voxel(ghost, trim, 0.05, 0.08, 0.04, -0.1, -0.08, 0.04);
+  voxel(ghost, trim, 0.05, 0.1, 0.04, 0, -0.1, -0.02);
+  voxel(ghost, trim, 0.05, 0.07, 0.04, 0.1, -0.06, 0.03);
+  voxel(ghost, eyes, 0.035, 0.04, 0.02, -0.05, 0.52, 0.12);
+  voxel(ghost, eyes, 0.035, 0.04, 0.02, 0.05, 0.52, 0.12);
+  voxel(ghost, trim, 0.04, 0.02, 0.02, 0, 0.42, 0.13);
+  return ghost;
 }
 
 function makePalm(
