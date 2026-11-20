@@ -10,7 +10,11 @@ import {
   type Maze,
   type WallAxis,
 } from "./maze.ts";
-import { cloneFloorPhysics, type FloorPhysics } from "./playSettings.ts";
+import {
+  clampSkyThemeIndex,
+  cloneFloorPhysics,
+  type FloorPhysics,
+} from "./playSettings.ts";
 import { parseFloorTheme, type FloorThemeId } from "./theme.ts";
 import type { Tower } from "./tower.ts";
 
@@ -18,6 +22,11 @@ export const CELL = 1.2;
 export const WALL = 0.17;
 export const WALL_H = 0.68;
 export const FRAME_H = 0.92;
+/**
+ * Half-extent of a floor/roof slab. Slightly past the cell midline so neighbours
+ * overlap — closes sub-pixel cracks that otherwise show the sky at low pixel scale.
+ */
+export const CELL_FLOOR_HALF = CELL / 2 + 0.014;
 /** Extra collider height above the rim. Stays clear of the floor above (story gap is 1.85). */
 export const FRAME_GUARD = 0.72;
 export const BALL_R = 0.21;
@@ -180,6 +189,7 @@ export interface MazeLayout {
   finale: boolean;
   theme: FloorThemeId;
   physics?: FloorPhysics;
+  skyTheme?: number;
 }
 
 export interface FloorPlan {
@@ -288,8 +298,8 @@ export function layoutMaze(
       pieces.push(segment(
         originX + edge * CELL,
         originZ + (row + 0.5) * CELL,
-        WALL / 2,
-        (CELL - WALL) / 2 + 0.01,
+        WALL / 2 + 0.01,
+        (CELL - WALL) / 2 + 0.02,
         edge === 0 || edge === maze.cols,
         switchWalls.has(wall) ? wall : undefined,
         switchWalls.get(wall),
@@ -306,8 +316,8 @@ export function layoutMaze(
       pieces.push(segment(
         originX + (col + 0.5) * CELL,
         originZ + edge * CELL,
-        (CELL - WALL) / 2 + 0.01,
-        WALL / 2,
+        (CELL - WALL) / 2 + 0.02,
+        WALL / 2 + 0.01,
         edge === 0 || edge === maze.rows,
         switchWalls.has(wall) ? wall : undefined,
         switchWalls.get(wall),
@@ -347,15 +357,14 @@ export function layoutMaze(
         continue;
       }
       const kind = floorKind(maze, c, r, tile);
-      const span = (CELL - WALL) / 2 + 0.02;
       pieces.push({
         kind,
         x: at.x,
         y: -FLOOR_T / 2,
         z: at.z,
-        hx: span,
+        hx: CELL_FLOOR_HALF,
         hy: FLOOR_T / 2,
-        hz: span,
+        hz: CELL_FLOOR_HALF,
         cell: tile?.kind === "crumble" ? `${c},${r}` : undefined,
       });
       if (tile?.kind === "boost") boosts.push({ c, r, x: at.x, z: at.z, dir: tile.dir });
@@ -377,6 +386,7 @@ export function layoutMaze(
   }
 
   addGrout(pieces, maze, originX, originZ, holes, showGoal);
+  addFloorBed(pieces, maze, originX, originZ);
   if (capped) addRoof(pieces, maze, originX, originZ);
 
   for (const heart of maze.hearts) {
@@ -435,6 +445,7 @@ export function layoutMaze(
   };
   const physics = cloneFloorPhysics(maze.physics);
   if (physics) layout.physics = physics;
+  if (typeof maze.skyTheme === "number") layout.skyTheme = clampSkyThemeIndex(maze.skyTheme);
   return layout;
 }
 
@@ -464,15 +475,14 @@ function extents(frame: boolean): { y: number; hy: number } {
 
 function post(x: number, z: number, frame: boolean, wall?: string): Piece {
   const { y, hy } = extents(frame);
-  const half = WALL / 2 + 0.004;
+  const half = WALL / 2 + 0.012;
   return { kind: frame ? "frame" : "wall", x, y, z, hx: half, hy, hz: half, wall };
 }
 
 /** Solid cube that fills a cell's open floor area at wall height. */
 function blockCube(x: number, z: number): Piece {
   const { y, hy } = extents(false);
-  const span = (CELL - WALL) / 2 + 0.02;
-  return { kind: "block", x, y, z, hx: span, hy, hz: span };
+  return { kind: "block", x, y, z, hx: CELL_FLOOR_HALF, hy, hz: CELL_FLOOR_HALF };
 }
 
 function segment(
@@ -498,8 +508,9 @@ function addGrout(
   holes: Set<string>,
   finale: boolean,
 ): void {
-  const joint = WALL / 2;
-  const along = CELL / 2 - joint + 0.006;
+  // Slightly fat joints so low-res pixel rendering still covers the seam.
+  const joint = WALL / 2 + 0.03;
+  const along = CELL / 2 - WALL / 2 + 0.02;
 
   // Lay grout under open seams and under interior walls so smashed walls leave a filled joint.
   for (let row = 0; row < maze.rows; row += 1) {
@@ -540,23 +551,39 @@ function addGrout(
 }
 
 function grout(x: number, z: number, hx: number, hz: number): Piece {
-  const recess = 0.014;
+  const recess = 0.006;
   const top = -recess;
   const bottom = -FLOOR_T;
   const hy = (top - bottom) / 2;
   return { kind: "grout", x, y: (top + bottom) / 2, z, hx, hy, hz };
 }
 
+/** Continuous bed under the maze so seam cracks never punch through to the sky. */
+function addFloorBed(pieces: Piece[], maze: Maze, originX: number, originZ: number): void {
+  const pad = 0.08;
+  const hx = (maze.cols * CELL) / 2 + pad;
+  const hz = (maze.rows * CELL) / 2 + pad;
+  const hy = 0.03;
+  pieces.push({
+    kind: "grout",
+    x: originX + maze.cols * CELL * 0.5,
+    y: -FLOOR_T - hy,
+    z: originZ + maze.rows * CELL * 0.5,
+    hx,
+    hy,
+    hz,
+  });
+}
+
 /** Ceiling slab over a lower stack floor, open above the landing/start cell. */
 function addRoof(pieces: Piece[], maze: Maze, originX: number, originZ: number): void {
-  const span = (CELL - WALL) / 2 + 0.02;
   const hy = ROOF_T / 2;
   const y = FRAME_H - 0.06 - hy;
   for (let r = 0; r < maze.rows; r += 1) {
     for (let c = 0; c < maze.cols; c += 1) {
       if (c === maze.start.c && r === maze.start.r) continue;
       const at = center(originX, originZ, { c, r });
-      pieces.push({ kind: "roof", x: at.x, y, z: at.z, hx: span, hy, hz: span });
+      pieces.push({ kind: "roof", x: at.x, y, z: at.z, hx: CELL_FLOOR_HALF, hy, hz: CELL_FLOOR_HALF });
     }
   }
   const landing = center(originX, originZ, maze.start);

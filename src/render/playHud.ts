@@ -55,6 +55,8 @@ const START_BTN_PX_PAINT = 96;
 const START_BTN_TRACK = 0.06;
 const START_BTN_FONT = `700 ${START_BTN_PX_PAINT}px "Arial Bold", Arial, Helvetica, sans-serif`;
 const PULSE_SECS = 0.35;
+/** Start-gate briefing pop-in after the enter-play camera lands. */
+const START_INTRO_SECS = 0.48;
 const SHOUT_LIFE = 1.05;
 const SHOUT_POP = 0.18;
 const SHATTER_LIFE = 0.7;
@@ -184,7 +186,6 @@ export class PlayHud {
   private readonly homeBtnRows: Group[] = HOME_ACTIONS.map(() => new Group());
   private readonly homeDecorHearts: Group[] = [];
   private readonly homeDecorCoins: Mesh[] = [];
-  private startScrim: Mesh | null = null;
   private homeScrim: Mesh | null = null;
   private readonly heartGeo: BufferGeometry;
   private readonly coinGeo: BufferGeometry;
@@ -210,6 +211,10 @@ export class PlayHud {
   private shown = false;
   private startGate = false;
   private homeMenu = false;
+  /** Hide corner play chrome while a home → play camera enter is running. */
+  private suppressPlayChrome = false;
+  /** 0..1 pop-in for the start briefing (1 = settled). */
+  private startIntroT = 1;
   private homeMenuMode: PlayHudHomeMenuMode = "main";
   private startTitle = "";
   private startFloors = 1;
@@ -300,11 +305,19 @@ export class PlayHud {
   private syncOverlayVisibility(): void {
     const on = this.shown;
     const overlay = this.overlayOpen();
-    this.root.visible = on && !overlay;
-    this.startLayer.visible = on && this.startGate;
+    const playChrome = on && !overlay && !this.suppressPlayChrome;
+    this.root.visible = playChrome;
+    this.startLayer.visible = on && this.startGate && !this.suppressPlayChrome;
     this.homeLayer.visible = on && this.homeMenu;
-    this.shoutLayer.visible = on && !overlay;
+    this.shoutLayer.visible = playChrome;
     this.shatterLayer.visible = on;
+  }
+
+  /** Keep corner HUD / start gate off during the enter-play camera beat. */
+  setSuppressPlayChrome(on: boolean): void {
+    if (this.suppressPlayChrome === on) return;
+    this.suppressPlayChrome = on;
+    this.syncOverlayVisibility();
   }
 
   /** Comic collect shout — same Arial Black plates as the timer. */
@@ -367,12 +380,16 @@ export class PlayHud {
       this.startFloors = Math.max(1, Math.round(gate.floors));
       this.startLives = gate.lives;
       this.startCoins = Math.max(0, Math.round(gate.coins));
+      this.startIntroT = 0;
     } else {
       this.startBtnHit = null;
+      this.startIntroT = 1;
+      this.resetStartIntroScales();
     }
     this.syncOverlayVisibility();
     this.layoutDirty = true;
     if (this.shown) this.paint(true);
+    if (open && this.shown) this.applyStartIntro(0);
   }
 
   /** Full-screen title menu on the 3D HUD layer. */
@@ -556,6 +573,12 @@ export class PlayHud {
     if (!this.shown) return;
     this.pulseHeart = Math.max(0, this.pulseHeart - dt);
     this.pulseCoin = Math.max(0, this.pulseCoin - dt);
+    if (this.startGate && this.startIntroT < 1) {
+      this.startIntroT = reduceMotion
+        ? 1
+        : Math.min(1, this.startIntroT + dt / START_INTRO_SECS);
+      this.applyStartIntro(this.startIntroT);
+    }
     if (!reduceMotion) {
       const coins = this.startGate || this.homeMenu
         ? (this.homeMenu ? this.homeDecorCoins : this.startCoinMeshes)
@@ -985,8 +1008,10 @@ export class PlayHud {
     if (!this.shown) return;
     if (this.layoutDirty || force) {
       if (this.homeMenu) this.layoutHomeMenu();
-      else if (this.startGate) this.layoutStartGate();
-      else {
+      else if (this.startGate) {
+        this.layoutStartGate();
+        if (this.startIntroT < 1) this.applyStartIntro(this.startIntroT);
+      } else {
         this.syncTitle(true);
         this.syncFloor(true);
         this.syncTimer(true);
@@ -1028,6 +1053,34 @@ export class PlayHud {
     this.syncHearts(viewW - padX, padY, icon);
   }
 
+  private startIntroItems(): (Group | null | undefined)[] {
+    return [
+      this.startTitlePlate?.root,
+      this.startFloorPlate?.root,
+      this.startHeartsRow,
+      this.startCoinsRow,
+      this.startBtnRow,
+    ];
+  }
+
+  private resetStartIntroScales(): void {
+    for (const item of this.startIntroItems()) {
+      if (item) item.scale.setScalar(1);
+    }
+  }
+
+  /** Staggered pop-in for the start briefing after enter-play. */
+  private applyStartIntro(t: number): void {
+    const items = this.startIntroItems();
+    for (let i = 0; i < items.length; i += 1) {
+      const item = items[i];
+      if (!item || !item.visible) continue;
+      const local = clamp01((t - i * 0.07) / 0.72);
+      const a = easeOutBack(local);
+      item.scale.setScalar(Math.max(0.001, a));
+    }
+  }
+
   private layoutStartGate(): void {
     const s = this.viewScale;
     const u = this.designScale();
@@ -1036,25 +1089,11 @@ export class PlayHud {
     const icon = START_ICON * u;
     const gap = START_GAP * u;
     const cx = viewW * 0.5;
-    if (!this.startScrim) {
-      const mat = new MeshBasicMaterial({
-        color: "#000000",
-        transparent: true,
-        opacity: 0.42,
-        depthWrite: false,
-        toneMapped: false,
-      });
-      this.startScrim = new Mesh(new PlaneGeometry(1, 1), mat);
-      this.startLayer.add(this.startScrim);
-    }
-    // Keep content above the scrim in draw order.
     this.startLayer.add(
       this.startHeartsRow,
       this.startCoinsRow,
       this.startBtnRow,
     );
-    this.startScrim.scale.set(viewW * 1.1, viewH * 1.1, 1);
-    this.startScrim.position.set(viewW * 0.5, viewH * 0.5, -2);
 
     const rows: { height: number; after: number; place: (y: number) => void }[] = [];
 
@@ -2271,6 +2310,17 @@ function pulseScale(remain: number): number {
   if (remain <= 0) return 1;
   const t = 1 - remain / PULSE_SECS;
   return 1 + Math.sin(Math.min(1, t) * Math.PI) * 0.22;
+}
+
+function clamp01(t: number): number {
+  return Math.max(0, Math.min(1, t));
+}
+
+function easeOutBack(t: number): number {
+  const c1 = 1.70158;
+  const c3 = c1 + 1;
+  const u = clamp01(t);
+  return 1 + c3 * (u - 1) ** 3 + c1 * (u - 1) ** 2;
 }
 
 function stdMat(color: string, emissive: string, emissiveIntensity: number): MeshStandardMaterial {

@@ -29,6 +29,8 @@ export interface TowerPauseCallbacks {
   onSaveLeave: () => void;
   onClearSave: () => void;
   onNewRun: () => void;
+  onRemix: () => void;
+  onSaveLevel: () => void;
 }
 
 export class TowerPause {
@@ -45,6 +47,8 @@ export class TowerPause {
   private readonly clearBtn: HTMLButtonElement;
   private readonly newBtn: HTMLButtonElement;
   private readonly quitBtn: HTMLButtonElement;
+  private readonly remixBtn: HTMLButtonElement;
+  private readonly saveLevelBtn: HTMLButtonElement;
   private readonly mapSlot: HTMLElement;
   private readonly tower: TowerMap;
   private open = false;
@@ -68,7 +72,7 @@ export class TowerPause {
           </div>
           <button type="button" class="glass-btn ${styles.close}" data-close aria-label="Resume">${iconSvg("close")}</button>
         </header>
-        <div class="${styles.body}" data-campaign-body>
+        <div class="${styles.body}">
           <div class="${styles.mapSlot}" data-map></div>
           <div class="${styles.floorPanel}">
             <p class="${styles.floorLabel}" data-floor-label>Current floor</p>
@@ -78,6 +82,8 @@ export class TowerPause {
         <div class="${styles.actions}">
           <button type="button" class="glass-pill metal-ring ${styles.primary}" data-resume>Resume</button>
           <button type="button" class="glass-pill ${styles.primary}" data-settings>Settings</button>
+          <button type="button" class="glass-pill ${styles.primary}" data-remix data-free-only>Remix</button>
+          <button type="button" class="glass-pill ${styles.primary}" data-save-level data-free-only>Save</button>
           <button type="button" class="glass-pill ${styles.primary}" data-save data-campaign-only>Save</button>
           <button type="button" class="glass-pill ${styles.ghost}" data-save-leave data-campaign-only>Save & leave</button>
           <button type="button" class="glass-pill ${styles.ghost}" data-clear data-campaign-only hidden>Delete this save</button>
@@ -97,6 +103,8 @@ export class TowerPause {
     this.clearBtn = this.require("[data-clear]");
     this.newBtn = this.require("[data-new]");
     this.quitBtn = this.require("[data-quit]");
+    this.remixBtn = this.require("[data-remix]");
+    this.saveLevelBtn = this.require("[data-save-level]");
     this.mapSlot = this.require("[data-map]");
     this.tower = new TowerMap(this.mapSlot, "full");
     this.require("[data-close]").addEventListener("click", () => this.callbacks.onResume());
@@ -108,6 +116,8 @@ export class TowerPause {
     this.saveLeaveBtn.addEventListener("click", () => this.callbacks.onSaveLeave());
     this.clearBtn.addEventListener("click", () => this.callbacks.onClearSave());
     this.newBtn.addEventListener("click", () => this.callbacks.onNewRun());
+    this.remixBtn.addEventListener("click", () => this.callbacks.onRemix());
+    this.saveLevelBtn.addEventListener("click", () => this.callbacks.onSaveLevel());
   }
 
   isOpen(): boolean {
@@ -121,7 +131,7 @@ export class TowerPause {
     this.root.dataset.phase = "out";
     requestAnimationFrame(() => {
       this.root.dataset.phase = "in";
-      if (stats.mode === "campaign") this.tower.setCurrent(stats.floor);
+      this.tower.setCurrent(stats.floor);
     });
   }
 
@@ -148,18 +158,13 @@ export class TowerPause {
     this.timeEl.textContent = formatTime(stats.seconds);
     this.floorLabel.textContent = `Floor ${stats.floor}`;
     this.clearBtn.hidden = stats.mode !== "campaign" || !stats.hasSave;
-    if (stats.mode === "campaign") {
-      this.tower.setRun(stats.sizes, stats.floor, true, stats.themes);
-      this.floorThumb.replaceChildren();
-      if (stats.maze) {
-        this.floorThumb.append(renderMazeBoardPreview(stats.maze, {
-          showGoal: stats.showGoal,
-          landing: stats.landing,
-        }));
-      }
-    } else {
-      this.tower.hide();
-      this.floorThumb.replaceChildren();
+    this.tower.setRun(stats.sizes, stats.floor, stats.mode === "campaign", stats.themes);
+    this.floorThumb.replaceChildren();
+    if (stats.maze) {
+      this.floorThumb.append(renderMazeBoardPreview(stats.maze, {
+        showGoal: stats.showGoal,
+        landing: stats.landing,
+      }));
     }
   }
 

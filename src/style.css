@@ -219,7 +219,7 @@
   --maze-crumble-crack: #1a1612;
   --maze-crumble-mark: #e0b15a;
   --maze-switch: #24312b;
-  --maze-switch-0: #8fd0b0;
+  --maze-switch-0: #3dcf7a;
   --maze-switch-1: #6aafdf;
   --maze-switch-2: #ffbc61;
   --maze-switch-3: #c75c29;
@@ -404,6 +404,8 @@
   --maze-hover: #5ec8ff;
   --maze-ghost: #b9a3ff;
   --maze-gate: var(--maze-goal);
+  --maze-gate-ok: #3dcf7a;
+  --maze-gate-no: #e64545;
   --maze-win-neon: #ffbc61;
   --maze-fail-neon: #6a8098;
   --maze-fail-ground: #3a4048;

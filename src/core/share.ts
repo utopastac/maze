@@ -13,7 +13,9 @@ import {
 import {
   PHYSICS_KEYS,
   SETTING_SPECS,
+  SKY_THEMES,
   clampSetting,
+  clampSkyThemeIndex,
   cloneFloorPhysics,
   type FloorPhysics,
   type PhysicsSettingKey,
@@ -34,7 +36,7 @@ import {
   type Tower,
 } from "./tower.ts";
 
-const VERSION = 8;
+const VERSION = 9;
 const LEGACY_VERSION = 1;
 const THEME_VERSION = 3;
 const NAMED_VERSION = 3;
@@ -43,6 +45,8 @@ const PHYSICS_VERSION = 5;
 const STAR_VERSION = 6;
 const WINGS_VERSION = 7;
 const GHOST_VERSION = 8;
+const SKY_VERSION = 9;
+const SKY_BITS = Math.ceil(Math.log2(Math.max(2, SKY_THEMES.length)));
 const PHYSICS_BITS: Record<PhysicsSettingKey, number> = {
   gravity: 7,
   grip: 6,
@@ -242,6 +246,7 @@ function copyWithSelection(text: string): boolean {
 function writeFloor(writer: BitWriter, maze: Maze): void {
   writer.write(themeIndex(maze.theme ?? DEFAULT_FLOOR_THEME), 3);
   writePhysics(writer, maze.physics);
+  writeSky(writer, maze.skyTheme);
   writer.write(maze.cols, COORD_BITS);
   writer.write(maze.rows, COORD_BITS);
   writer.write(maze.start.c, COORD_BITS);
@@ -405,6 +410,24 @@ function readPhysics(reader: BitReader): FloorPhysics | undefined | null {
   return physics;
 }
 
+function writeSky(writer: BitWriter, skyTheme: number | undefined): void {
+  if (typeof skyTheme !== "number") {
+    writer.write(0, 1);
+    return;
+  }
+  writer.write(1, 1);
+  writer.write(clampSkyThemeIndex(skyTheme), SKY_BITS);
+}
+
+function readSky(reader: BitReader): number | undefined | null {
+  const has = reader.read(1);
+  if (has === null) return null;
+  if (has === 0) return undefined;
+  const index = reader.read(SKY_BITS);
+  if (index === null || index >= SKY_THEMES.length) return null;
+  return clampSkyThemeIndex(index);
+}
+
 function readFloor(reader: BitReader, version: number): Maze | null {
   let theme = DEFAULT_FLOOR_THEME;
   if (version >= THEME_VERSION) {
@@ -417,6 +440,12 @@ function readFloor(reader: BitReader, version: number): Maze | null {
     const decoded = readPhysics(reader);
     if (decoded === null) return null;
     physics = decoded;
+  }
+  let skyTheme: number | undefined;
+  if (version >= SKY_VERSION) {
+    const decoded = readSky(reader);
+    if (decoded === null) return null;
+    skyTheme = decoded;
   }
   const cols = reader.read(COORD_BITS);
   const rows = reader.read(COORD_BITS);
@@ -458,6 +487,7 @@ function readFloor(reader: BitReader, version: number): Maze | null {
     theme,
   };
   if (physics) maze.physics = physics;
+  if (typeof skyTheme === "number") maze.skyTheme = skyTheme;
   for (let r = 0; r < rows; r += 1) {
     for (let c = 0; c < cols - 1; c += 1) {
       const closed = reader.read(1);

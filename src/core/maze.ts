@@ -1,4 +1,8 @@
-import { cloneFloorPhysics, type FloorPhysics } from "./playSettings.ts";
+import {
+  clampSkyThemeIndex,
+  cloneFloorPhysics,
+  type FloorPhysics,
+} from "./playSettings.ts";
 import { DEFAULT_FLOOR_THEME, parseFloorTheme, type FloorThemeId } from "./theme.ts";
 
 export const Wall = {
@@ -66,6 +70,8 @@ export interface Maze {
   theme: FloorThemeId;
   /** Optional physics overrides for this floor (gravity, grip, damping). */
   physics?: FloorPhysics;
+  /** Optional void-sky theme index; omit to use the player's sky setting. */
+  skyTheme?: number;
 }
 
 export type WallAxis = "v" | "h";
@@ -190,6 +196,7 @@ export function cloneMaze(maze: Maze): Maze {
   };
   const physics = cloneFloorPhysics(src.physics);
   if (physics) next.physics = physics;
+  if (typeof src.skyTheme === "number") next.skyTheme = clampSkyThemeIndex(src.skyTheme);
   return next;
 }
 
@@ -234,6 +241,7 @@ export function resizeMaze(maze: Maze, cols: number, rows: number): Maze {
   };
   const physics = cloneFloorPhysics(src.physics);
   if (physics) next.physics = physics;
+  if (typeof src.skyTheme === "number") next.skyTheme = clampSkyThemeIndex(src.skyTheme);
 
   for (let r = 0; r < nextRows; r += 1) {
     for (let c = 0; c < nextCols - 1; c += 1) {

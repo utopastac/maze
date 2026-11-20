@@ -1,3 +1,4 @@
+import { decorateMaze } from "../core/decorate.ts";
 import {
   MAZE_MAX,
   MAZE_MIN,
@@ -25,10 +26,15 @@ import {
   resizeMaze,
   setBlock,
   setBoost,
+  setCoin,
   setCrumble,
+  setGhost,
+  setHeart,
   setIce,
   setInteriorWall,
   setPit,
+  setStar,
+  setWings,
   tileAt,
   toggleCoin,
   toggleGhost,
@@ -44,7 +50,9 @@ import {
   PHYSICS_KEYS,
   SETTING_DEFAULTS,
   SETTING_SPECS,
+  SKY_THEMES,
   clampSetting,
+  clampSkyThemeIndex,
   cloneFloorPhysics,
   defaultFloorPhysics,
   type PhysicsSettingKey,
@@ -297,6 +305,7 @@ export class LevelEditor {
   private brush: EditorTool = "move";
   private boostDir: Direction = "n";
   private readonly themeSelect: HTMLSelectElement;
+  private readonly skySelect: HTMLSelectElement;
   private readonly settingsField: HTMLElement;
   private readonly settingsOpen: HTMLButtonElement;
   private readonly settingsPanel: HTMLElement;
@@ -389,6 +398,9 @@ export class LevelEditor {
                   <label class="${styles.themeField}">
                     <select class="${styles.themeSelect}" data-theme-select aria-label="Floor theme"></select>
                   </label>
+                  <label class="${styles.themeField}">
+                    <select class="${styles.themeSelect}" data-sky-select aria-label="Floor sky"></select>
+                  </label>
                   <div class="${styles.settingsField}" data-settings>
                     <button
                       type="button"
@@ -473,6 +485,7 @@ export class LevelEditor {
     this.hintTitle = this.require("[data-hint-title]");
     this.hintBody = this.require("[data-hint-body]");
     this.themeSelect = this.require("[data-theme-select]");
+    this.skySelect = this.require("[data-sky-select]");
     this.settingsField = this.require("[data-settings]");
     this.settingsOpen = this.require("[data-settings-open]");
     this.settingsPanel = this.require("[data-settings-panel]");
@@ -499,6 +512,7 @@ export class LevelEditor {
     this.mountPalette();
     this.mountTileMenu();
     this.mountThemes();
+    this.mountSkies();
     this.mountPhysics();
     this.require("[data-scrim]").addEventListener("click", this.requestClose);
     this.require("[data-close]").addEventListener("click", this.requestClose);
@@ -612,6 +626,9 @@ export class LevelEditor {
     this.themeSelect.addEventListener("change", () => {
       this.setTheme(parseFloorTheme(this.themeSelect.value));
     });
+    this.skySelect.addEventListener("change", () => {
+      this.setSkyTheme(this.skySelect.value);
+    });
     this.settingsOpen.addEventListener("click", () => {
       this.toggleSettingsPanel();
     });
@@ -664,6 +681,7 @@ export class LevelEditor {
     this.syncFloors();
     this.syncPalette();
     this.syncThemes();
+    this.syncSky();
     this.syncPhysics();
     this.renderBoard();
     this.root.hidden = false;
@@ -765,6 +783,7 @@ export class LevelEditor {
     this.syncFloors();
     this.syncPalette();
     this.syncThemes();
+    this.syncSky();
     this.syncPhysics();
     this.renderBoard();
     this.refreshHint();
@@ -786,10 +805,15 @@ export class LevelEditor {
     const draft = this.draft;
     const theme = draft.theme;
     const physics = cloneFloorPhysics(draft.physics);
+    const skyTheme = typeof draft.skyTheme === "number"
+      ? clampSkyThemeIndex(draft.skyTheme)
+      : undefined;
     const seed = Math.floor(Math.random() * 0x7fffffff);
     const generated = carveFloor(seed, draft.cols, draft.rows, { ...draft.start });
     generated.theme = theme;
     if (physics) generated.physics = physics;
+    if (typeof skyTheme === "number") generated.skyTheme = skyTheme;
+    decorateMaze(generated, seed ^ 0x9e3779b9, 0.55 + (this.floorIndex / Math.max(1, this.tower.floors.length)) * 0.35);
     this.tower.floors[this.floorIndex] = generated;
     repairTower(this.tower);
     this.stroke = null;
@@ -802,6 +826,7 @@ export class LevelEditor {
     this.syncFloors();
     this.syncPalette();
     this.syncThemes();
+    this.syncSky();
     this.syncPhysics();
     this.renderBoard();
     this.refreshHint();
@@ -998,7 +1023,11 @@ export class LevelEditor {
       paintWarp(this.draft, point);
       if (loneWarpPair(this.draft) !== null) this.enterPairing("warp");
       else this.brushHover = null;
-    }
+    } else if (kind === "heart") setHeart(this.draft, point, true);
+    else if (kind === "coin") setCoin(this.draft, point, true);
+    else if (kind === "star") setStar(this.draft, point, true);
+    else if (kind === "wings") setWings(this.draft, point, true);
+    else if (kind === "ghost") setGhost(this.draft, point, true);
     this.syncCells();
     this.syncWalls();
     this.refreshHint();
@@ -1038,6 +1067,40 @@ export class LevelEditor {
     this.board.dataset.theme = theme;
     this.sheet.dataset.theme = theme;
     this.themeSelect.value = theme;
+  }
+
+  private mountSkies(): void {
+    this.skySelect.replaceChildren();
+    const fallback = document.createElement("option");
+    fallback.value = "";
+    fallback.textContent = "Player sky";
+    this.skySelect.append(fallback);
+    for (const [index, theme] of SKY_THEMES.entries()) {
+      const option = document.createElement("option");
+      option.value = String(index);
+      option.textContent = theme.label;
+      this.skySelect.append(option);
+    }
+    this.syncSky();
+  }
+
+  private setSkyTheme(raw: string): void {
+    const next = raw === "" ? undefined : clampSkyThemeIndex(Number(raw));
+    const current = typeof this.draft.skyTheme === "number"
+      ? clampSkyThemeIndex(this.draft.skyTheme)
+      : undefined;
+    if (current === next) return;
+    this.snapshot();
+    if (typeof next === "number") this.draft.skyTheme = next;
+    else delete this.draft.skyTheme;
+    this.syncSky();
+  }
+
+  private syncSky(): void {
+    const value = typeof this.draft.skyTheme === "number"
+      ? String(clampSkyThemeIndex(this.draft.skyTheme))
+      : "";
+    this.skySelect.value = value;
   }
 
   private mountPhysics(): void {
@@ -1205,6 +1268,7 @@ export class LevelEditor {
     this.syncFloors();
     this.syncPalette();
     this.syncThemes();
+    this.syncSky();
     this.syncPhysics();
     this.renderBoard();
     this.refreshHint();
@@ -1665,6 +1729,7 @@ export class LevelEditor {
     this.syncFloors();
     this.syncPalette();
     this.syncThemes();
+    this.syncSky();
     this.syncPhysics();
     this.renderBoard();
     this.refreshHint();
@@ -1686,6 +1751,7 @@ export class LevelEditor {
     this.syncFloors();
     this.syncPalette();
     this.syncThemes();
+    this.syncSky();
     this.syncPhysics();
     this.renderBoard();
     this.refreshHint();
@@ -1745,6 +1811,7 @@ export class LevelEditor {
     this.syncFloors();
     this.syncPalette();
     this.syncThemes();
+    this.syncSky();
     this.syncPhysics();
     this.renderBoard();
     this.refreshHint();

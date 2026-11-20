@@ -25,8 +25,7 @@
   }
 
   &[data-mode="free"] {
-    & [data-campaign-only],
-    & [data-campaign-body] {
+    & [data-campaign-only] {
       display: none;
     }
   }

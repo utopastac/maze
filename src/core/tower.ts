@@ -1,3 +1,4 @@
+import { decorateMaze } from "./decorate.ts";
 import {
   carveFloor,
   cloneMaze,
@@ -46,6 +47,8 @@ export function generateTower(seed: number, cols = 7, rows = 7, count = TOWER_FL
   for (let i = 0; i < total; i += 1) {
     const maze = carveFloor(seed + i * 97, cols, rows, landing);
     if (i < total - 1) maze.hatch = { ...maze.goal };
+    const richness = 0.35 + (i / Math.max(1, total - 1)) * 0.5;
+    decorateMaze(maze, seed + i * 131, richness);
     floors.push(maze);
     landing = { ...maze.goal };
   }
@@ -151,7 +154,9 @@ export function addFloor(tower: Tower): Tower {
   above.wings = above.wings.filter((wing) => !same(wing, landing));
   above.ghosts = above.ghosts.filter((ghost) => !same(ghost, landing));
   const seed = Math.floor(Math.random() * 0x7fffffff);
-  next.floors.push(carveFloor(seed, above.cols, above.rows, landing));
+  const floor = carveFloor(seed, above.cols, above.rows, landing);
+  decorateMaze(floor, seed ^ 0x85ebca6b, 0.45 + next.floors.length * 0.08);
+  next.floors.push(floor);
   repairTower(next);
   return next;
 }

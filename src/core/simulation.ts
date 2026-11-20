@@ -2,6 +2,7 @@ import RAPIER from "@dimforge/rapier3d-compat";
 import {
   BALL_R,
   CELL,
+  CELL_FLOOR_HALF,
   FLOOR_T,
   FRAME_GUARD,
   PIT_WELL,
@@ -34,6 +35,8 @@ const STAR_SCALE = 1.75;
 const HOVER_TIME = 8;
 const HOVER_GAP = 0.12;
 const GHOST_TIME = 8;
+/** How close the ball must be to a one-way's entry face before it opens. */
+const ONE_WAY_APPROACH = CELL * 0.55;
 
 type WarpExit = { key: string; x: number; z: number };
 
@@ -64,6 +67,8 @@ export interface Pose {
   fallingThrough: boolean;
   crumbles: CrumbleView[];
   gates: string[];
+  /** Interior wall ids for one-way gates that are currently open. */
+  oneWays: string[];
   smashed: string[];
 }
 
@@ -117,6 +122,7 @@ export class Simulation {
   private readonly crumbleGone = new Set<string>();
   private readonly switches = new Map<string, string>();
   private readonly openGates = new Set<string>();
+  private readonly openOneWays = new Set<string>();
   private readonly smashed = new Set<string>();
   private readonly hearts = new Set<string>();
   private readonly coins = new Set<string>();
@@ -296,6 +302,7 @@ export class Simulation {
         };
       }),
       gates: [...this.openGates],
+      oneWays: [...this.openOneWays],
       smashed: [...this.smashed],
     };
   }
@@ -397,6 +404,7 @@ export class Simulation {
       this.crumbleTime.clear();
       this.crumbleGone.clear();
       this.openGates.clear();
+      this.openOneWays.clear();
       this.smashed.clear();
       this.endStar();
       this.endHover();
@@ -764,9 +772,15 @@ export class Simulation {
   }
 
   private tickOneWays(): void {
-    if (this.layout.oneWays.length === 0) return;
+    if (this.layout.oneWays.length === 0) {
+      this.openOneWays.clear();
+      return;
+    }
+    this.openOneWays.clear();
     for (const surface of this.surfaces) {
-      if (surface.oneWay && surface.floor === this.active) this.syncWall(surface);
+      if (!surface.oneWay || surface.floor !== this.active) continue;
+      this.syncWall(surface);
+      if (surface.wall && this.oneWayEntry(surface)) this.openOneWays.add(surface.wall);
     }
   }
 
@@ -831,16 +845,34 @@ export class Simulation {
     return surface.oneWay ? this.oneWayEntry(surface) : false;
   }
 
-  /** A one-way wall is passable until the ball has cleared its exit face. */
+  /**
+   * A one-way opens near its entry face, stays open while the ball crosses,
+   * then closes once the exit face is cleared (blocking return).
+   */
   private oneWayEntry(surface: Surface): boolean {
     const at = surface.collider.translationWrtParent();
     const half = surface.collider.halfExtents();
     if (!at || !half || !surface.oneWay) return false;
     const local = this.localBall();
-    if (surface.oneWay === "e") return local.x < at.x + half.x;
-    if (surface.oneWay === "w") return local.x > at.x - half.x;
-    if (surface.oneWay === "s") return local.z < at.z + half.z;
-    return local.z > at.z - half.z;
+    const pad = this.ballR + 0.06;
+    if (surface.oneWay === "e") {
+      if (local.x >= at.x + half.x) return false;
+      if (at.x - half.x - local.x > ONE_WAY_APPROACH) return false;
+      return Math.abs(local.z - at.z) <= half.z + pad;
+    }
+    if (surface.oneWay === "w") {
+      if (local.x <= at.x - half.x) return false;
+      if (local.x - (at.x + half.x) > ONE_WAY_APPROACH) return false;
+      return Math.abs(local.z - at.z) <= half.z + pad;
+    }
+    if (surface.oneWay === "s") {
+      if (local.z >= at.z + half.z) return false;
+      if (at.z - half.z - local.z > ONE_WAY_APPROACH) return false;
+      return Math.abs(local.x - at.x) <= half.x + pad;
+    }
+    if (local.z <= at.z - half.z) return false;
+    if (local.z - (at.z + half.z) > ONE_WAY_APPROACH) return false;
+    return Math.abs(local.x - at.x) <= half.x + pad;
   }
 
   private beginStar(): void {
@@ -856,7 +888,6 @@ export class Simulation {
   private beginHover(): void {
     this.hoverLeft = HOVER_TIME;
     this.clearHoverPlates();
-    const span = (CELL - WALL) / 2 + 0.02;
     const hy = FLOOR_T / 2;
     for (const hole of this.holes) {
       const [c, r] = hole.split(",").map(Number);
@@ -864,7 +895,7 @@ export class Simulation {
       const x = this.originX + (c + 0.5) * CELL;
       const z = this.originZ + (r + 0.5) * CELL;
       const collider = this.world.createCollider(
-        RAPIER.ColliderDesc.cuboid(span, hy, span)
+        RAPIER.ColliderDesc.cuboid(CELL_FLOOR_HALF, hy, CELL_FLOOR_HALF)
           .setTranslation(x, -hy, z)
           .setFriction(0.45 * this.grip)
           .setRestitution(0),
@@ -954,6 +985,7 @@ export class Simulation {
       this.crumbleGone.clear();
     }
     this.openGates.clear();
+    this.openOneWays.clear();
     this.smashed.clear();
     this.syncWalls();
     this.onIce = false;

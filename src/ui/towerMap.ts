@@ -1,8 +1,11 @@
+import { MAZE_MAX } from "../core/maze.ts";
 import { DEFAULT_FLOOR_THEME, type FloorThemeId } from "../core/theme.ts";
 import styles from "./towerMap.module.css";
 
 const SECTION_WINDOW_FALLBACK = 15;
 const FLOOR_MAX_FALLBACK = 24;
+/** Keep tiny floors readable without stretching them to full column width. */
+const FLOOR_WIDTH_MIN_PCT = 18;
 
 export type TowerMapMode = "hud" | "full";
 
@@ -166,8 +169,6 @@ export class TowerMap {
   private rebuild(): void {
     const count = this.visibleCount();
     this.ensure(count);
-    const min = Math.min(...this.sizes);
-    const max = Math.max(...this.sizes);
     const moreAbove = this.sectioned && this.windowStart > 0;
     const moreBelow = this.sectioned && this.windowStart + count < this.sizes.length;
     this.bars.dataset.fade = moreAbove && moreBelow
@@ -179,8 +180,10 @@ export class TowerMap {
           : "";
     this.steps.forEach((step, index) => {
       const floorIndex = this.windowStart + index;
-      const cols = this.sizes[floorIndex] ?? min;
-      const span = max === min ? 100 : 42 + ((cols - min) / (max - min)) * 58;
+      const cols = this.sizes[floorIndex] ?? MAZE_MAX;
+      // Absolute to maze max so a 7-wide floor stays narrower than a 16-wide one,
+      // even when every visible floor shares the same size.
+      const span = Math.max(FLOOR_WIDTH_MIN_PCT, (cols / MAZE_MAX) * 100);
       step.style.width = `${span}%`;
       const theme = this.themeAt(floorIndex);
       if (step.dataset.theme !== theme) step.dataset.theme = theme;

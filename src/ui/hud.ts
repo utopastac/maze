@@ -226,7 +226,10 @@ export class Hud {
     this.authorBtn.hidden = active;
     this.shareBtn.hidden = active;
     this.winsBtn.hidden = active;
-    this.pauseBtn.hidden = !active;
+  }
+
+  setPauseVisible(on: boolean): void {
+    this.pauseBtn.hidden = !on;
   }
 
   setLives(count: number, pulse = false): void {

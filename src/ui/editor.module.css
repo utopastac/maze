@@ -1820,26 +1820,63 @@ button.deleteBtn {
     opacity: 0;
   }
 
-  &[data-one-way]::before {
-    background: color-mix(in srgb, var(--maze-gate) 62%, var(--maze-wall));
+  &[data-one-way="e"]::before {
+    background: linear-gradient(
+      to right,
+      var(--maze-gate-ok) 0 50%,
+      var(--maze-gate-no) 50% 100%
+    );
+  }
+
+  &[data-one-way="w"]::before {
+    background: linear-gradient(
+      to right,
+      var(--maze-gate-no) 0 50%,
+      var(--maze-gate-ok) 50% 100%
+    );
+  }
+
+  &[data-one-way="s"]::before {
+    background: linear-gradient(
+      to bottom,
+      var(--maze-gate-ok) 0 50%,
+      var(--maze-gate-no) 50% 100%
+    );
+  }
+
+  &[data-one-way="n"]::before {
+    background: linear-gradient(
+      to bottom,
+      var(--maze-gate-no) 0 50%,
+      var(--maze-gate-ok) 50% 100%
+    );
   }
 
   &[data-one-way]::after {
     content: "";
     position: absolute;
-    left: 50%;
-    top: 50%;
-    width: calc(var(--cell) * 0.2);
-    height: calc(var(--cell) * 0.2);
-    transform: translate(-50%, -50%);
-    background: var(--maze-gate);
+    inset: 0;
     pointer-events: none;
+    --gate-arrow-size: calc(var(--cell) * 0.2);
+    --gate-arrow: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path fill='%23e8b84a' d='M2 3.2 14 8 2 12.8Z'/></svg>");
+    background-repeat: no-repeat;
+    background-size: var(--gate-arrow-size) var(--gate-arrow-size);
+    background-position: 50% 50%;
+    background-image: var(--gate-arrow);
   }
 
-  &[data-one-way="e"]::after { clip-path: polygon(0 0, 100% 50%, 0 100%); }
-  &[data-one-way="w"]::after { clip-path: polygon(100% 0, 0 50%, 100% 100%); }
-  &[data-one-way="s"]::after { clip-path: polygon(0 0, 100% 0, 50% 100%); }
-  &[data-one-way="n"]::after { clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+  /* Arrow centered on the gate pointing travel. */
+  &[data-one-way="w"]::after {
+    --gate-arrow: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path fill='%23e8b84a' d='M14 3.2 2 8 14 12.8Z'/></svg>");
+  }
+
+  &[data-one-way="s"]::after {
+    --gate-arrow: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path fill='%23e8b84a' d='M3.2 2 8 14 12.8 2Z'/></svg>");
+  }
+
+  &[data-one-way="n"]::after {
+    --gate-arrow: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path fill='%23e8b84a' d='M3.2 14 8 2 12.8 14Z'/></svg>");
+  }
 
   &[data-pair="0"]::before { background: var(--maze-switch-0); opacity: 1; }
   &[data-pair="1"]::before { background: var(--maze-switch-1); opacity: 1; }

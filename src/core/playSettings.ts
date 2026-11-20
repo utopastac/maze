@@ -89,8 +89,20 @@ export const SETTING_DEFAULTS: Record<SettingKey, number> = {
 };
 
 export function skyThemeAt(index: number): (typeof SKY_THEMES)[number] {
-  const clamped = Math.max(0, Math.min(SKY_THEMES.length - 1, Math.round(index)));
-  return SKY_THEMES[clamped] ?? SKY_THEMES[0];
+  return SKY_THEMES[clampSkyThemeIndex(index)] ?? SKY_THEMES[0];
+}
+
+export function clampSkyThemeIndex(index: number): number {
+  return Math.max(0, Math.min(SKY_THEMES.length - 1, Math.round(index)));
+}
+
+/** Global play sky with optional floor override on top. */
+export function resolveFloorSky(
+  settings: PlaySettings,
+  skyTheme: number | undefined,
+): SkyThemeId {
+  if (typeof skyTheme === "number") return skyThemeAt(skyTheme).id;
+  return skyThemeAt(settings.values.skyTheme).id;
 }
 
 const STORAGE_KEY = "maze.settings";

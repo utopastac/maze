@@ -40,7 +40,8 @@ import { applyRendererLook, createRenderer } from "../render/createRenderer.ts";
 import { MazeWorld, type EnterPlayKind } from "../render/MazeWorld.ts";
 import { PlayHud, type PlayHudHomeAction } from "../render/playHud.ts";
 import { cloneMaze, resizeMaze } from "../core/maze.ts";
-import { DEFAULT_FLOOR_THEME } from "../core/theme.ts";
+import { saveLevel } from "../core/savedLevels.ts";
+import { DEFAULT_FLOOR_THEME, parseFloorTheme } from "../core/theme.ts";
 import { LevelEditor, type EditorMode } from "../ui/editor.ts";
 import { Home } from "../ui/home.ts";
 import { Hud } from "../ui/hud.ts";
@@ -112,7 +113,7 @@ export class App {
   private drops = 0;
   private running = false;
   private awaitingStart = false;
-  /** Home → play camera handoff (summit door or free-play hut door → curtains). */
+  /** Home → play camera handoff (summit door or free-play floor trapdoor → curtains). */
   private enteringPlay: {
     kind: EnterPlayKind;
     floor?: number;
@@ -207,6 +208,8 @@ export class App {
       onSaveLeave: () => this.saveTowerProgress(true),
       onClearSave: () => this.clearTowerProgress(),
       onNewRun: () => this.restartCampaignFresh(),
+      onRemix: () => this.remixFromPause(),
+      onSaveLevel: () => this.saveLevelFromPause(),
     });
     this.home = new Home(home, {
       onPick: (action) => this.pickHome(action),
@@ -365,6 +368,7 @@ export class App {
       this.seed = Math.floor(Math.random() * 0x7fffffff);
       if (this.view.beginEnterPlay("free")) {
         this.enteringPlay = { kind: "free" };
+        this.playHud.setSuppressPlayChrome(true);
       }
     }
 
@@ -439,6 +443,7 @@ export class App {
     this.awaitingStart = false;
     this.enteringPlay = null;
     this.browsingWins = false;
+    this.playHud.setSuppressPlayChrome(false);
     this.playHud.setStartGate(null);
     this.hud.hideHint();
     this.hud.setCelebrate(false);
@@ -447,6 +452,7 @@ export class App {
     this.campaign = null;
     this.campaignSaveId = null;
     this.hud.setCampaign(false);
+    this.hud.setPauseVisible(false);
     this.sim?.dispose();
     this.sim = null;
     this.tower = null;
@@ -602,13 +608,19 @@ export class App {
     this.clearShareNote();
     this.hud.setNote("");
     this.hud.setStats(0, 0);
+    this.hud.setPauseVisible(true);
     this.setTitleCaption();
     this.setFloorCaption(this.floorAt, this.floorCount);
     this.syncCollectHud();
     this.playHud.setVisible(true);
     this.syncPlayHud();
-    if (this.enteringPlay) this.playHud.setStartGate(null);
-    else this.syncStartGate();
+    if (this.enteringPlay) {
+      this.playHud.setSuppressPlayChrome(true);
+      this.playHud.setStartGate(null);
+    } else {
+      this.playHud.setSuppressPlayChrome(false);
+      this.syncStartGate();
+    }
     view.update(0, this.sim.pose());
   }
 
@@ -718,6 +730,7 @@ export class App {
     this.campaign = generateCampaign(Math.floor(Math.random() * 0x7fffffff));
     if (this.view?.isHomeBackdrop() && this.view.beginEnterPlay("tower")) {
       this.enteringPlay = { kind: "tower", floor: 1 };
+      this.playHud.setSuppressPlayChrome(true);
       this.markPlaying();
       this.resize();
       return;
@@ -734,6 +747,7 @@ export class App {
     const fresh = loadCampaignProgress(save.id) ?? save;
     if (this.view?.isHomeBackdrop() && this.view.beginEnterPlay("tower")) {
       this.enteringPlay = { kind: "tower", floor: fresh.floor, save: fresh };
+      this.playHud.setSuppressPlayChrome(true);
       this.playReturn = null;
       this.campaignSaveId = fresh.id;
       this.lives = Math.max(1, fresh.lives);
@@ -992,6 +1006,8 @@ export class App {
       this.playHud.update(dt, this.reduceMotion);
       if (done) {
         this.enteringPlay = null;
+        this.playHud.setSuppressPlayChrome(false);
+        this.syncPlayHud();
         if (this.awaitingStart) this.syncStartGate();
       }
       requestAnimationFrame(this.frame);
@@ -1406,24 +1422,49 @@ export class App {
 
   private towerPauseStats(note = this.pauseNote) {
     const campaign = this.campaign;
-    const maze = this.mode === "campaign"
+    const tower = this.tower;
+    const campaignMode = this.mode === "campaign";
+    const maze = campaignMode
       ? (campaign?.floors[this.floorAt - 1]?.maze ?? null)
-      : (this.tower?.floors[0] ?? null);
+      : (tower?.floors[this.floorAt - 1] ?? tower?.floors[0] ?? null);
+    const sizes = campaignMode
+      ? (campaign ? campaignSizes(campaign) : [])
+      : (tower?.floors.map((floor) => floor.cols) ?? []);
+    const themes = campaignMode
+      ? (campaign ? campaignThemes(campaign) : [])
+      : (tower?.floors.map((floor) => parseFloorTheme(floor.theme ?? DEFAULT_FLOOR_THEME)) ?? []);
     return {
-      mode: this.mode === "campaign" ? "campaign" as const : "free" as const,
+      mode: campaignMode ? "campaign" as const : "free" as const,
       floor: this.floorAt,
-      total: this.mode === "campaign" ? CAMPAIGN_FLOORS : this.floorCount,
+      total: campaignMode ? CAMPAIGN_FLOORS : this.floorCount,
       lives: this.lives,
       seconds: this.seconds,
-      sizes: campaign ? campaignSizes(campaign) : [],
-      themes: campaign ? campaignThemes(campaign) : [],
+      sizes,
+      themes,
       maze,
-      showGoal: this.floorAt >= (this.mode === "campaign" ? CAMPAIGN_FLOORS : this.floorCount),
+      showGoal: this.floorAt >= (campaignMode ? CAMPAIGN_FLOORS : this.floorCount),
       landing: this.floorAt > 1,
       hasSave: this.campaignSaveId !== null
         && loadCampaignProgress(this.campaignSaveId) !== null,
       note,
     };
+  }
+
+  private remixFromPause(): void {
+    if (this.mode !== "free" || !this.authored) return;
+    this.closePause();
+    this.setRoute({ kind: "create" });
+  }
+
+  private saveLevelFromPause(): void {
+    if (this.mode !== "free" || !this.authored) return;
+    const saved = saveLevel(this.authored);
+    if (!saved) {
+      this.setPauseNote("Couldn’t save");
+      return;
+    }
+    this.setPauseNote(`Saved “${saved.name}”`);
+    this.pause.update(this.towerPauseStats());
   }
 
   private saveTowerProgress(leave: boolean): void {
