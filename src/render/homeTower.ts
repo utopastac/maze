@@ -426,5 +426,8 @@ function addSinisterSummit(
   root.add(voidPlane);
 
   root.userData.doorCenterY = floorY + openingH * 0.5;
+  root.userData.doorFaceZ = doorZ;
+  root.userData.doorOpeningW = openingW;
+  root.userData.doorOpeningH = openingH;
   parent.add(root);
 }

@@ -194,24 +194,37 @@ export class EnterPlayController {
       return;
     }
 
-    // Summit chamber is fixed on the tower — approach along its door-facing axis.
+    // Summit chamber is fixed on the tower — stop outside so the doors fill the frame.
     const faceYaw = door ? Number(door.userData.doorYaw ?? door.rotation.y) : orbit;
     this.doorOut.set(Math.sin(faceYaw), 0, Math.cos(faceYaw));
+    const openingW = door ? Number(door.userData.doorOpeningW ?? 0.5) : 0.5;
+    const openingH = door ? Number(door.userData.doorOpeningH ?? 0.55) : 0.55;
     if (door) {
       door.getWorldPosition(this.doorPos);
+      // Root sits on the tip center — push out to the door leaves, not into the room.
+      this.doorPos.addScaledVector(this.doorOut, Number(door.userData.doorFaceZ ?? 0));
       this.doorPos.y += Number(door.userData.doorCenterY ?? 0.22);
     } else {
       this.doorPos.set(this.doorOut.x * 0.2, meadowY + HOME_TOWER_H + 0.4, this.doorOut.z * 0.2);
     }
-    this.doorEye.copy(this.doorPos).addScaledVector(this.doorOut, 0.2);
-    this.doorEye.y += 0.02;
-    this.doorLook.copy(this.doorPos).addScaledVector(this.doorOut, -0.02);
 
     const a = easeInOutCubic(Math.min(1, ep.t / ENTER_PLAY_SWAP));
+    // Tighter lens so the closed doors can own the frame without crossing the threshold.
+    const targetFov = 52;
+    const doorFov = ep.fromFov + (targetFov - ep.fromFov) * a;
+    // Stand-off from the final FOV so the stop point does not drift mid-approach.
+    const half = (targetFov * Math.PI) / 360;
+    const aspect = Math.max(this.host.camera.aspect, 0.6);
+    const distH = (openingH * 0.5) / Math.max(1e-4, Math.tan(half));
+    const distW = (openingW * 0.5) / Math.max(1e-4, Math.tan(half) * aspect);
+    // Slightly under-fill height so door leaves + frame read; never go inside.
+    const standOff = Math.max(distH, distW, openingH * 0.85) * 0.94;
+
+    this.doorLook.copy(this.doorPos);
+    this.doorEye.copy(this.doorPos).addScaledVector(this.doorOut, standOff);
+
     this.eye.lerpVectors(this.fromEye, this.doorEye, a);
     this.look.lerpVectors(this.fromLook, this.doorLook, a);
-    // Widen so the door eats the frame by the cut.
-    const doorFov = ep.fromFov + (72 - ep.fromFov) * (0.55 * a);
     this.applyLens(doorFov);
     voidSky.setZoom(1 + (ENTER_PLAY_SKY_ZOOM_DOOR - 1) * a);
   }
