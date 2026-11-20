@@ -90,29 +90,24 @@
   padding: 14px 16px 18px;
 }
 
-.empty {
+/* Base: .kit-empty */
+.list .empty {
   grid-column: 1 / -1;
   margin: 28px 0 0;
-  color: var(--ink-faint);
-  font-size: 14px;
   line-height: 1.45;
-  text-align: center;
 }
 
-.item {
+/* Base: .kit-list-row — grid card layout overrides (`.list` raises specificity). */
+.list .item {
   position: relative;
-  appearance: none;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--control-radius);
-  margin: 0;
-  padding: 10px;
   display: grid;
+  align-items: stretch;
+  justify-content: normal;
+  width: auto;
   gap: 10px;
-  background: var(--glass);
-  color: var(--ink);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
+  padding: 10px;
+  border: 1px solid var(--glass-border);
+  box-shadow: none;
   transition:
     background 0.12s ease,
     border-color 0.12s ease,
@@ -152,99 +147,21 @@
   }
 }
 
-.label {
-  display: grid;
+/* Base: .kit-list-copy / .kit-list-title / .kit-list-detail */
+.list .label {
   gap: 4px;
-  min-width: 0;
   padding-right: 28px;
 }
 
-.name {
+.list .name {
   font-size: 14px;
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.detail {
+.list .detail {
   color: var(--ink-faint);
   font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.confirm {
-  position: absolute;
-  inset: 0;
-  z-index: 20;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  pointer-events: auto;
-
-  &[hidden] {
-    display: none;
-  }
-}
-
-.confirmScrim {
-  position: absolute;
-  inset: 0;
-  background: color-mix(in srgb, var(--maze-void) 55%, transparent);
-}
-
-.confirmCard {
-  position: relative;
-  z-index: 1;
-  width: min(100%, 320px);
-  display: grid;
-  gap: 12px;
-  padding: 22px 20px 18px;
-  border-radius: var(--panel-radius);
-  background: var(--panel-fill);
-  box-shadow: var(--panel-shadow);
-  color: var(--ink);
-  text-align: center;
-}
-
-.confirmTitle {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 500;
-  line-height: 1.3;
-}
-
-.confirmBody {
-  margin: 0;
-  color: var(--ink-dim);
-  font-size: 14px;
-  line-height: 1.4;
-}
-
-.confirmActions {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  margin-top: 4px;
-}
-
-.confirmCancel,
-.confirmOk {
-  min-width: 88px;
-  height: 36px;
-  padding: 0 16px;
-  font-size: 14px;
-}
-
-.confirmOk {
-  color: #111 !important;
-  background: var(--seam) !important;
-  box-shadow: none !important;
-}
 
 .delete {
   position: absolute;

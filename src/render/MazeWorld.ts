@@ -5,13 +5,9 @@ import {
   CanvasTexture,
   CatmullRomCurve3,
   CircleGeometry,
-  ClampToEdgeWrapping,
-  Color,
   CylinderGeometry,
-  DataTexture,
   DirectionalLight,
   DoubleSide,
-  ExtrudeGeometry,
   Group,
   HemisphereLight,
   LinearFilter,
@@ -23,17 +19,13 @@ import {
   NearestFilter,
   Object3D,
   OrthographicCamera,
-  Path,
   PerspectiveCamera,
   PlaneGeometry,
   PointLight,
-  RepeatWrapping,
   RingGeometry,
   Scene,
   ShaderMaterial,
-  Shape,
   SphereGeometry,
-  SRGBColorSpace,
   TorusGeometry,
   TubeGeometry,
   Vector2,
@@ -41,24 +33,20 @@ import {
   type Material,
   type Quaternion,
   type Texture,
-  type WebGLRenderer,
 } from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import {
   BALL_R,
   CELL,
   MEADOW_DROP,
-  PIT_WELL,
   STORY,
   type MazeLayout,
   type Piece,
   type PieceKind,
   type TowerLayout,
 } from "../core/layout.ts";
-import { clamp } from "../core/math.ts";
 import { DIRECTION_VECTOR, SWITCH_COLOR_COUNT, WARP_COLOR_COUNT } from "../core/maze.ts";
 import {
-  SETTING_SPECS,
   resolveFloorSky,
   skyThemeAt,
   type PlaySettings,
@@ -72,8 +60,114 @@ import {
   makeHeartIcon,
   makeHeartMaterials,
 } from "./collectibleMeshes.ts";
-import { makeCrumbleCanvas } from "./crumblePaint.ts";
+import {
+  EnterPlayController,
+  type EnterPlayKind,
+} from "./enterPlayCamera.ts";
+import {
+  ENTER_PLAY_SKY_ZOOM_DOOR,
+  HOME_BACKDROP_SPAN,
+  HOME_TOWER_H,
+} from "./homeEnterConstants.ts";
+import {
+  addBarrenRocks,
+  addFreePlayTrapdoor,
+  addHomeShacks,
+  addOminousTower,
+  type HomeTowerContext,
+} from "./homeTower.ts";
 import { makeThemeSurfaces, type ThemeSurfaces } from "./themeMaterials.ts";
+import { easeOutCubic } from "./easing.ts";
+import {
+  MEADOW_CAM_SECS,
+  PlayCameraGlance,
+  computePlayOrbitCamera,
+  defaultMeadowY,
+  placeHomeBackdropCamera,
+  placeMeadowWinCamera,
+  playAngleFromSettings,
+  shownPlayAngle,
+  shownPlayOrbit,
+} from "./playCamera.ts";
+import {
+  type PickupBit,
+  type Debris,
+  type Spark,
+  type FireworkBit,
+  type RainBit,
+} from "./mazeWorldTypes.ts";
+import {
+  VoidSky,
+} from "./voidSky.ts";
+import {
+  starGeometry,
+  wingGeometry,
+  ghostGeometry,
+  arrowGeometry,
+  ramp,
+  paintedSteps,
+  paintedNormal,
+  organicProps,
+  setOrganicProps,
+  paintRamp,
+  makeCrumbleMat,
+  makeCrumbleWell,
+  makeVoidStarMat,
+  crumbleChunks,
+  toon,
+  glow,
+  facet,
+  makeGateTopTexture,
+  gateSignMaterial,
+  token,
+} from "./boardMaterials.ts";
+import {
+  type WinSceneKind,
+  WIN_SCENES,
+  GALLERY_SCENES,
+  WIN_GLYPH_W,
+  WIN_GLYPH_I,
+  WIN_GLYPH_N,
+  WIN_GLYPH_BANG,
+  FAIL_GLYPH_F,
+  FAIL_GLYPH_A,
+  FAIL_GLYPH_I,
+  FAIL_GLYPH_L,
+  FAIL_GLYPH_BANG,
+  GRAVE_GLYPH_RIP,
+  GRAVE_GLYPH_CROSS,
+  GRAVE_GLYPH_R,
+  SCENE_ANIMALS,
+  type AnimalBit,
+  meadowStream,
+  nearStream,
+  flatDisc,
+  makeFloorMats,
+  makeFailFloorMat,
+  type TreeKind,
+  type TreeMats,
+  makeTree,
+  makeDeadTree,
+  makeGrave,
+  makeComedySkull,
+  makeBone,
+  makeCrow,
+  makeBrokenGate,
+  makeOpenCoffin,
+  makeGraveLantern,
+  makeGhost,
+  makePalm,
+  makeCactus,
+  makeCottage,
+  makeStreetLamp,
+  makeBench,
+  makeMushroomPatch,
+  swimHeight,
+  animalScale,
+  type AnimalMats,
+  makeAnimal,
+  voxel,
+} from "./winGalleryKit.ts";
 
 const SHELL_ALPHA = 0.18;
 /** Match HUD heart/coin proportions at maze-cell scale. */
@@ -86,34 +180,15 @@ const SWITCH_CUBE_ALPHA = 0.45;
 const EXIT_GATE_R = 0.34;
 const EXIT_GATE_H = 0.58;
 const EXIT_GATE_ALPHA = 0.4;
-const ANGLE_SPEC = SETTING_SPECS.find((spec) => spec.key === "angle");
-const ANGLE_MIN = ANGLE_SPEC?.min ?? 22;
-const ANGLE_MAX = ANGLE_SPEC?.max ?? 80;
-const MEADOW_CAM_SECS = 1.25;
-const MEADOW_GLANCE_PITCH_MIN = -28;
-const MEADOW_GLANCE_PITCH_MAX = 88;
-const MEADOW_EYE_MIN = 0.55;
-const HOME_TOWER_LAYERS = 100;
-const HOME_LAYER_H = 0.145;
-const HOME_TOWER_H = HOME_TOWER_LAYERS * HOME_LAYER_H;
-const HOME_BACKDROP_SPAN = CELL * 7;
-/** Zoom door → curtains open on a distant board → dolly into play orbit. */
-const ENTER_PLAY_SECS = 3.6;
-/** Door fills the screen — mount play, open curtains onto the far board. */
-const ENTER_PLAY_SWAP = 0.42;
-/** How far past the play orbit the post-door reveal starts (board reads small). */
-const ENTER_PLAY_FAR = 2.85;
-/** Fraction of the post-swap beat spent opening curtains before/during the zoom. */
-const ENTER_PLAY_CURTAIN = 0.28;
-/** Sky gradient zoom at the door (subtle push-in). */
-const ENTER_PLAY_SKY_ZOOM_DOOR = 1.08;
-/** Sky gradient zoom as we settle on the board (parallax vs the dolly). */
-const ENTER_PLAY_SKY_ZOOM_PLAY = 1.2;
-const ENTER_CURTAIN_W = 2.6;
-const ENTER_CURTAIN_H = 2.6;
-const ENTER_CURTAIN_Z = -0.32;
+/** Content meadow size multiplier (props, signs, camera framing). */
+const MEADOW_SPAN_MULT = 2.8;
+/**
+ * Ground plane vs content span — large enough that win/fail floors reach past
+ * the camera far clip in every look direction (no visible pad edge).
+ */
+const MEADOW_GROUND_MULT = 14;
 
-export type EnterPlayKind = "tower" | "free";
+export type { EnterPlayKind };
 
 export class MazeWorld {
   readonly scene = new Scene();
@@ -186,6 +261,7 @@ export class MazeWorld {
   private readonly gateOkWallMat: MeshToonMaterial;
   private readonly gateNoWallMat: MeshToonMaterial;
   private readonly gateEdgeWallMat: MeshToonMaterial;
+  private readonly gateTopTextures: Record<NonNullable<Piece["oneWay"]>, CanvasTexture>;
   private readonly coinSparkColors: string[];
   private readonly heartSparkColors: string[];
   private readonly starSparkColors: string[];
@@ -239,38 +315,12 @@ export class MazeWorld {
   private readonly homeViewFromLook = new Vector3();
   private readonly homeViewEye = new Vector3();
   private readonly homeViewLook = new Vector3();
-  private homeTowerRoot: Group | null = null;
+  private homeTowerFloorMat: MeshToonMaterial | null = null;
+  private homeTowerWallMat: MeshToonMaterial | null = null;
   private homeDoorRoot: Group | null = null;
-  private homeDoorLeft: Mesh | null = null;
-  private homeDoorRight: Mesh | null = null;
-  private homeDoorPortal: Mesh | null = null;
   /** Meadow floor trapdoor — free-play zooms down into this hatch. */
   private homeFreeDoorRoot: Group | null = null;
-  private enterCurtainRoot: Group | null = null;
-  private enterCurtainLeft: Mesh | null = null;
-  private enterCurtainRight: Mesh | null = null;
-  private enterPlay: {
-    kind: EnterPlayKind;
-    t: number;
-    swapped: boolean;
-    crossed: boolean;
-    fromFov: number;
-    toFov: number;
-    /** Play sky active once curtains cover the cut. */
-    playSky: boolean;
-  } | null = null;
-  private readonly enterPlayFromEye = new Vector3();
-  private readonly enterPlayFromLook = new Vector3();
-  private readonly enterPlayToEye = new Vector3();
-  private readonly enterPlayToLook = new Vector3();
-  private readonly enterPlayEye = new Vector3();
-  private readonly enterPlayLook = new Vector3();
-  private readonly enterPlayDoorEye = new Vector3();
-  private readonly enterPlayDoorLook = new Vector3();
-  private readonly enterPlayPushEye = new Vector3();
-  private readonly enterPlayPushLook = new Vector3();
-  private readonly enterPlayDoorPos = new Vector3();
-  private readonly enterPlayDoorOut = new Vector3();
+  private readonly enterCtl: EnterPlayController;
   private lightningCooldown = 1.2;
   private lightningFlash = 0;
   private lightningLight: PointLight | null = null;
@@ -286,9 +336,7 @@ export class MazeWorld {
   private lastTime = 0;
   private story = STORY;
   private raised = 0;
-  private glanceDAngle = 0;
-  private glanceDOrbit = 0;
-  private glanceReturn = false;
+  private readonly playGlance = new PlayCameraGlance();
   private meadowCamT = 0;
   private meadowCamLive = false;
   private readonly meadowCamFromPos = new Vector3();
@@ -305,6 +353,15 @@ export class MazeWorld {
   constructor() {
     this.reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     this.camera = new PerspectiveCamera(30, 1, 0.1, 140);
+    this.enterCtl = new EnterPlayController({
+      camera: this.camera,
+      scene: this.scene,
+      voidSky: this.voidSky,
+      computePlayCamera: (eye, look) => this.computePlayCamera(eye, look),
+      doorRoot: (kind) => (kind === "free" ? this.homeFreeDoorRoot : this.homeDoorRoot),
+      meadowY: () => this.meadow?.position.y ?? -MEADOW_DROP,
+      homeOrbit: () => this.homeOrbit,
+    });
     this.scene.background = this.voidSky.texture;
     this.scene.add(this.board);
     this.voidStarMat = makeVoidStarMat(this.voidResolution, this.voidCamDir);
@@ -369,6 +426,7 @@ export class MazeWorld {
       building: toon(token("--maze-building")),
       buildingLit: toon(token("--maze-building-lit")),
       buildingBrick: toon(token("--maze-building-brick")),
+      buildingBrickOld: toon(token("--maze-building-brick-old")),
       buildingGlass: toon(token("--maze-building-glass")),
       awning: toon(token("--maze-awning")),
       lamp: glow(token("--maze-lamp")),
@@ -399,14 +457,7 @@ export class MazeWorld {
       vine: toon(token("--maze-vine")),
       bromeliad: toon(token("--maze-bromeliad")),
       orchid: toon(token("--maze-orchid")),
-      space: toon(token("--maze-space")),
       spaceDark: toon(token("--maze-space-dark")),
-      star: glow(token("--maze-star")),
-      auroraGreen: glow(token("--maze-aurora-green")),
-      auroraTeal: glow(token("--maze-aurora-teal")),
-      auroraViolet: glow(token("--maze-aurora-violet")),
-      auroraPink: glow(token("--maze-aurora-pink")),
-      auroraBlue: glow(token("--maze-aurora-blue")),
       discoFloor: toon(token("--maze-disco-floor")),
       discoFloorDark: toon(token("--maze-disco-floor-dark")),
       winNeon: toon(token("--maze-win-neon"), token("--maze-win-neon"), 0.35),
@@ -423,12 +474,6 @@ export class MazeWorld {
     this.groundMats.fire.emissiveIntensity = 0.95;
     this.groundMats.fireCore.emissiveIntensity = 1.1;
     this.groundMats.sulfurGlow.emissiveIntensity = 0.85;
-    this.groundMats.star.emissiveIntensity = 0.95;
-    this.groundMats.auroraGreen.emissiveIntensity = 0.9;
-    this.groundMats.auroraTeal.emissiveIntensity = 0.85;
-    this.groundMats.auroraViolet.emissiveIntensity = 0.9;
-    this.groundMats.auroraPink.emissiveIntensity = 0.85;
-    this.groundMats.auroraBlue.emissiveIntensity = 0.8;
     this.streamMat = toon(token("--maze-stream"), token("--maze-stream"), 0.2);
     this.streamDeepMat = toon(token("--maze-stream-deep"), token("--maze-stream"), 0.12);
     this.oceanMat = toon(token("--maze-ocean"), token("--maze-ocean"), 0.18);
@@ -574,6 +619,12 @@ export class MazeWorld {
     this.gateOkWallMat = toon(token("--maze-gate-ok"), token("--maze-gate-ok"), 0.35);
     this.gateNoWallMat = toon(token("--maze-gate-no"), token("--maze-gate-no"), 0.35);
     this.gateEdgeWallMat = toon(token("--maze-gate"), token("--maze-gate"), 0.2);
+    this.gateTopTextures = {
+      e: makeGateTopTexture("e"),
+      w: makeGateTopTexture("w"),
+      n: makeGateTopTexture("n"),
+      s: makeGateTopTexture("s"),
+    };
     this.coinSparkColors = [token("--maze-coin"), token("--maze-coin-shine"), "#ffffff"];
     this.heartSparkColors = [token("--maze-heart"), "#ff8a9a", "#ffffff"];
     this.starSparkColors = [
@@ -671,7 +722,7 @@ export class MazeWorld {
   }
 
   setTower(layout: TowerLayout, opts?: { fromEnterPlay?: boolean }): void {
-    const fromEnter = Boolean(opts?.fromEnterPlay && this.enterPlay);
+    const fromEnter = Boolean(opts?.fromEnterPlay && this.enterCtl.state);
     this.tower = layout;
     this.story = layout.story;
     this.raised = 0;
@@ -680,7 +731,6 @@ export class MazeWorld {
     this.clearDebris();
     this.clearSparks();
     this.homeBackdrop = false;
-    this.homeTowerRoot = null;
     this.clearLightning();
     this.restoreHomeLighting();
     this.meadowCamLive = false;
@@ -705,7 +755,7 @@ export class MazeWorld {
       this.floorGroups.push(group);
     });
     this.setGoalLightsVisible(true);
-    if (fromEnter && this.enterPlay) {
+    if (fromEnter && this.enterCtl.state) {
       this.ball.visible = true;
       this.syncShell(0, true);
       return;
@@ -779,8 +829,14 @@ export class MazeWorld {
 
   enterWinGallery(): void {
     this.homeBackdrop = false;
+    this.homeView = "menu";
+    this.homeViewBlend = 1;
     this.clearLightning();
     this.restoreHomeLighting();
+    this.key.shadow.camera.far = 40;
+    this.camera.far = 140;
+    this.camera.fov = this.settings?.values.field ?? 40;
+    this.camera.updateProjectionMatrix();
     this.escaped = true;
     this.failed = false;
     this.clearGoalMarkers();
@@ -790,6 +846,15 @@ export class MazeWorld {
     }
     for (const frame of this.frames) {
       if (frame) frame.visible = false;
+    }
+    // Gallery from the title screen has no play tower — give meadows a normal footprint.
+    if (!this.tower || this.tower.floors.length === 0) {
+      this.tower = {
+        floors: [],
+        width: CELL * 11,
+        depth: CELL * 11,
+        story: STORY,
+      };
     }
     this.winSceneIndex = 0;
     this.applyWinScene(0);
@@ -843,12 +908,11 @@ export class MazeWorld {
   }
 
   leaveHomeBackdrop(): void {
-    if (!this.homeBackdrop && !this.enterPlay) return;
+    if (!this.homeBackdrop && !this.enterCtl.state) return;
     this.clearEnterPlay(false);
     this.homeBackdrop = false;
     this.homeView = "menu";
     this.homeViewBlend = 1;
-    this.homeTowerRoot = null;
     this.escaped = false;
     this.failed = false;
     this.meadowCamLive = false;
@@ -894,35 +958,28 @@ export class MazeWorld {
       this.clearEnterPlay(false);
       return false;
     }
-    this.enterPlayFromEye.copy(this.camera.position);
-    this.enterPlayFromLook.copy(this.meadowCamLook);
-    this.enterPlay = {
+    this.enterCtl.begin(
       kind,
-      t: 0,
-      swapped: false,
-      crossed: false,
-      fromFov: this.camera.fov,
-      toFov: this.settings?.values.field ?? 40,
-      playSky: false,
-    };
+      this.camera.position,
+      this.meadowCamLook,
+      this.camera.fov,
+      this.settings?.values.field ?? 40,
+    );
     this.restCamera();
-    this.glanceReturn = false;
     return true;
   }
 
   isEnterPlay(): boolean {
-    return this.enterPlay !== null;
+    return this.enterCtl.state !== null;
   }
 
   enterPlayNeedsSwap(): boolean {
-    const ep = this.enterPlay;
-    if (!ep || ep.swapped) return false;
-    return ep.t >= ENTER_PLAY_SWAP;
+    return this.enterCtl.needsSwap();
   }
 
   /** Call after mounting the play tower mid-transition. */
   notifyEnterPlaySwapped(): void {
-    const ep = this.enterPlay;
+    const ep = this.enterCtl.state;
     if (!ep || ep.swapped) return;
     ep.swapped = true;
     ep.toFov = this.settings?.values.field ?? 40;
@@ -934,14 +991,9 @@ export class MazeWorld {
    * Call every frame while `isEnterPlay()`; mount the play tower when `enterPlayNeedsSwap()`.
    */
   tickEnterPlay(dt: number, time: number): boolean {
-    const ep = this.enterPlay;
+    const ep = this.enterCtl.state;
     if (!ep) return true;
-    ep.t = Math.min(1, ep.t + dt / ENTER_PLAY_SECS);
-    if (ep.crossed) {
-      // Curtains part quickly so the distant board is readable, then the zoom owns the beat.
-      const zoomU = (ep.t - ENTER_PLAY_SWAP) / Math.max(1e-4, 1 - ENTER_PLAY_SWAP);
-      this.syncEnterCurtains(clamp(zoomU / ENTER_PLAY_CURTAIN, 0, 1));
-    }
+    const done = this.enterCtl.advance(dt);
     if (this.homeBackdrop && !ep.playSky) {
       this.tickLightning(dt);
       this.tickRain(dt);
@@ -951,17 +1003,15 @@ export class MazeWorld {
         this.lightningFlash = 0;
         if (this.lightningLight) this.lightningLight.intensity = 0;
         if (this.lightningBolt) this.lightningBolt.visible = false;
+        this.setTowerLightningFlash(0);
       }
       this.syncVoidSky(time);
     }
     this.placeCamera();
-    if (ep.t < 1) return false;
+    if (!done) return false;
     this.finishEnterPlay();
     return true;
   }
-
-  /** Kept for App frame compatibility — tower enter no longer needs an offscreen portal pass. */
-  renderEnterPortal(_renderer: WebGLRenderer): void {}
 
   /** Tick rain, lightning, and orbit camera while the title backdrop is up. */
   updateHome(time: number): void {
@@ -987,31 +1037,28 @@ export class MazeWorld {
   }
 
   private finishEnterPlay(): void {
-    if (!this.enterPlay) return;
-    if (!this.enterPlay.crossed) this.beginEnterCurtainReveal();
+    const ep = this.enterCtl.state;
+    if (!ep) return;
+    if (!ep.crossed) this.beginEnterCurtainReveal();
     this.board.position.set(0, 0, 0);
     this.ball.visible = true;
     for (const group of this.floorGroups) if (group) group.visible = true;
     for (const frame of this.frames) if (frame) frame.visible = true;
-    this.camera.fov = this.enterPlay.toFov;
+    this.camera.fov = ep.toFov;
     this.camera.far = 140;
     this.key.shadow.camera.far = 40;
     this.camera.up.set(0, 1, 0);
     this.camera.updateProjectionMatrix();
-    this.enterPlay = null;
+    this.enterCtl.release();
     this.meadowCamLive = false;
     this.meadowCamT = 0;
     this.restoreHomeLighting();
-    this.disposeEnterCurtains();
-    this.voidSky.setZoom(1);
     this.placeCamera();
   }
 
   private clearEnterPlay(restoreBoard: boolean): void {
-    if (!this.enterPlay && this.board.position.y === 0) return;
-    this.enterPlay = null;
-    this.disposeEnterCurtains();
-    this.voidSky.setZoom(1);
+    if (!this.enterCtl.state && this.board.position.y === 0) return;
+    this.enterCtl.release();
     this.camera.up.set(0, 1, 0);
     if (restoreBoard) {
       this.board.position.set(0, 0, 0);
@@ -1024,7 +1071,7 @@ export class MazeWorld {
    * from a pulled-back play orbit so the board reads far away before we dolly in.
    */
   private beginEnterCurtainReveal(): void {
-    const ep = this.enterPlay;
+    const ep = this.enterCtl.state;
     if (!ep || ep.crossed) return;
     ep.crossed = true;
     ep.playSky = true;
@@ -1037,98 +1084,13 @@ export class MazeWorld {
     for (const group of this.floorGroups) if (group) group.visible = true;
     for (const frame of this.frames) if (frame) frame.visible = true;
     this.ball.visible = true;
-    this.computePlayCamera(this.enterPlayToEye, this.enterPlayToLook);
-    // Pull the eye back along the play orbit so curtains open onto a distant board.
-    this.enterPlayFromLook.copy(this.enterPlayToLook);
-    this.enterPlayDoorOut.subVectors(this.enterPlayToEye, this.enterPlayToLook);
-    this.enterPlayFromEye
-      .copy(this.enterPlayToLook)
-      .addScaledVector(this.enterPlayDoorOut, ENTER_PLAY_FAR);
-    ep.fromFov = Math.min(72, ep.toFov + 14);
-    this.enterPlayEye.copy(this.enterPlayFromEye);
-    this.enterPlayLook.copy(this.enterPlayFromLook);
-    this.camera.up.set(0, 1, 0);
-    this.camera.position.copy(this.enterPlayEye);
-    this.camera.lookAt(this.enterPlayLook);
-    this.applyEnterPlayLens(ep.fromFov);
+    this.enterCtl.positionRevealCamera();
     const themeId = this.playSkyThemeId();
     this.voidSky.configure(this.settings?.values.skyPixels ?? 4, this.settings?.values.skyShade ?? 6, themeId);
     this.voidSky.setZoom(ENTER_PLAY_SKY_ZOOM_DOOR);
     this.voidSky.paint(this.lastTime, true);
     this.scene.background = this.voidSky.texture;
-    this.ensureEnterCurtains();
-    this.syncEnterCurtains(0);
-  }
-
-  /** Full-frame wood panels parented to the camera — slide apart like curtains. */
-  private ensureEnterCurtains(): void {
-    if (this.enterCurtainRoot) {
-      this.enterCurtainRoot.visible = true;
-      this.syncEnterCurtains(0);
-      return;
-    }
-    if (!this.camera.parent) this.scene.add(this.camera);
-    const root = new Group();
-    root.renderOrder = 1000;
-    const mkMat = (hex: string): MeshBasicMaterial => {
-      const mat = new MeshBasicMaterial({
-        color: hex,
-        toneMapped: false,
-        depthTest: false,
-        depthWrite: false,
-      });
-      return mat;
-    };
-    const left = new Mesh(
-      new PlaneGeometry(ENTER_CURTAIN_W, ENTER_CURTAIN_H),
-      mkMat(token("--maze-wreck")),
-    );
-    const right = new Mesh(
-      new PlaneGeometry(ENTER_CURTAIN_W, ENTER_CURTAIN_H),
-      mkMat(token("--maze-wreck-dark")),
-    );
-    left.position.set(-ENTER_CURTAIN_W * 0.5, 0, ENTER_CURTAIN_Z);
-    right.position.set(ENTER_CURTAIN_W * 0.5, 0, ENTER_CURTAIN_Z);
-    left.renderOrder = 1001;
-    right.renderOrder = 1001;
-    left.frustumCulled = false;
-    right.frustumCulled = false;
-    left.userData.owned = true;
-    right.userData.owned = true;
-    root.add(left, right);
-    this.camera.add(root);
-    this.enterCurtainRoot = root;
-    this.enterCurtainLeft = left;
-    this.enterCurtainRight = right;
-  }
-
-  private syncEnterCurtains(open: number): void {
-    const root = this.enterCurtainRoot;
-    const left = this.enterCurtainLeft;
-    const right = this.enterCurtainRight;
-    if (!root || !left || !right) return;
-    const a = easeInOutCubic(clamp(open, 0, 1));
-    const slide = a * (ENTER_CURTAIN_W + 0.2);
-    left.position.set(-ENTER_CURTAIN_W * 0.5 - slide, 0, ENTER_CURTAIN_Z);
-    right.position.set(ENTER_CURTAIN_W * 0.5 + slide, 0, ENTER_CURTAIN_Z);
-    root.visible = a < 0.995;
-  }
-
-  private disposeEnterCurtains(): void {
-    const root = this.enterCurtainRoot;
-    if (root) {
-      this.camera.remove(root);
-      root.traverse((child) => {
-        if (!(child instanceof Mesh)) return;
-        child.geometry.dispose();
-        if (child.userData.owned && child.material instanceof MeshBasicMaterial) {
-          child.material.dispose();
-        }
-      });
-    }
-    this.enterCurtainRoot = null;
-    this.enterCurtainLeft = null;
-    this.enterCurtainRight = null;
+    this.enterCtl.showCurtains();
   }
 
   winGalleryScenes(): readonly string[] {
@@ -1249,7 +1211,7 @@ export class MazeWorld {
       this.key.shadow.map = null;
     }
     this.applyBallLook(normal);
-    organicProps = normal;
+    setOrganicProps(normal);
     this.syncVoidSky(this.lastTime);
     if (lookChanged && this.homeBackdrop) this.buildHomeScene();
     else if (lookChanged && this.escaped && !this.failed) this.applyWinScene(this.winSceneIndex);
@@ -1326,7 +1288,7 @@ export class MazeWorld {
   private syncVoidSky(time: number): void {
     const chunk = this.settings?.values.skyPixels ?? 4;
     const steps = this.settings?.values.skyShade ?? 6;
-    const themeId = (this.homeBackdrop && !this.enterPlay?.playSky) || this.failed
+    const themeId = (this.homeBackdrop && !this.enterCtl.state?.playSky) || this.failed
       ? "sad"
       : this.escaped
         ? "rainbow"
@@ -1357,50 +1319,23 @@ export class MazeWorld {
   }
 
   nudgeCamera(dAngle: number, dOrbit: number): void {
-    if (dAngle === 0 && dOrbit === 0) return;
     if (this.escaped || this.homeBackdrop) {
-      this.glanceDAngle = clamp(
-        this.glanceDAngle + dAngle,
-        MEADOW_GLANCE_PITCH_MIN,
-        MEADOW_GLANCE_PITCH_MAX,
-      );
-      this.glanceDOrbit = wrapDegrees(this.glanceDOrbit + dOrbit);
-      this.glanceReturn = false;
-      if (Math.abs(this.glanceDAngle) < 0.05 && Math.abs(this.glanceDOrbit) < 0.05) this.restCamera();
+      this.playGlance.nudgeMeadow(dAngle, dOrbit);
       return;
     }
-    const playAngle = this.playAngle();
-    const nextAngle = clamp(playAngle + this.glanceDAngle + dAngle, ANGLE_MIN, ANGLE_MAX);
-    this.glanceDAngle = nextAngle - playAngle;
-    this.glanceDOrbit = wrapDegrees(this.glanceDOrbit + dOrbit);
-    this.glanceReturn = false;
-    if (Math.abs(this.glanceDAngle) < 0.05 && Math.abs(this.glanceDOrbit) < 0.05) this.restCamera();
+    this.playGlance.nudgePlay(dAngle, dOrbit, playAngleFromSettings(this.settings));
   }
 
   recallCamera(): void {
-    if (this.glanceDAngle === 0 && this.glanceDOrbit === 0) return;
-    if (this.reduceMotion) {
-      this.restCamera();
-      return;
-    }
-    this.glanceReturn = true;
+    this.playGlance.recall(this.reduceMotion);
   }
 
   stepCamera(dt: number): void {
-    if (!this.glanceReturn) return;
-    if (Math.abs(this.glanceDAngle) < 0.12 && Math.abs(this.glanceDOrbit) < 0.12) {
-      this.restCamera();
-      return;
-    }
-    const k = 1 - Math.exp(-4.5 * dt);
-    this.glanceDAngle += (0 - this.glanceDAngle) * k;
-    this.glanceDOrbit = wrapDegrees(this.glanceDOrbit + (0 - this.glanceDOrbit) * k);
+    this.playGlance.step(dt);
   }
 
   restCamera(): void {
-    this.glanceDAngle = 0;
-    this.glanceDOrbit = 0;
-    this.glanceReturn = false;
+    this.playGlance.rest();
   }
 
   update(time: number, pose: Pose): void {
@@ -2151,7 +2086,7 @@ export class MazeWorld {
   private launchFirework(meadow: Group): void {
     const tower = this.tower;
     if (!tower) return;
-    const span = Math.max(tower.width, tower.depth) * 2.8;
+    const span = Math.max(tower.width, tower.depth) * MEADOW_SPAN_MULT;
     const x = (Math.random() - 0.5) * span * 1.55;
     const y = span * (0.14 + Math.random() * 0.34);
     const z = -span * (0.12 + Math.random() * 0.55);
@@ -2252,7 +2187,7 @@ export class MazeWorld {
   private spawnRaindrop(meadow: Group): void {
     const tower = this.tower;
     if (!tower) return;
-    const span = Math.max(tower.width, tower.depth) * 2.8;
+    const span = Math.max(tower.width, tower.depth) * MEADOW_SPAN_MULT;
     const x = (Math.random() - 0.5) * span * 1.35;
     const y = span * (0.55 + Math.random() * 0.55);
     const z = (Math.random() - 0.5) * span * 1.15 - span * 0.08;
@@ -2565,7 +2500,7 @@ export class MazeWorld {
     this.clearMeadow();
     const tower = this.tower;
     if (!tower) return;
-    const span = Math.max(tower.width, tower.depth) * 2.8;
+    const span = Math.max(tower.width, tower.depth) * MEADOW_SPAN_MULT;
     const group = new Group();
     group.position.y = -MEADOW_DROP;
     group.visible = true;
@@ -2614,8 +2549,6 @@ export class MazeWorld {
       const river = meadowStream(span);
       this.addRibbon(group, river, this.streamDeepMat, this.streamMat);
       this.addRainforest(group, span, river);
-    } else if (kind === "aurora") {
-      this.addAuroraSpace(group, span);
     } else {
       this.addDiscoFloor(group, span);
     }
@@ -2670,24 +2603,25 @@ export class MazeWorld {
     this.clearMeadow();
     const tower = this.tower;
     if (!tower) return;
-    const span = Math.max(tower.width, tower.depth) * 2.8;
+    const span = Math.max(tower.width, tower.depth) * MEADOW_SPAN_MULT;
+    const ground = this.meadowGroundSpan(span);
     const group = new Group();
     group.position.y = -MEADOW_DROP;
     group.visible = true;
     group.userData.generated = true;
     this.rainCooldown = 0.01;
 
-    const pad = new Mesh(new BoxGeometry(span, 0.22, span), this.groundMats.failGroundDark);
+    const pad = new Mesh(new BoxGeometry(ground, 0.22, ground), this.groundMats.failGroundDark);
     pad.position.y = -0.11;
     pad.receiveShadow = organicProps;
     group.add(pad);
 
-    const tiles = Math.max(4, Math.round(span / 2.4));
+    const tiles = Math.max(4, Math.round(ground / 2.4));
     if (this.failFloorMat.map) {
       this.failFloorMat.map.repeat.set(tiles, tiles);
       this.failFloorMat.map.needsUpdate = true;
     }
-    const carpet = new Mesh(new PlaneGeometry(span, span), this.failFloorMat);
+    const carpet = new Mesh(new PlaneGeometry(ground, ground), this.failFloorMat);
     carpet.rotation.x = -Math.PI / 2;
     carpet.position.y = 0.01;
     carpet.receiveShadow = organicProps;
@@ -2709,10 +2643,11 @@ export class MazeWorld {
   }
 
   private addFailRubble(parent: Group, span: number): void {
-    const rim = span * 0.4;
-    for (let i = 0; i < 42; i += 1) {
-      const a = i * 1.19 + 0.35;
-      const radius = rim * (0.22 + ((i * 23) % 100) / 100 * 0.78);
+    const rim = span * 0.46;
+    for (let i = 0; i < 36; i += 1) {
+      const a = i * 1.31 + 0.4;
+      // Keep the center clear for graves / ghost / skull.
+      const radius = rim * (0.42 + ((i * 23) % 100) / 100 * 0.58);
       const rock = new Mesh(
         new BoxGeometry(
           0.1 + (i % 6) * 0.07,
@@ -2730,7 +2665,7 @@ export class MazeWorld {
       rock.position.set(
         Math.cos(a) * radius,
         0.04 + (i % 4) * 0.02,
-        Math.sin(a) * radius * 0.9,
+        Math.sin(a) * radius * 0.92,
       );
       rock.rotation.y = a * 0.7;
       rock.rotation.z = ((i % 7) - 3) * 0.05;
@@ -2739,13 +2674,13 @@ export class MazeWorld {
       rock.receiveShadow = organicProps;
       parent.add(rock);
     }
-    for (let i = 0; i < 14; i += 1) {
-      const a = i * 1.73 + 0.9;
+    for (let i = 0; i < 10; i += 1) {
+      const a = i * 1.95 + 0.7;
       const pile = new Group();
       pile.position.set(
-        Math.cos(a) * rim * (0.45 + (i % 3) * 0.12),
+        Math.cos(a) * rim * (0.58 + (i % 3) * 0.12),
         0,
-        Math.sin(a) * rim * (0.4 + (i % 4) * 0.1),
+        Math.sin(a) * rim * (0.55 + (i % 4) * 0.1),
       );
       pile.rotation.y = a * 0.5;
       const mat = i % 2 === 0 ? this.groundMats.failGround : this.groundMats.failGroundDark;
@@ -2757,14 +2692,14 @@ export class MazeWorld {
   }
 
   private addFailDeadTrees(parent: Group, span: number): void {
-    const rim = span * 0.38;
+    const rim = span * 0.46;
     const spots: { x: number; z: number; scale: number; lean: number }[] = [
-      { x: rim * -0.92, z: rim * -0.55, scale: 1.35, lean: 0.12 },
-      { x: rim * 0.88, z: rim * -0.48, scale: 1.2, lean: -0.18 },
-      { x: rim * -0.7, z: rim * 0.62, scale: 1.05, lean: 0.22 },
-      { x: rim * 0.78, z: rim * 0.55, scale: 1.45, lean: -0.08 },
-      { x: rim * -0.2, z: rim * -0.85, scale: 0.95, lean: 0.28 },
-      { x: rim * 0.35, z: rim * 0.78, scale: 1.1, lean: -0.25 },
+      { x: rim * -0.95, z: rim * -0.35, scale: 1.35, lean: 0.12 },
+      { x: rim * 0.96, z: rim * -0.28, scale: 1.2, lean: -0.18 },
+      { x: rim * -0.88, z: rim * 0.72, scale: 1.05, lean: 0.22 },
+      { x: rim * 0.9, z: rim * 0.68, scale: 1.45, lean: -0.08 },
+      { x: rim * -0.35, z: rim * -0.92, scale: 0.95, lean: 0.28 },
+      { x: rim * 0.42, z: rim * 0.95, scale: 1.1, lean: -0.25 },
     ];
     for (const spot of spots) {
       parent.add(makeDeadTree(spot.x, spot.z, spot.scale, spot.lean, this.treeMats.trunk));
@@ -2772,7 +2707,8 @@ export class MazeWorld {
   }
 
   private addFailGraves(parent: Group, span: number): void {
-    const rim = span * 0.32;
+    // Left cemetery plot — spread along a diagonal away from the ghost.
+    const rim = span * 0.4;
     const graves: {
       x: number;
       z: number;
@@ -2780,9 +2716,9 @@ export class MazeWorld {
       yaw: number;
       glyph: string[];
     }[] = [
-      { x: rim * -0.55, z: rim * 0.15, scale: 1.35, yaw: 0.18, glyph: GRAVE_GLYPH_RIP },
-      { x: rim * 0.58, z: rim * -0.08, scale: 1.5, yaw: -0.22, glyph: GRAVE_GLYPH_CROSS },
-      { x: rim * 0.05, z: rim * 0.52, scale: 1.2, yaw: 0.05, glyph: GRAVE_GLYPH_R },
+      { x: rim * -0.82, z: rim * -0.05, scale: 1.35, yaw: 0.22, glyph: GRAVE_GLYPH_RIP },
+      { x: rim * -0.58, z: rim * 0.48, scale: 1.5, yaw: -0.12, glyph: GRAVE_GLYPH_CROSS },
+      { x: rim * -0.92, z: rim * 0.42, scale: 1.15, yaw: 0.35, glyph: GRAVE_GLYPH_R },
     ];
     for (const grave of graves) {
       parent.add(
@@ -2802,13 +2738,14 @@ export class MazeWorld {
   }
 
   private addFailSkull(parent: Group, span: number): void {
-    const rim = span * 0.32;
+    // Front-right focal piece, clear of the coffin and bones.
+    const rim = span * 0.4;
     const skull = makeComedySkull(
-      rim * 0.62,
-      rim * -0.72,
+      rim * 0.72,
+      rim * -0.78,
       2.35,
-      -0.2,
-      0.18,
+      -0.28,
+      0.12,
       this.groundMats.plaster,
       this.animalMats.sheep,
       this.groundMats.failCrack,
@@ -2830,22 +2767,23 @@ export class MazeWorld {
   }
 
   private addFailBones(parent: Group, span: number): void {
-    const rim = span * 0.32;
+    const rim = span * 0.4;
     const bone = this.groundMats.plaster;
     const boneLit = this.animalMats.sheep;
-    parent.add(makeBone(rim * 0.38, rim * -0.42, 1.15, 0.9, 0.35, bone, boneLit));
-    parent.add(makeBone(rim * 0.78, rim * -0.55, 1.0, -0.55, -0.2, bone, boneLit));
-    parent.add(makeBone(rim * -0.28, rim * 0.22, 0.95, 1.35, 0.15, bone, boneLit));
+    parent.add(makeBone(rim * 0.42, rim * -0.52, 1.15, 0.9, 0.35, bone, boneLit));
+    parent.add(makeBone(rim * 0.88, rim * -0.42, 1.0, -0.55, -0.2, bone, boneLit));
+    parent.add(makeBone(rim * -0.35, rim * -0.72, 0.95, 1.35, 0.15, bone, boneLit));
   }
 
   private addFailGate(parent: Group, span: number): void {
-    const rim = span * 0.38;
+    // Back-center under the FAIL sign.
+    const rim = span * 0.44;
     parent.add(
       makeBrokenGate(
-        rim * -0.15,
-        rim * 0.82,
+        rim * 0.08,
+        rim * 0.88,
         1.35,
-        0.08,
+        -0.05,
         this.groundMats.moonRock,
         this.groundMats.failGroundDark,
         this.groundMats.failCrack,
@@ -2854,14 +2792,15 @@ export class MazeWorld {
   }
 
   private addFailCoffin(parent: Group, span: number): void {
-    const rim = span * 0.32;
+    // Mid-right, opposite the cemetery.
+    const rim = span * 0.4;
     parent.add(
       makeOpenCoffin(
-        rim * -0.72,
-        rim * -0.35,
+        rim * 0.78,
+        rim * 0.28,
         1.25,
-        0.55,
-        -0.28,
+        -0.85,
+        0.18,
         this.groundMats.wreck,
         this.groundMats.wreckDark,
         this.groundMats.plaster,
@@ -2871,12 +2810,15 @@ export class MazeWorld {
   }
 
   private addFailLantern(parent: Group, span: number): void {
-    const rim = span * 0.32;
+    // Between graves so the fire reads across the left plot.
+    const rim = span * 0.4;
+    const lx = rim * -0.62;
+    const lz = rim * 0.18;
     const lantern = makeGraveLantern(
-      rim * -0.42,
-      rim * 0.22,
+      lx,
+      lz,
       1.15,
-      0.2,
+      0.25,
       this.groundMats.wreckDark,
       this.groundMats.moonRock,
       this.groundMats.fire,
@@ -2889,23 +2831,34 @@ export class MazeWorld {
       }
     }
     const light = new PointLight(token("--maze-fire"), 1.8, 6.5, 2);
-    light.position.set(rim * -0.42, 0.85, rim * 0.22);
+    light.position.set(lx, 0.85, lz);
     parent.add(light);
     this.meadowLight = light;
   }
 
   private addFailGhost(parent: Group, span: number): void {
-    const rim = span * 0.32;
+    // Center stage, facing the camera — clear of graves and skull.
+    const rim = span * 0.4;
     const body = this.animalMats.jellyGlow;
     const shade = this.groundMats.failNeon;
-    const eyes = this.groundMats.failCrack;
-    const ghost = makeGhost(rim * -0.35, rim * 0.05, 1.35, 0.4, body, shade, eyes);
+    const pupils = this.groundMats.failCrack;
+    const whites = this.animalMats.sheep;
+    const ghost = makeGhost(
+      rim * 0.08,
+      rim * -0.12,
+      2.45,
+      0.18,
+      body,
+      shade,
+      pupils,
+      whites,
+    );
     ghost.userData.planetFloat = true;
     ghost.userData.baseY = ghost.position.y;
     ghost.userData.driftPhase = 0.6;
-    ghost.userData.driftSpeed = 1.35;
-    ghost.userData.bobAmp = 0.14;
-    ghost.userData.spin = 0.35;
+    ghost.userData.driftSpeed = 1.15;
+    ghost.userData.bobAmp = 0.2;
+    ghost.userData.spin = 0.22;
     parent.add(ghost);
     this.meadowFlames.push(ghost);
   }
@@ -2938,12 +2891,13 @@ export class MazeWorld {
     carpet.receiveShadow = organicProps;
     group.add(carpet);
 
-    this.addBarrenRocks(group, span);
+    const homeCtx = this.homeTowerContext();
+    addBarrenRocks(homeCtx, group, span);
     // Tower footprint still keyed to the playable tower span, not the expanded ground.
-    const towerSpan = Math.max(tower.width, tower.depth) * 2.8;
-    this.addOminousTower(group, towerSpan);
-    this.addFreePlayTrapdoor(group, span, towerSpan * 0.36);
-    this.addHomeShacks(group, span, towerSpan * 0.36);
+    const towerSpan = Math.max(tower.width, tower.depth) * MEADOW_SPAN_MULT;
+    addOminousTower(homeCtx, group, towerSpan);
+    addFreePlayTrapdoor(homeCtx, group, span, towerSpan * 0.36);
+    addHomeShacks(homeCtx, group, span, towerSpan * 0.36);
 
     const light = new PointLight("#eef4ff", 0, span * 3.2, 1.6);
     light.position.set(0, 1.5, span * 0.15);
@@ -2963,407 +2917,23 @@ export class MazeWorld {
     for (let i = 0; i < 64; i += 1) this.spawnRaindrop(group);
   }
 
-  /**
-   * Sealed hatch set into the barren floor — free-play zooms down into the pit.
-   */
-  private addFreePlayTrapdoor(parent: Group, span: number, towerBase: number): void {
-    const wood = this.groundMats.wreck;
-    const woodDark = this.groundMats.wreckDark;
-    const stone = this.groundMats.moonRock;
-    const shade = this.groundMats.failCrack;
-    const iron = this.groundMats.failGroundDark;
-    const rim = span * 0.34;
-    let x = rim * 0.42;
-    let z = rim * 0.58;
-    if (Math.hypot(x, z) < towerBase * 0.7) {
-      x = rim * 0.55;
-      z = rim * 0.62;
-    }
-    const size = 0.92;
-    const frame = 0.1;
-    const leaf = size * 0.42;
-    const root = new Group();
-    this.homeFreeDoorRoot = root;
-    root.position.set(x, 0, z);
-    root.rotation.y = 0;
-    root.userData.trapdoor = true;
-    root.userData.doorCenterY = 0.04;
-    // Camera arc must stay outside this radius so the enter path clears the tower.
-    root.userData.clearRadius = towerBase * 0.92;
-
-    // Stone lip flush with the dirt.
-    const lip = new Mesh(new BoxGeometry(size + frame * 2, 0.06, size + frame * 2), stone);
-    lip.position.y = 0.02;
-    lip.receiveShadow = organicProps;
-    lip.castShadow = organicProps;
-    const pit = new Mesh(new BoxGeometry(size, 0.08, size), iron);
-    pit.position.y = -0.02;
-    // Dark mouth under the closed leaves.
-    const voidPlane = new Mesh(new PlaneGeometry(size * 0.92, size * 0.92), this.groundMats.failGroundDark);
-    voidPlane.rotation.x = -Math.PI / 2;
-    voidPlane.position.y = -0.01;
-    root.add(lip, pit, voidPlane);
-
-    const mkLeaf = (side: -1 | 1): void => {
-      const hatch = new Mesh(new BoxGeometry(leaf, 0.045, size * 0.9), side < 0 ? woodDark : wood);
-      hatch.position.set(side * (leaf * 0.5 + 0.01), 0.055, 0);
-      hatch.castShadow = organicProps;
-      hatch.receiveShadow = organicProps;
-      // Plank seams.
-      const seam = new Mesh(new BoxGeometry(leaf * 0.92, 0.01, 0.02), shade);
-      seam.position.set(0, 0.028, size * 0.18);
-      const seam2 = seam.clone();
-      seam2.position.z = -size * 0.16;
-      const hinge = new Mesh(new BoxGeometry(0.04, 0.03, size * 0.7), shade);
-      hinge.position.set(side * leaf * 0.42, 0.01, 0);
-      hatch.add(seam, seam2, hinge);
-      root.add(hatch);
+  private homeTowerContext(): HomeTowerContext {
+    return {
+      groundMats: this.groundMats,
+      frameMat: this.materials.frame,
+      onFloorMat: (mat) => {
+        this.homeTowerFloorMat = mat;
+      },
+      onWallMat: (mat) => {
+        this.homeTowerWallMat = mat;
+      },
+      onTowerDoorRoot: (root) => {
+        this.homeDoorRoot = root;
+      },
+      onFreeDoorRoot: (root) => {
+        this.homeFreeDoorRoot = root;
+      },
     };
-    mkLeaf(-1);
-    mkLeaf(1);
-
-    // Center seam bar + iron ring pull.
-    const bar = new Mesh(new BoxGeometry(0.05, 0.03, size * 0.85), shade);
-    bar.position.y = 0.07;
-    const ring = new Mesh(new BoxGeometry(0.1, 0.02, 0.1), shade);
-    ring.position.set(0, 0.085, size * 0.12);
-    const ringHole = new Mesh(new BoxGeometry(0.05, 0.025, 0.05), iron);
-    ringHole.position.set(0, 0.09, size * 0.12);
-    root.add(bar, ring, ringHole);
-
-    // Corner bolts / stakes so it reads as sealed shut.
-    for (const [bx, bz] of [
-      [-size * 0.48, -size * 0.48],
-      [size * 0.48, -size * 0.48],
-      [-size * 0.48, size * 0.48],
-      [size * 0.48, size * 0.48],
-    ] as const) {
-      const bolt = new Mesh(new BoxGeometry(0.06, 0.05, 0.06), shade);
-      bolt.position.set(bx, 0.06, bz);
-      root.add(bolt);
-    }
-
-    parent.add(root);
-  }
-
-  /** A few slumped hovels clinging to the barren ring around the tower. */
-  private addHomeShacks(parent: Group, span: number, towerBase: number): void {
-    const keepOut = towerBase * 0.62;
-    const rim = span * 0.34;
-    const wood = this.groundMats.wreck;
-    const woodDark = this.groundMats.wreckDark;
-    const stone = this.groundMats.moonRock;
-    const shade = this.groundMats.failCrack;
-    const spots: {
-      x: number;
-      z: number;
-      scale: number;
-      yaw: number;
-      lean: number;
-      kind: "hut" | "lean" | "ruin";
-    }[] = [
-      { x: rim * -0.72, z: rim * 0.55, scale: 1.15, yaw: 0.55, lean: 0.12, kind: "hut" },
-      { x: rim * 0.68, z: rim * 0.42, scale: 0.95, yaw: -0.85, lean: -0.18, kind: "lean" },
-      { x: rim * -0.35, z: rim * -0.78, scale: 1.05, yaw: 2.5, lean: 0.08, kind: "hut" },
-      { x: rim * 0.82, z: rim * -0.35, scale: 0.88, yaw: -1.9, lean: 0.22, kind: "ruin" },
-      { x: rim * 0.15, z: rim * 0.88, scale: 0.78, yaw: 0.2, lean: -0.1, kind: "lean" },
-    ];
-    for (const spot of spots) {
-      if (Math.hypot(spot.x, spot.z) < keepOut) continue;
-      parent.add(
-        makeSadShack(spot.x, spot.z, spot.scale, spot.yaw, spot.lean, spot.kind, {
-          wood,
-          woodDark,
-          stone,
-          shade,
-        }),
-      );
-    }
-    // Lonely fence posts and a crumbled wall stub near the path.
-    const stub = new Group();
-    stub.position.set(rim * -0.15, 0, rim * 0.62);
-    stub.rotation.y = 0.4;
-    voxel(stub, woodDark, 0.03, 0.22, 0.03, -0.28, 0.22, 0);
-    voxel(stub, woodDark, 0.03, 0.18, 0.03, 0.05, 0.18, 0.04);
-    voxel(stub, wood, 0.03, 0.14, 0.03, 0.32, 0.14, -0.02);
-    voxel(stub, wood, 0.28, 0.015, 0.015, 0, 0.28, 0.02);
-    voxel(stub, shade, 0.18, 0.08, 0.12, 0.55, 0.08, 0.1);
-    parent.add(stub);
-  }
-
-  private addBarrenRocks(parent: Group, span: number): void {
-    const rim = span * 0.42;
-    for (let i = 0; i < 28; i += 1) {
-      const a = i * 1.37 + 0.2;
-      const radius = rim * (0.35 + ((i * 17) % 100) / 100 * 0.62);
-      const rock = new Mesh(
-        new BoxGeometry(
-          0.22 + (i % 5) * 0.11,
-          0.1 + (i % 4) * 0.08,
-          0.18 + (i % 3) * 0.1,
-        ),
-        i % 3 === 0
-          ? this.groundMats.moonRock
-          : i % 3 === 1
-            ? this.groundMats.failGround
-            : this.groundMats.failCrack,
-      );
-      rock.position.set(
-        Math.cos(a) * radius,
-        0.06 + (i % 3) * 0.02,
-        Math.sin(a) * radius * 0.92,
-      );
-      rock.rotation.y = a * 0.55;
-      rock.rotation.z = ((i % 5) - 2) * 0.04;
-      rock.castShadow = organicProps;
-      rock.receiveShadow = organicProps;
-      parent.add(rock);
-    }
-    for (let i = 0; i < 10; i += 1) {
-      const a = i * 2.1 + 0.8;
-      const ridge = new Mesh(
-        new BoxGeometry(0.7 + (i % 3) * 0.35, 0.18 + (i % 2) * 0.12, 0.28 + (i % 4) * 0.08),
-        this.groundMats.failGroundDark,
-      );
-      ridge.position.set(Math.cos(a) * rim * 0.78, 0.1, Math.sin(a) * rim * 0.7);
-      ridge.rotation.y = a * 0.4;
-      ridge.castShadow = organicProps;
-      ridge.receiveShadow = organicProps;
-      parent.add(ridge);
-    }
-  }
-
-  private addOminousTower(parent: Group, span: number): void {
-    const root = new Group();
-    this.homeTowerRoot = root;
-    const baseSize = span * 0.36;
-    const floorT = 0.045;
-    const wallH = 0.088;
-    const wallT = 0.038;
-    const floorGeos: BufferGeometry[] = [];
-    const wallGeos: BufferGeometry[] = [];
-    const shadeGeos: BufferGeometry[] = [];
-    const accentGeos: BufferGeometry[] = [];
-
-    for (let i = 0; i < HOME_TOWER_LAYERS; i += 1) {
-      const t = i / Math.max(1, HOME_TOWER_LAYERS - 1);
-      // Pyramid: keep the base fat, then shrink hard toward the tip (~25% width).
-      const taper = 1 - Math.pow(t, 0.9) * 0.75;
-      const wobble = Math.sin(i * 0.73) * 0.01 + Math.cos(i * 1.17) * 0.007;
-      const size = baseSize * taper * (1 + wobble * taper);
-      const y = i * HOME_LAYER_H + floorT * 0.5;
-      const ox = Math.sin(i * 0.41) * 0.04 * taper;
-      const oz = Math.cos(i * 0.37) * 0.04 * taper;
-      const half = size * 0.5;
-
-      const slab = new BoxGeometry(size, floorT, size);
-      slab.translate(ox, y, oz);
-      floorGeos.push(slab);
-
-      const wy = y + floorT * 0.5 + wallH * 0.5;
-      const north = new BoxGeometry(size, wallH, wallT);
-      north.translate(ox, wy, oz - half + wallT * 0.5);
-      const south = new BoxGeometry(size, wallH, wallT);
-      south.translate(ox, wy, oz + half - wallT * 0.5);
-      const west = new BoxGeometry(wallT, wallH, size - wallT * 2);
-      west.translate(ox - half + wallT * 0.5, wy, oz);
-      const east = new BoxGeometry(wallT, wallH, size - wallT * 2);
-      east.translate(ox + half - wallT * 0.5, wy, oz);
-      wallGeos.push(north, south, west, east);
-
-      // Sparse interior stubs so layers read like maze floors.
-      if (i % 2 === 0) {
-        const stubW = size * (0.28 + ((i * 13) % 7) * 0.04);
-        const stub = new BoxGeometry(stubW, wallH * 0.85, wallT * 0.9);
-        const angle = (i * 1.7) % (Math.PI * 2);
-        stub.translate(
-          ox + Math.cos(angle) * size * 0.18,
-          wy,
-          oz + Math.sin(angle) * size * 0.18,
-        );
-        shadeGeos.push(stub);
-      }
-      if (i % 5 === 0) {
-        const post = new BoxGeometry(wallT * 1.4, wallH * 1.15, wallT * 1.4);
-        post.translate(ox + half * 0.72, wy, oz + half * 0.72);
-        accentGeos.push(post);
-      }
-    }
-
-    const merge = (geos: BufferGeometry[]): BufferGeometry | null => {
-      if (geos.length === 0) return null;
-      const merged = geos.length === 1 ? geos[0]! : mergeGeometries(geos);
-      if (geos.length > 1) {
-        for (const geo of geos) geo.dispose();
-      }
-      if (!merged) return null;
-      // Translated floor slabs sit far from the origin — refresh bounds or frustum culling hides the tower.
-      merged.computeBoundingSphere();
-      merged.computeBoundingBox();
-      return merged;
-    };
-
-    const floorMesh = merge(floorGeos);
-    if (floorMesh) {
-      const floorMat = new MeshBasicMaterial({
-        color: token("--maze-fail-ground"),
-        toneMapped: false,
-      });
-      const mesh = new Mesh(floorMesh, floorMat);
-      mesh.frustumCulled = false;
-      mesh.userData.owned = true;
-      mesh.castShadow = organicProps;
-      mesh.receiveShadow = organicProps;
-      root.add(mesh);
-    }
-    const wallMesh = merge(wallGeos);
-    if (wallMesh) {
-      // Lit stone — MeshBasic so the stack stays readable under the storm wash.
-      const wallMat = new MeshBasicMaterial({
-        color: token("--maze-wall"),
-        toneMapped: false,
-      });
-      const mesh = new Mesh(wallMesh, wallMat);
-      mesh.frustumCulled = false;
-      mesh.userData.owned = true;
-      mesh.castShadow = organicProps;
-      mesh.receiveShadow = organicProps;
-      root.add(mesh);
-    }
-    const shadeMesh = merge(shadeGeos);
-    if (shadeMesh) {
-      const mesh = new Mesh(shadeMesh, this.groundMats.failCrack);
-      mesh.frustumCulled = false;
-      mesh.castShadow = organicProps;
-      root.add(mesh);
-    }
-    const accentMesh = merge(accentGeos);
-    if (accentMesh) {
-      const mesh = new Mesh(accentMesh, this.materials.frame);
-      mesh.frustumCulled = false;
-      mesh.castShadow = organicProps;
-      root.add(mesh);
-    }
-
-    this.addSinisterSummit(root, baseSize * 0.28);
-    parent.add(root);
-  }
-
-  /**
-   * Dark stone chamber crowning the storm tower — fixed to the tip so it turns
-   * with the pyramid as the home camera orbits.
-   */
-  private addSinisterSummit(parent: Group, tipSize: number): void {
-    const stone = this.materials.frame;
-    const shade = this.groundMats.failCrack;
-    const bone = this.groundMats.moonRock;
-    const wood = this.groundMats.wreck;
-    const woodDark = this.groundMats.wreckDark;
-    const glow = this.groundMats.failNeon;
-    const roomW = tipSize * 1.15;
-    const roomD = tipSize * 1.05;
-    const roomH = tipSize * 0.78;
-    const wallT = tipSize * 0.1;
-    const openingW = tipSize * 0.44;
-    const openingH = tipSize * 0.58;
-    // Door face stays at local z=0; chamber extends back along -Z.
-    const midZ = -roomD * 0.5;
-    const root = new Group();
-    this.homeDoorRoot = root;
-    // Face the default home orbit so the door reads at title start.
-    const faceYaw = 0.55;
-    const out = tipSize * 0.12;
-    root.position.set(Math.sin(faceYaw) * out, HOME_TOWER_H + 0.18, Math.cos(faceYaw) * out);
-    root.rotation.y = faceYaw;
-    root.userData.doorYaw = faceYaw;
-
-    const add = (
-      w: number,
-      h: number,
-      d: number,
-      x: number,
-      y: number,
-      z: number,
-      mat: MeshToonMaterial | MeshBasicMaterial,
-    ): Mesh => {
-      const mesh = new Mesh(new BoxGeometry(w, h, d), mat);
-      mesh.position.set(x, y, z);
-      mesh.castShadow = organicProps;
-      mesh.receiveShadow = organicProps;
-      root.add(mesh);
-      return mesh;
-    };
-
-    // Pedestal under the chamber.
-    add(roomW * 1.18, 0.08, roomD * 1.18, 0, 0.04, midZ, shade);
-    add(roomW * 1.02, 0.1, roomD * 1.02, 0, 0.12, midZ, bone);
-
-    const floorY = 0.18;
-    const midY = floorY + roomH * 0.5;
-    // Floor + ceiling.
-    add(roomW, wallT * 0.7, roomD, 0, floorY, midZ, shade);
-    add(roomW * 1.04, wallT * 0.85, roomD * 1.04, 0, floorY + roomH, midZ, stone);
-
-    // Back + side walls — sealed box.
-    add(roomW, roomH, wallT, 0, midY, -roomD + wallT * 0.5, stone);
-    add(wallT, roomH, roomD - wallT * 2, -roomW * 0.5 + wallT * 0.5, midY, midZ, stone);
-    add(wallT, roomH, roomD - wallT * 2, roomW * 0.5 - wallT * 0.5, midY, midZ, stone);
-
-    // Front wall split around the doorway.
-    const frontZ = -wallT * 0.35;
-    const sideW = (roomW - openingW) * 0.5;
-    add(sideW, roomH, wallT, -roomW * 0.5 + sideW * 0.5, midY, frontZ, shade);
-    add(sideW, roomH, wallT, roomW * 0.5 - sideW * 0.5, midY, frontZ, shade);
-    add(openingW + wallT * 0.4, roomH - openingH, wallT, 0, floorY + openingH + (roomH - openingH) * 0.5, frontZ, shade);
-
-    // Door frame.
-    add(wallT * 0.7, openingH + wallT * 0.4, wallT * 1.1, -openingW * 0.5 - wallT * 0.2, floorY + openingH * 0.5, 0, bone);
-    add(wallT * 0.7, openingH + wallT * 0.4, wallT * 1.1, openingW * 0.5 + wallT * 0.2, floorY + openingH * 0.5, 0, bone);
-    add(openingW + wallT * 1.2, wallT * 0.55, wallT * 1.15, 0, floorY + openingH + wallT * 0.15, 0, shade);
-    add(openingW + wallT * 0.6, wallT * 0.28, wallT * 1.2, 0, floorY + wallT * 0.1, wallT * 0.05, bone);
-
-    const mkDoor = (side: -1 | 1): Mesh => {
-      const pivot = new Mesh(new BoxGeometry(0.01, 0.01, 0.01), woodDark);
-      pivot.position.set(side * openingW * 0.5, floorY + openingH * 0.5, 0);
-      const leaf = new Mesh(
-        new BoxGeometry(openingW * 0.48, openingH * 0.92, wallT * 0.28),
-        side < 0 ? woodDark : wood,
-      );
-      leaf.position.set(-side * openingW * 0.24, 0, wallT * 0.06);
-      leaf.castShadow = organicProps;
-      const band = new Mesh(new BoxGeometry(openingW * 0.42, wallT * 0.14, wallT * 0.34), shade);
-      band.position.set(-side * openingW * 0.24, openingH * 0.1, wallT * 0.14);
-      const knob = new Mesh(new BoxGeometry(wallT * 0.2, wallT * 0.2, wallT * 0.22), bone);
-      knob.position.set(-side * openingW * 0.08, 0, wallT * 0.22);
-      pivot.add(leaf, band, knob);
-      root.add(pivot);
-      return pivot;
-    };
-    this.homeDoorLeft = mkDoor(-1);
-    this.homeDoorRight = mkDoor(1);
-
-    // Pitch-black threshold behind the leaves.
-    const voidPlane = new Mesh(
-      new PlaneGeometry(openingW * 0.92, openingH * 0.9),
-      this.groundMats.failGroundDark,
-    );
-    voidPlane.position.set(0, floorY + openingH * 0.5, -wallT * 0.5);
-    root.add(voidPlane);
-    this.homeDoorPortal = voidPlane;
-
-    // Narrow glowing slits — the only light leaking from inside.
-    add(wallT * 0.35, tipSize * 0.12, tipSize * 0.06, -roomW * 0.5 + wallT * 0.15, midY + roomH * 0.12, midZ + tipSize * 0.08, glow);
-    add(wallT * 0.35, tipSize * 0.12, tipSize * 0.06, roomW * 0.5 - wallT * 0.15, midY + roomH * 0.12, midZ + tipSize * 0.08, glow);
-
-    // Low battlement spikes on the roof — sinister, not ornate.
-    for (const x of [-roomW * 0.38, -roomW * 0.12, roomW * 0.12, roomW * 0.38] as const) {
-      add(wallT * 0.55, tipSize * 0.14, wallT * 0.55, x, floorY + roomH + tipSize * 0.08, midZ - roomD * 0.05, shade);
-    }
-    add(wallT * 0.7, tipSize * 0.2, wallT * 0.7, -roomW * 0.22, floorY + roomH + tipSize * 0.12, -wallT, stone);
-    add(wallT * 0.7, tipSize * 0.2, wallT * 0.7, roomW * 0.22, floorY + roomH + tipSize * 0.12, -wallT, stone);
-
-    root.userData.doorCenterY = floorY + openingH * 0.5;
-    parent.add(root);
   }
 
   private applyHomeLighting(): void {
@@ -3386,6 +2956,7 @@ export class MazeWorld {
     if (!this.homeBackdrop || this.reduceMotion) {
       if (this.lightningLight) this.lightningLight.intensity = 0;
       if (this.lightningBolt) this.lightningBolt.visible = false;
+      this.setTowerLightningFlash(0);
       return;
     }
     this.lightningCooldown -= dt;
@@ -3402,6 +2973,8 @@ export class MazeWorld {
       this.hemiLight.intensity = 0.48 + burst * 0.12;
       this.ambientLight.intensity = 0.22 + burst * 0.07;
       this.key.intensity = 0.85 + burst * 0.08;
+      // Tower stack is tall — emissive flash so every floor reads the strike.
+      this.setTowerLightningFlash(peak ? 0.85 + Math.random() * 0.35 : after ? 0.35 : 0.08);
       if (this.lightningBolt) this.lightningBolt.visible = peak || after;
       if (this.lightningFlash <= 0) {
         if (this.lightningLight) this.lightningLight.intensity = 0;
@@ -3409,6 +2982,7 @@ export class MazeWorld {
         this.hemiLight.intensity = 0.48;
         this.ambientLight.intensity = 0.22;
         this.key.intensity = 0.85;
+        this.setTowerLightningFlash(0);
       }
       return;
     }
@@ -3420,19 +2994,25 @@ export class MazeWorld {
       : 0.9 + Math.random() * 2.4;
   }
 
+  private setTowerLightningFlash(amount: number): void {
+    const a = Math.max(0, amount);
+    if (this.homeTowerFloorMat) this.homeTowerFloorMat.emissiveIntensity = a * 0.9;
+    if (this.homeTowerWallMat) this.homeTowerWallMat.emissiveIntensity = a;
+  }
+
   private strikeLightning(): void {
     const meadow = this.meadow;
     if (!meadow) return;
     this.lightningFlash = 0.16 + Math.random() * 0.12;
     const span = HOME_BACKDROP_SPAN * 4.2;
     const side = Math.random() < 0.5 ? -1 : 1;
-    // Strike beside the tower, landing near camera / floor level.
+    // Strike beside the tower, mid-height so the stack catches the flash.
     const x = side * (span * (0.12 + Math.random() * 0.22));
     const z = span * (0.08 + Math.random() * 0.18) * (Math.random() < 0.5 ? 1 : -0.35);
     if (this.lightningLight) {
-      this.lightningLight.position.set(x, 1.2 + Math.random() * 2.4, z);
+      this.lightningLight.position.set(x, HOME_TOWER_H * (0.35 + Math.random() * 0.45), z);
       this.lightningLight.intensity = 36;
-      this.lightningLight.distance = span * 2.8;
+      this.lightningLight.distance = Math.max(span * 2.8, HOME_TOWER_H * 2.4);
     }
     if (this.lightningBolt) this.dropLightningBolt();
     const bolt = new Group();
@@ -3607,6 +3187,11 @@ export class MazeWorld {
     this.meadowWinLetters = letters;
   }
 
+  /** Floor extent past the far clip so meadow pads never show an edge. */
+  private meadowGroundSpan(contentSpan: number): number {
+    return Math.max(contentSpan * MEADOW_GROUND_MULT, this.camera.far * 2.4);
+  }
+
   private addGround(parent: Group, span: number, kind: WinSceneKind): void {
     const sideMats: Record<WinSceneKind, MeshToonMaterial> = {
       pasture: this.groundMats.grassDark,
@@ -3622,21 +3207,21 @@ export class MazeWorld {
       venus: this.groundMats.venusGroundDark,
       forest: this.groundMats.moss,
       rainforest: this.groundMats.canopy,
-      aurora: this.groundMats.spaceDark,
       disco: this.groundMats.discoFloorDark,
     };
-    const pad = new Mesh(new BoxGeometry(span, 0.22, span), sideMats[kind]);
+    const ground = this.meadowGroundSpan(span);
+    const pad = new Mesh(new BoxGeometry(ground, 0.22, ground), sideMats[kind]);
     pad.position.y = -0.11;
     pad.receiveShadow = organicProps;
     parent.add(pad);
 
     const floorMat = this.floorMats[kind];
-    const tiles = Math.max(4, Math.round(span / 2.4));
+    const tiles = Math.max(4, Math.round(ground / 2.4));
     if (floorMat.map) {
       floorMat.map.repeat.set(tiles, tiles);
       floorMat.map.needsUpdate = true;
     }
-    const carpet = new Mesh(new PlaneGeometry(span, span), floorMat);
+    const carpet = new Mesh(new PlaneGeometry(ground, ground), floorMat);
     carpet.rotation.x = -Math.PI / 2;
     carpet.position.y = 0.01;
     carpet.receiveShadow = organicProps;
@@ -4065,7 +3650,7 @@ export class MazeWorld {
         place.z += place.z >= 0 ? 1.1 : -1.1;
       }
       const animal = makeAnimal(kind, this.animalMats);
-      const floatY = scene === "aurora" ? 0.55 + index * 0.22 : swimHeight(kind);
+      const floatY = swimHeight(kind);
       const scale = animalScale(kind);
       animal.scale = scale;
       animal.baseY = floatY;
@@ -4143,134 +3728,6 @@ export class MazeWorld {
 
     const light = new PointLight(token("--maze-disco-0"), 3.4, 14, 2);
     light.position.set(0, 2.4, 0);
-    parent.add(light);
-    this.meadowLight = light;
-  }
-
-  private addAuroraSpace(parent: Group, span: number): void {
-    const planets: {
-      x: number;
-      y: number;
-      z: number;
-      r: number;
-      body: MeshToonMaterial;
-      shade: MeshToonMaterial;
-      rock: MeshToonMaterial;
-      spin: number;
-      bob: number;
-    }[] = [
-      {
-        x: -span * 0.28,
-        y: 1.55,
-        z: -span * 0.08,
-        r: span * 0.11,
-        body: this.groundMats.moonDust,
-        shade: this.groundMats.moonDustDark,
-        rock: this.groundMats.moonRock,
-        spin: 0.14,
-        bob: 0.1,
-      },
-      {
-        x: span * 0.32,
-        y: 2.05,
-        z: span * 0.06,
-        r: span * 0.08,
-        body: this.groundMats.venusGround,
-        shade: this.groundMats.venusGroundDark,
-        rock: this.groundMats.venusRock,
-        spin: 0.22,
-        bob: 0.14,
-      },
-      {
-        x: span * 0.08,
-        y: 1.35,
-        z: span * 0.28,
-        r: span * 0.065,
-        body: this.groundMats.seabedLit,
-        shade: this.groundMats.seabedDark,
-        rock: this.groundMats.seabed,
-        spin: 0.18,
-        bob: 0.12,
-      },
-      {
-        x: -span * 0.18,
-        y: 2.35,
-        z: span * 0.22,
-        r: span * 0.05,
-        body: this.groundMats.coral,
-        shade: this.groundMats.bromeliad,
-        rock: this.groundMats.coralLit,
-        spin: 0.28,
-        bob: 0.16,
-      },
-      {
-        x: span * 0.22,
-        y: 1.75,
-        z: -span * 0.26,
-        r: span * 0.07,
-        body: this.groundMats.lavender,
-        shade: this.groundMats.lavenderDark,
-        rock: this.groundMats.orchid,
-        spin: 0.16,
-        bob: 0.11,
-      },
-      {
-        x: -span * 0.34,
-        y: 1.15,
-        z: span * 0.14,
-        r: span * 0.045,
-        body: this.groundMats.canopyBright,
-        shade: this.groundMats.canopy,
-        rock: this.groundMats.canopyLit,
-        spin: 0.32,
-        bob: 0.13,
-      },
-    ];
-
-    for (const [index, spec] of planets.entries()) {
-      const planet = makePlanet(spec.r, spec.body, spec.shade, spec.rock);
-      planet.position.set(spec.x, spec.y, spec.z);
-      planet.userData.planetFloat = true;
-      planet.userData.baseY = spec.y;
-      planet.userData.driftPhase = index * 1.15 + 0.4;
-      planet.userData.driftSpeed = 0.45 + (index % 3) * 0.08;
-      planet.userData.bobAmp = spec.bob;
-      planet.userData.spin = spec.spin;
-      parent.add(planet);
-      this.meadowFlames.push(planet);
-    }
-
-    for (let i = 0; i < 28; i += 1) {
-      const a = i * 2.4 + 0.3;
-      const dist = (0.15 + ((i * 17) % 100) / 100 * 0.8) * span * 0.45;
-      const star = new Mesh(
-        new BoxGeometry(0.04 + (i % 3) * 0.02, 0.04 + (i % 2) * 0.02, 0.04),
-        this.groundMats.star,
-      );
-      star.position.set(
-        Math.cos(a) * dist,
-        0.8 + ((i * 13) % 100) / 100 * 2.2,
-        Math.sin(a) * dist * 0.85,
-      );
-      star.userData.flickerScale = false;
-      parent.add(star);
-      this.meadowFlames.push(star);
-    }
-
-    const rim = span * 0.38;
-    for (let i = 0; i < 7; i += 1) {
-      const a = i * 2.15;
-      const rock = new Mesh(
-        new BoxGeometry(0.28 + (i % 3) * 0.14, 0.16 + (i % 2) * 0.1, 0.22 + (i % 4) * 0.08),
-        i % 2 === 0 ? this.groundMats.spaceDark : this.groundMats.moonRock,
-      );
-      rock.position.set(Math.cos(a) * rim * 0.85, 0.12 + (i % 3) * 0.08, Math.sin(a) * rim * 0.75);
-      rock.rotation.y = a * 0.4;
-      parent.add(rock);
-    }
-
-    const light = new PointLight(token("--maze-aurora-blue"), 2.6, 14, 2);
-    light.position.set(0, 2.2, 0);
     parent.add(light);
     this.meadowLight = light;
   }
@@ -4630,11 +4087,10 @@ export class MazeWorld {
     this.clearRain();
     this.dropLightningBolt();
     this.lightningLight = null;
-    this.homeTowerRoot = null;
+    this.setTowerLightningFlash(0);
+    this.homeTowerFloorMat = null;
+    this.homeTowerWallMat = null;
     this.homeDoorRoot = null;
-    this.homeDoorLeft = null;
-    this.homeDoorRight = null;
-    this.homeDoorPortal = null;
     this.homeFreeDoorRoot = null;
     if (this.meadow) {
       this.board.remove(this.meadow);
@@ -4672,7 +4128,7 @@ export class MazeWorld {
   }
 
   private placeCamera(): void {
-    if (this.enterPlay) {
+    if (this.enterCtl.state) {
       this.placeEnterPlayCamera();
       return;
     }
@@ -4685,9 +4141,9 @@ export class MazeWorld {
       this.placeMeadowCamera();
       return;
     }
-    this.computePlayCamera(this.enterPlayEye, this.enterPlayLook);
-    this.camera.position.copy(this.enterPlayEye);
-    this.camera.lookAt(this.enterPlayLook);
+    this.computePlayCamera(this.enterCtl.eye, this.enterCtl.look);
+    this.camera.position.copy(this.enterCtl.eye);
+    this.camera.lookAt(this.enterCtl.look);
 
     const low = this.escaped ? 0 : this.lowest();
     const span = Math.max(this.tower.width, this.tower.depth) + Math.abs(low) * 0.28;
@@ -4698,74 +4154,32 @@ export class MazeWorld {
     shadow.top = range;
     shadow.bottom = -range;
     shadow.updateProjectionMatrix();
-    this.key.target.position.copy(this.enterPlayLook);
+    this.key.target.position.copy(this.enterCtl.look);
   }
 
   /** Play-orbit eye/look for the current tower (includes board rise offset). */
   private computePlayCamera(outEye: Vector3, outLook: Vector3): void {
-    const tower = this.tower;
-    if (!tower) {
-      outEye.copy(this.camera.position);
-      outLook.set(0, this.focusY, 0);
-      return;
-    }
-    const low = this.escaped ? 0 : this.lowest();
-    const span = Math.max(tower.width, tower.depth) + Math.abs(low) * 0.28;
-    const zoom = this.settings?.values.zoom ?? 1;
-    const angle = (this.shownAngle() * Math.PI) / 180;
-    const orbit = (this.shownOrbit() * Math.PI) / 180;
-    const fovDeg = this.enterPlay?.toFov ?? this.camera.fov;
-    const fov = (fovDeg * Math.PI) / 180;
-    const half = Math.tan(fov / 2);
-    const fill = 1.22;
-    const distForHeight = (span * fill) / (2 * half);
-    const distForWidth = (span * fill) / (2 * half * Math.max(this.aspect, 0.6));
-    const fitted = Math.max(distForHeight, distForWidth) * 1.22;
-    const radius = (fitted * Math.hypot(0.74, 0.7)) / Math.max(zoom, 0.2);
-    const horizontal = radius * Math.cos(angle);
-    outLook.set(0, this.focusY, 0).applyQuaternion(this.board.quaternion);
-    const aim = span * 0.04;
-    outLook.x += aim * Math.sin(orbit);
-    outLook.z += aim * Math.cos(orbit);
-    outLook.add(this.board.position);
-    outEye.set(
-      outLook.x + horizontal * Math.sin(orbit),
-      outLook.y + radius * Math.sin(angle),
-      outLook.z + horizontal * Math.cos(orbit),
-    );
+    computePlayOrbitCamera(outEye, outLook, {
+      tower: this.tower,
+      focusY: this.focusY,
+      board: this.board,
+      lowest: this.lowest(),
+      escaped: this.escaped,
+      aspect: this.aspect,
+      settings: this.settings,
+      angleDeg: shownPlayAngle(this.settings, this.playGlance.glanceDAngle),
+      orbitDeg: shownPlayOrbit(this.settings, this.playGlance.glanceDOrbit),
+      fovDeg: this.enterCtl.state?.toFov ?? this.camera.fov,
+      fallbackEye: this.camera.position,
+    });
   }
 
   private placeEnterPlayCamera(): void {
-    const ep = this.enterPlay;
-    if (!ep) return;
-    const orbit = this.homeOrbit;
-    const playFov = ep.toFov;
-    this.placeDoorEnterCamera(ep, orbit, playFov);
-
-    this.camera.position.copy(this.enterPlayEye);
-    const down = this.enterPlayEye.y - this.enterPlayLook.y;
-    const side = Math.hypot(
-      this.enterPlayEye.x - this.enterPlayLook.x,
-      this.enterPlayEye.z - this.enterPlayLook.z,
-    );
-    const topDown =
-      ep.kind === "free"
-      && !ep.crossed
-      && down > 0.2
-      && side < down * 0.08
-      && this.enterPlayDoorOut.lengthSq() > 1e-6;
-    if (topDown) {
-      // Pin eye over the hatch and use a horizontal up so lookAt stays nadir.
-      this.enterPlayEye.x = this.enterPlayLook.x;
-      this.enterPlayEye.z = this.enterPlayLook.z;
-      this.camera.position.copy(this.enterPlayEye);
-      this.camera.up.copy(this.enterPlayDoorOut);
-    } else {
-      this.camera.up.set(0, 1, 0);
-    }
-    this.camera.lookAt(this.enterPlayLook);
-    this.meadowCamEye.copy(this.enterPlayEye);
-    this.meadowCamLook.copy(this.enterPlayLook);
+    if (!this.enterCtl.state) return;
+    const ctl = this.enterCtl;
+    ctl.place();
+    this.meadowCamEye.copy(ctl.eye);
+    this.meadowCamLook.copy(ctl.look);
 
     const tower = this.tower;
     const span = tower ? Math.max(tower.width, tower.depth) : HOME_BACKDROP_SPAN;
@@ -4776,202 +4190,29 @@ export class MazeWorld {
     shadow.top = range;
     shadow.bottom = -range;
     shadow.updateProjectionMatrix();
-    this.key.target.position.copy(this.enterPlayLook);
-  }
-
-  /**
-   * Approach the closed enter door until it fills the frame; after the cut,
-   * dolly from a distant play orbit into the settled play camera.
-   */
-  private placeDoorEnterCamera(
-    ep: NonNullable<MazeWorld["enterPlay"]>,
-    orbit: number,
-    playFov: number,
-  ): void {
-    if (ep.crossed) {
-      const u = (ep.t - ENTER_PLAY_SWAP) / Math.max(1e-4, 1 - ENTER_PLAY_SWAP);
-      const a = easeInOutCubic(clamp(u, 0, 1));
-      this.computePlayCamera(this.enterPlayToEye, this.enterPlayToLook);
-      this.enterPlayEye.lerpVectors(this.enterPlayFromEye, this.enterPlayToEye, a);
-      this.enterPlayLook.lerpVectors(this.enterPlayFromLook, this.enterPlayToLook, a);
-      const fov = ep.fromFov + (playFov - ep.fromFov) * a;
-      this.applyEnterPlayLens(fov);
-      // Gradient eases in slower than the board dolly so scale reads as parallax.
-      const skyA = easeInOutCubic(clamp(u, 0, 1));
-      this.voidSky.setZoom(
-        ENTER_PLAY_SKY_ZOOM_DOOR + (ENTER_PLAY_SKY_ZOOM_PLAY - ENTER_PLAY_SKY_ZOOM_DOOR) * skyA,
-      );
-      return;
-    }
-
-    const door = ep.kind === "free" ? this.homeFreeDoorRoot : this.homeDoorRoot;
-    const meadowY = this.meadow?.position.y ?? -MEADOW_DROP;
-
-    if (ep.kind === "free") {
-      this.placeFreeTrapEnterCamera(ep, door, meadowY, orbit, playFov);
-      return;
-    }
-
-    // Summit chamber is fixed on the tower — approach along its door-facing axis.
-    const faceYaw = door
-      ? Number(door.userData.doorYaw ?? door.rotation.y)
-      : orbit;
-    this.enterPlayDoorOut.set(Math.sin(faceYaw), 0, Math.cos(faceYaw));
-    if (door) {
-      door.getWorldPosition(this.enterPlayDoorPos);
-      this.enterPlayDoorPos.y += Number(door.userData.doorCenterY ?? 0.22);
-    } else {
-      this.enterPlayDoorPos.set(
-        this.enterPlayDoorOut.x * 0.2,
-        meadowY + HOME_TOWER_H + 0.4,
-        this.enterPlayDoorOut.z * 0.2,
-      );
-    }
-    this.enterPlayDoorEye.copy(this.enterPlayDoorPos).addScaledVector(this.enterPlayDoorOut, 0.2);
-    this.enterPlayDoorEye.y += 0.02;
-    this.enterPlayDoorLook.copy(this.enterPlayDoorPos).addScaledVector(this.enterPlayDoorOut, -0.02);
-
-    const a = easeInOutCubic(Math.min(1, ep.t / ENTER_PLAY_SWAP));
-    this.enterPlayEye.lerpVectors(this.enterPlayFromEye, this.enterPlayDoorEye, a);
-    this.enterPlayLook.lerpVectors(this.enterPlayFromLook, this.enterPlayDoorLook, a);
-    // Widen so the door eats the frame by the cut.
-    const doorFov = ep.fromFov + (72 - ep.fromFov) * (0.55 * a);
-    this.applyEnterPlayLens(doorFov);
-    this.voidSky.setZoom(1 + (ENTER_PLAY_SKY_ZOOM_DOOR - 1) * a);
-  }
-
-  /**
-   * Swing around the storm tower on an outside arc, then settle dead-center
-   * above the hatch looking straight down.
-   */
-  private placeFreeTrapEnterCamera(
-    ep: NonNullable<MazeWorld["enterPlay"]>,
-    door: Group | null,
-    meadowY: number,
-    orbit: number,
-    _playFov: number,
-  ): void {
-    if (door) {
-      door.getWorldPosition(this.enterPlayDoorPos);
-      this.enterPlayDoorPos.y += Number(door.userData.doorCenterY ?? 0.04);
-    } else {
-      this.enterPlayDoorPos.set(Math.sin(orbit) * 1.6, meadowY + 0.04, Math.cos(orbit) * 1.6);
-    }
-    // Final pose: dead-center above the hatch, looking straight down the -Y axis.
-    this.enterPlayDoorLook.set(
-      this.enterPlayDoorPos.x,
-      this.enterPlayDoorPos.y - 0.04,
-      this.enterPlayDoorPos.z,
-    );
-    this.enterPlayDoorEye.set(
-      this.enterPlayDoorPos.x,
-      this.enterPlayDoorPos.y + 0.62,
-      this.enterPlayDoorPos.z,
-    );
-    // Screen-up aligns with world -Z so the axis-aligned hatch reads square.
-    this.enterPlayDoorOut.set(0, 0, -1);
-
-    const a = easeInOutCubic(Math.min(1, ep.t / ENTER_PLAY_SWAP));
-    // Exact home pose as bezier start — polar remapping of look snapped away from
-    // the tower-centered home aim on the first frame (resize → placeCamera at t=0).
-    const fromYaw = Math.atan2(this.enterPlayFromEye.x, this.enterPlayFromEye.z);
-    const hatchYaw = Math.atan2(this.enterPlayDoorPos.x, this.enterPlayDoorPos.z);
-    let delta = hatchYaw - fromYaw;
-    while (delta > Math.PI) delta -= Math.PI * 2;
-    while (delta < -Math.PI) delta += Math.PI * 2;
-    const fromR = Math.hypot(this.enterPlayFromEye.x, this.enterPlayFromEye.z);
-    const hatchR = Math.hypot(this.enterPlayDoorPos.x, this.enterPlayDoorPos.z);
-    const clearR = Math.max(
-      Number(door?.userData.clearRadius ?? 2.8),
-      Math.min(fromR, hatchR) * 0.92,
-    );
-    const midR = Math.max(fromR, hatchR, clearR) * 1.18;
-    const midYaw = fromYaw + delta * 0.5;
-    const midY =
-      this.enterPlayFromEye.y * 0.55 + this.enterPlayDoorEye.y * 0.45 + clearR * 0.08;
-    const midLookY = meadowY + Math.max(0.9, clearR * 0.18);
-    const midLookR = Math.max(clearR * 1.05, (fromR + hatchR) * 0.45);
-
-    const omt = 1 - a;
-    const b0 = omt * omt;
-    const b1 = 2 * omt * a;
-    const b2 = a * a;
-    // Cartesian quadratic: a=0 is exactly fromEye/fromLook (no polar snap).
-    this.enterPlayPushEye.set(
-      this.enterPlayFromEye.x * b0 + Math.sin(midYaw) * midR * b1 + this.enterPlayDoorEye.x * b2,
-      this.enterPlayFromEye.y * b0 + midY * b1 + this.enterPlayDoorEye.y * b2,
-      this.enterPlayFromEye.z * b0 + Math.cos(midYaw) * midR * b1 + this.enterPlayDoorEye.z * b2,
-    );
-    this.enterPlayPushLook.set(
-      this.enterPlayFromLook.x * b0 + Math.sin(midYaw) * midLookR * b1 + this.enterPlayDoorLook.x * b2,
-      this.enterPlayFromLook.y * b0 + midLookY * b1 + this.enterPlayDoorLook.y * b2,
-      this.enterPlayFromLook.z * b0 + Math.cos(midYaw) * midLookR * b1 + this.enterPlayDoorLook.z * b2,
-    );
-    // Finish overhead early so the last beat is a settled top-down hold.
-    const lock = a >= 0.88 ? 1 : easeInOutCubic(clamp((a - 0.3) / 0.58, 0, 1));
-    this.enterPlayEye.lerpVectors(this.enterPlayPushEye, this.enterPlayDoorEye, lock);
-    this.enterPlayLook.lerpVectors(this.enterPlayPushLook, this.enterPlayDoorLook, lock);
-    if (lock >= 1) {
-      this.enterPlayEye.copy(this.enterPlayDoorEye);
-      this.enterPlayLook.copy(this.enterPlayDoorLook);
-    }
-
-    const doorFov = ep.fromFov + (58 - ep.fromFov) * (0.7 * a);
-    this.applyEnterPlayLens(doorFov);
-    this.voidSky.setZoom(1 + (ENTER_PLAY_SKY_ZOOM_DOOR - 1) * a);
-  }
-
-  private applyEnterPlayLens(fov: number): void {
-    const next = clamp(fov, 18, 95);
-    if (Math.abs(this.camera.fov - next) < 0.05) return;
-    this.camera.fov = next;
-    this.camera.updateProjectionMatrix();
+    this.key.target.position.copy(ctl.look);
   }
 
   private placeHomeCamera(): void {
     const tower = this.tower;
     if (!tower) return;
-    const meadowY = this.meadow?.position.y ?? -MEADOW_DROP;
-    const orbit = this.homeOrbit + (this.glanceDOrbit * Math.PI) / 180;
-    const up = clamp(this.glanceDAngle / MEADOW_GLANCE_PITCH_MAX, 0, 1);
-    const down = clamp(-this.glanceDAngle / Math.abs(MEADOW_GLANCE_PITCH_MIN), 0, 1);
-
-    if (this.homeView === "tower") {
-      // Close high crane — look past the summit so the tower sits left of frame.
-      const lookY = meadowY + HOME_TOWER_H * (1.02 + up * 0.03 - down * 0.03);
-      const eyeY = meadowY + HOME_TOWER_H * (1.14 + up * 0.08 - down * 0.05);
-      const dist = HOME_TOWER_H * (0.28 + up * 0.08 - down * 0.03);
-      const rightX = Math.cos(orbit);
-      const rightZ = -Math.sin(orbit);
-      const lookOff = HOME_TOWER_H * 0.16;
-      const side = HOME_TOWER_H * 0.04;
-      this.homeViewLook.set(rightX * lookOff, lookY, rightZ * lookOff);
-      this.homeViewEye.set(
-        Math.sin(orbit) * dist + rightX * side,
-        eyeY,
-        Math.cos(orbit) * dist + rightZ * side,
-      );
-    } else {
-      // 0.5× ultrawide vibe: low, close-ish, mild up-tilt so the barren floor stays in shot.
-      const lookY = meadowY + HOME_TOWER_H * (0.34 + up * 0.14 - down * 0.08);
-      const eyeY = meadowY + 0.85 + down * 0.35 + up * 0.55;
-      const dist = HOME_TOWER_H * (0.72 + up * 0.3 - down * 0.06);
-      this.homeViewLook.set(0, lookY, 0);
-      this.homeViewEye.set(Math.sin(orbit) * dist, eyeY, Math.cos(orbit) * dist);
-      this.homeViewEye.y = Math.max(this.homeViewEye.y, meadowY + 0.55);
-    }
-
-    this.homeViewEye.applyQuaternion(this.board.quaternion);
-    this.homeViewLook.applyQuaternion(this.board.quaternion);
-
-    const t = easeInOutCubic(this.homeViewBlend);
-    if (t < 1) {
-      this.meadowCamEye.lerpVectors(this.homeViewFromEye, this.homeViewEye, t);
-      this.meadowCamLook.lerpVectors(this.homeViewFromLook, this.homeViewLook, t);
-    } else {
-      this.meadowCamEye.copy(this.homeViewEye);
-      this.meadowCamLook.copy(this.homeViewLook);
-    }
+    const meadowY = this.meadow?.position.y ?? defaultMeadowY();
+    placeHomeBackdropCamera(this.meadowCamEye, this.meadowCamLook, {
+      homeViewEye: this.homeViewEye,
+      homeViewLook: this.homeViewLook,
+      meadowCamEye: this.meadowCamEye,
+      meadowCamLook: this.meadowCamLook,
+    }, {
+      tower,
+      meadowY,
+      homeOrbit: this.homeOrbit,
+      glance: this.playGlance,
+      homeView: this.homeView,
+      homeViewBlend: this.homeViewBlend,
+      homeViewFromEye: this.homeViewFromEye,
+      homeViewFromLook: this.homeViewFromLook,
+      boardQuat: this.board.quaternion,
+    });
 
     this.camera.position.copy(this.meadowCamEye);
     this.camera.lookAt(this.meadowCamLook);
@@ -4989,44 +4230,29 @@ export class MazeWorld {
   private placeMeadowCamera(): void {
     const tower = this.tower;
     if (!tower) return;
-    const meadowY = this.meadow?.position.y ?? -MEADOW_DROP;
-    const span = Math.max(tower.width, tower.depth) * 2.8;
-    const orbit = (this.glanceDOrbit * Math.PI) / 180;
-    // Fixed pivot so orbit/pitch only moves the eye, not the scene center.
-    // Rest far back from the WIN/FAIL wall so the whole meadow reads.
-    const lookY = meadowY + Math.max(1.1, span * 0.09);
-    const lookZ = -span * 0.22;
-    this.meadowCamLook.set(0, lookY, lookZ);
-
-    // Up mostly dollies back; elevation only tilts a little.
-    const up = clamp(this.glanceDAngle / MEADOW_GLANCE_PITCH_MAX, 0, 1);
-    const down = clamp(-this.glanceDAngle / Math.abs(MEADOW_GLANCE_PITCH_MIN), 0, 1);
-    const baseElev = (18 * Math.PI) / 180;
-    const elev = baseElev + up * ((18 * Math.PI) / 180) - down * ((16 * Math.PI) / 180);
-    const dist = span * (1.35 + up * 1.1 - down * 0.2);
-    const floorGap = meadowY + MEADOW_EYE_MIN - lookY;
-    const minElev = floorGap >= dist
-      ? Math.PI / 2
-      : floorGap <= -dist
-        ? -Math.PI / 2
-        : Math.asin(floorGap / dist);
-    const safeElev = Math.max(elev, minElev + 0.02);
-    const cosE = Math.cos(safeElev);
-    const sinE = Math.sin(safeElev);
-    this.meadowCamEye.set(
-      Math.sin(orbit) * cosE * dist,
-      lookY + sinE * dist,
-      lookZ + Math.cos(orbit) * cosE * dist,
+    const meadowY = this.meadow?.position.y ?? defaultMeadowY();
+    placeMeadowWinCamera(
+      this.camera.position,
+      this.meadowCamLookBlend,
+      {
+        meadowCamEye: this.meadowCamEye,
+        meadowCamLook: this.meadowCamLook,
+        meadowCamLookBlend: this.meadowCamLookBlend,
+      },
+      {
+        tower,
+        meadowY,
+        glance: this.playGlance,
+        meadowCamT: this.meadowCamT,
+        meadowCamFromPos: this.meadowCamFromPos,
+        meadowCamFromLook: this.meadowCamFromLook,
+        boardQuat: this.board.quaternion,
+        spanMult: MEADOW_SPAN_MULT,
+      },
     );
-    this.meadowCamEye.y = Math.max(this.meadowCamEye.y, meadowY + MEADOW_EYE_MIN);
-    this.meadowCamEye.applyQuaternion(this.board.quaternion);
-    this.meadowCamLook.applyQuaternion(this.board.quaternion);
-
-    const t = easeOutCubic(this.meadowCamT);
-    this.camera.position.lerpVectors(this.meadowCamFromPos, this.meadowCamEye, t);
-    this.meadowCamLookBlend.lerpVectors(this.meadowCamFromLook, this.meadowCamLook, t);
     this.camera.lookAt(this.meadowCamLookBlend);
 
+    const span = Math.max(tower.width, tower.depth) * MEADOW_SPAN_MULT;
     const range = span * 0.85;
     const shadow = this.key.shadow.camera as OrthographicCamera;
     shadow.left = -range;
@@ -5198,15 +4424,23 @@ export class MazeWorld {
     this.ghostWalls.push(mesh);
   }
 
-  /** Box face order: +x, -x, +y, -y, +z, -z — green on entry, red on blocked. */
+  /** Box face order: +x, -x, +y, -y, +z, -z — green on entry, red on blocked; top matches editor. */
   private gateWallMaterials(dir: NonNullable<Piece["oneWay"]>): MeshToonMaterial[] {
     const ok = this.gateOkWallMat.clone();
     const no = this.gateNoWallMat.clone();
     const edge = this.gateEdgeWallMat.clone();
-    if (dir === "e") return [no, ok, edge, edge, edge, edge];
-    if (dir === "w") return [ok, no, edge, edge, edge, edge];
-    if (dir === "s") return [edge, edge, edge, edge, no, ok];
-    return [edge, edge, edge, edge, ok, no];
+    const top = this.gateTopMaterial(dir);
+    if (dir === "e") return [no, ok, top, edge, edge, edge];
+    if (dir === "w") return [ok, no, top, edge, edge, edge];
+    if (dir === "s") return [edge, edge, top, edge, no, ok];
+    return [edge, edge, top, edge, ok, no];
+  }
+
+  /** Half green / half red on +y, same split as the editor wall preview. */
+  private gateTopMaterial(dir: NonNullable<Piece["oneWay"]>): MeshToonMaterial {
+    const mat = toon("#ffffff", "#ffffff", 0.22);
+    mat.map = this.gateTopTextures[dir];
+    return mat;
   }
 
   /** Full wall painted with the linked switch colour so the barrier is obvious. */
@@ -5663,22 +4897,6 @@ export class MazeWorld {
     this.focusY += (target - this.focusY) * blend;
   }
 
-  private playAngle(): number {
-    return this.settings?.values.angle ?? 46.5;
-  }
-
-  private playOrbit(): number {
-    return this.settings?.values.orbit ?? 0;
-  }
-
-  private shownAngle(): number {
-    return this.playAngle() + this.glanceDAngle;
-  }
-
-  private shownOrbit(): number {
-    return wrapDegrees(this.playOrbit() + this.glanceDOrbit);
-  }
-
   private lowest(): number {
     let low = 0;
     for (const group of this.floorGroups) {
@@ -5729,2430 +4947,4 @@ export class MazeWorld {
     }
     this.debris.length = 0;
   }
-}
-
-function wrapDegrees(value: number): number {
-  const wrapped = (((value + 180) % 360) + 360) % 360 - 180;
-  return wrapped === -180 ? 180 : wrapped;
-}
-
-function easeOutCubic(t: number): number {
-  const u = 1 - Math.min(1, Math.max(0, t));
-  return 1 - u * u * u;
-}
-
-function easeInOutCubic(t: number): number {
-  const x = Math.min(1, Math.max(0, t));
-  return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
-}
-
-interface PickupBit {
-  root: Object3D;
-  visual: Mesh;
-  cell: string;
-  group: Group;
-  taken: boolean;
-  age: number;
-  baseY: number;
-  kind: "heart" | "coin" | "star" | "wings" | "ghost";
-}
-
-interface Debris {
-  mesh: Mesh;
-  vel: Vector3;
-  spin: Vector3;
-  delay: number;
-  age: number;
-  life: number;
-}
-
-interface Spark {
-  mesh: Mesh;
-  parent: Group;
-  vel: Vector3;
-  spin: Vector3;
-  age: number;
-  life: number;
-}
-
-interface FireworkBit {
-  mesh: Mesh;
-  parent: Group;
-  vel: Vector3;
-  spin: Vector3;
-  age: number;
-  life: number;
-  gravity: number;
-  drag: number;
-  baseScale: number;
-}
-
-interface RainBit {
-  mesh: Mesh;
-  parent: Group;
-  vel: Vector3;
-  age: number;
-  life: number;
-  baseScale: number;
-}
-
-type AnimalKind =
-  | "cow"
-  | "sheep"
-  | "dog"
-  | "horse"
-  | "crab"
-  | "seagull"
-  | "turtle"
-  | "seal"
-  | "penguin"
-  | "bear"
-  | "fox"
-  | "hare"
-  | "camel"
-  | "giraffe"
-  | "elephant"
-  | "lizard"
-  | "snake"
-  | "scorpion"
-  | "chicken"
-  | "pig"
-  | "goat"
-  | "rabbit"
-  | "deer"
-  | "owl"
-  | "raccoon"
-  | "fish"
-  | "octopus"
-  | "seahorse"
-  | "ray"
-  | "shark"
-  | "whale"
-  | "jelly"
-  | "pigeon"
-  | "cat"
-  | "rat"
-  | "parrot"
-  | "frog"
-  | "toucan"
-  | "monkey";
-
-type WinSceneKind =
-  | "pasture"
-  | "beach"
-  | "snow"
-  | "desert"
-  | "orchard"
-  | "twilight"
-  | "underwater"
-  | "city"
-  | "village"
-  | "moon"
-  | "venus"
-  | "forest"
-  | "rainforest"
-  | "aurora"
-  | "disco";
-
-const WIN_SCENES: WinSceneKind[] = [
-  "pasture",
-  "beach",
-  "snow",
-  "desert",
-  "orchard",
-  "twilight",
-  "underwater",
-  "city",
-  "village",
-  "moon",
-  "venus",
-  "forest",
-  "rainforest",
-  "aurora",
-  "disco",
-];
-
-const GALLERY_SCENES = [...WIN_SCENES, "fail"] as const;
-
-const WIN_GLYPH_W = [
-  "#...#",
-  "#...#",
-  "#.#.#",
-  "##.##",
-  "#...#",
-];
-
-const WIN_GLYPH_I = [
-  ".#.",
-  "...",
-  ".#.",
-  ".#.",
-  ".#.",
-];
-
-const WIN_GLYPH_N = [
-  "#...#",
-  "##..#",
-  "#.#.#",
-  "#..##",
-  "#...#",
-];
-
-const WIN_GLYPH_BANG = [
-  ".#.",
-  ".#.",
-  ".#.",
-  "...",
-  ".#.",
-];
-
-const FAIL_GLYPH_F = [
-  "#####",
-  "#....",
-  "####.",
-  "#....",
-  "#....",
-];
-
-const FAIL_GLYPH_A = [
-  ".###.",
-  "#...#",
-  "#####",
-  "#...#",
-  "#...#",
-];
-
-const FAIL_GLYPH_I = [
-  ".#.",
-  "...",
-  ".#.",
-  ".#.",
-  ".#.",
-];
-
-const FAIL_GLYPH_L = [
-  "#....",
-  "#....",
-  "#....",
-  "#....",
-  "#####",
-];
-
-const FAIL_GLYPH_BANG = [
-  ".#.",
-  ".#.",
-  ".#.",
-  "...",
-  ".#.",
-];
-
-const GRAVE_GLYPH_RIP = [
-  "###.#.#.###",
-  "#.#.#.#.#.#",
-  "###.#.#.###",
-  "#.#.#.#.#..",
-  "#.#.#.#.#..",
-];
-
-const GRAVE_GLYPH_CROSS = [
-  "..#..",
-  "..#..",
-  "#####",
-  "..#..",
-  "..#..",
-  "..#..",
-];
-
-const GRAVE_GLYPH_R = [
-  "####.",
-  "#...#",
-  "####.",
-  "#.#..",
-  "#..#.",
-];
-
-const SCENE_ANIMALS: Record<WinSceneKind, AnimalKind[]> = {
-  pasture: ["cow", "sheep", "dog", "horse"],
-  beach: ["crab", "seagull", "turtle", "seal"],
-  snow: ["penguin", "bear", "fox", "hare"],
-  desert: ["camel", "giraffe", "elephant", "lizard"],
-  orchard: ["chicken", "pig", "goat", "rabbit"],
-  twilight: ["deer", "owl", "raccoon", "fox"],
-  underwater: ["shark", "whale", "jelly", "fish"],
-  city: ["pigeon", "cat", "rat", "dog"],
-  village: ["dog", "chicken", "pig", "cat"],
-  moon: ["cow", "hare", "fox", "owl"],
-  venus: ["camel", "lizard", "snake", "scorpion"],
-  forest: ["deer", "rabbit", "fox", "owl"],
-  rainforest: ["parrot", "frog", "toucan", "monkey"],
-  aurora: ["jelly", "owl", "fox", "hare"],
-  disco: ["parrot", "cat", "dog", "pigeon"],
-};
-
-interface AnimalBit {
-  group: Group;
-  kind: AnimalKind;
-  facing: number;
-  baseY: number;
-  scale: number;
-}
-
-function meadowStream(span: number): CatmullRomCurve3 {
-  const edge = span * 0.5 + 0.02;
-  const sway = span * 0.5;
-  const points: Vector3[] = [];
-  for (let i = 0; i <= 16; i += 1) {
-    const t = i / 16;
-    const x = -edge + t * edge * 2;
-    const z = Math.sin(t * Math.PI * 1.35 + 0.4) * sway * 0.38
-      + Math.sin(t * Math.PI * 2.7) * sway * 0.11;
-    points.push(new Vector3(x, 0, z));
-  }
-  return new CatmullRomCurve3(points);
-}
-
-function nearStream(x: number, z: number, stream: CatmullRomCurve3, radius: number): boolean {
-  const probe = new Vector3();
-  for (let i = 0; i <= 24; i += 1) {
-    stream.getPoint(i / 24, probe);
-    if (Math.hypot(x - probe.x, z - probe.z) < radius) return true;
-  }
-  return false;
-}
-
-function flatDisc(radius: number, mat: MeshToonMaterial): Mesh {
-  const mesh = new Mesh(new CircleGeometry(Math.max(0.05, radius), 16), mat);
-  mesh.rotation.x = -Math.PI / 2;
-  mesh.renderOrder = 1;
-  return mesh;
-}
-
-function makeFloorMats(): Record<WinSceneKind, MeshToonMaterial> {
-  const kinds = WIN_SCENES;
-  const mats = {} as Record<WinSceneKind, MeshToonMaterial>;
-  for (const kind of kinds) {
-    const map = makeFloorTexture(kind);
-    mats[kind] = new MeshToonMaterial({
-      color: "#ffffff",
-      map,
-      gradientMap: ramp,
-    });
-  }
-  return mats;
-}
-
-function makeFailFloorMat(): MeshToonMaterial {
-  const size = 32;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Fail floor texture canvas unavailable");
-  const base = token("--maze-fail-ground");
-  const shade = token("--maze-fail-ground-dark");
-  const crack = token("--maze-fail-crack");
-  const hash = (x: number, y: number): number => {
-    const n = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
-    return n - Math.floor(n);
-  };
-  ctx.fillStyle = base;
-  ctx.fillRect(0, 0, size, size);
-  for (let y = 0; y < size; y += 1) {
-    for (let x = 0; x < size; x += 1) {
-      const n = hash(x, y);
-      if (n > 0.78) {
-        ctx.fillStyle = shade;
-        ctx.fillRect(x, y, 1, 1);
-      }
-      if (n > 0.93 || (x + y * 3) % 11 === 0) {
-        ctx.fillStyle = crack;
-        ctx.fillRect(x, y, 1, 1);
-      }
-    }
-  }
-  const tex = new CanvasTexture(canvas);
-  tex.colorSpace = SRGBColorSpace;
-  tex.magFilter = NearestFilter;
-  tex.minFilter = NearestFilter;
-  tex.wrapS = RepeatWrapping;
-  tex.wrapT = RepeatWrapping;
-  tex.generateMipmaps = false;
-  tex.needsUpdate = true;
-  return new MeshToonMaterial({
-    color: "#ffffff",
-    map: tex,
-    gradientMap: ramp,
-  });
-}
-
-function makeFloorTexture(kind: WinSceneKind): Texture {
-  const size = 32;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Floor texture canvas unavailable");
-  paintFloor(ctx, size, kind);
-  const tex = new CanvasTexture(canvas);
-  tex.colorSpace = SRGBColorSpace;
-  tex.magFilter = NearestFilter;
-  tex.minFilter = NearestFilter;
-  tex.wrapS = RepeatWrapping;
-  tex.wrapT = RepeatWrapping;
-  tex.generateMipmaps = false;
-  tex.needsUpdate = true;
-  return tex;
-}
-
-type VoidBlob = {
-  x: number;
-  y: number;
-  r: number;
-  rgb: [number, number, number];
-  weight: number;
-  phase: number;
-  speed: number;
-  amp: number;
-};
-
-class VoidSky {
-  // 2× base so skyPixels 0.5 can paint at true half-block fineness.
-  private static readonly WIDTH = 320;
-  private static readonly HEIGHT = 180;
-
-  readonly texture: CanvasTexture;
-  private readonly canvas: HTMLCanvasElement;
-  private readonly ctx: CanvasRenderingContext2D;
-  private readonly image: ImageData;
-  private deep: [number, number, number] = [0, 0, 0];
-  private readonly blobs: VoidBlob[];
-  private chunk = 4;
-  private steps = 6;
-  private themeId = "";
-  private zoom = 1;
-  private lastTime = Number.NaN;
-
-  constructor() {
-    this.canvas = document.createElement("canvas");
-    this.canvas.width = VoidSky.WIDTH;
-    this.canvas.height = VoidSky.HEIGHT;
-    const ctx = this.canvas.getContext("2d");
-    if (!ctx) throw new Error("Void sky canvas unavailable");
-    this.ctx = ctx;
-    this.image = ctx.createImageData(VoidSky.WIDTH, VoidSky.HEIGHT);
-    this.blobs = [
-      { x: 0.12, y: 0.18, r: 0.58, rgb: [0, 0, 0], weight: 1.15, phase: 0.2, speed: 0.28, amp: 0.11 },
-      { x: 0.78, y: 0.12, r: 0.52, rgb: [0, 0, 0], weight: 1.05, phase: 1.1, speed: 0.22, amp: 0.1 },
-      { x: 0.58, y: 0.48, r: 0.62, rgb: [0, 0, 0], weight: 0.95, phase: 2.4, speed: 0.31, amp: 0.12 },
-      { x: 0.18, y: 0.78, r: 0.55, rgb: [0, 0, 0], weight: 1, phase: 3.7, speed: 0.25, amp: 0.11 },
-      { x: 0.88, y: 0.72, r: 0.48, rgb: [0, 0, 0], weight: 1.1, phase: 5.1, speed: 0.27, amp: 0.1 },
-      { x: 0.42, y: 0.28, r: 0.42, rgb: [0, 0, 0], weight: 0.7, phase: 0.8, speed: 0.35, amp: 0.09 },
-      { x: 0.5, y: 0.88, r: 0.5, rgb: [0, 0, 0], weight: 1.2, phase: 4.2, speed: 0.19, amp: 0.08 },
-    ];
-    this.texture = new CanvasTexture(this.canvas);
-    this.texture.colorSpace = SRGBColorSpace;
-    this.texture.magFilter = NearestFilter;
-    this.texture.minFilter = NearestFilter;
-    this.texture.wrapS = ClampToEdgeWrapping;
-    this.texture.wrapT = ClampToEdgeWrapping;
-    this.texture.generateMipmaps = false;
-    this.configure(4, 6, "neon");
-    this.paint(0, true);
-  }
-
-  configure(chunk: number, steps: number, themeId: string): boolean {
-    const nextChunk = Math.max(0.5, Math.round(chunk * 2) / 2);
-    const nextSteps = Math.max(6, Math.round(steps));
-    let changed = false;
-    if (themeId !== this.themeId) {
-      this.applyTheme(themeId);
-      changed = true;
-    }
-    if (nextChunk !== this.chunk || nextSteps !== this.steps) {
-      this.chunk = nextChunk;
-      this.steps = nextSteps;
-      changed = true;
-    }
-    return changed;
-  }
-
-  /** Zoom into the gradient (1 = normal). Used for enter-play parallax. */
-  setZoom(zoom: number): void {
-    const next = Math.max(1, Math.min(2.2, zoom));
-    if (Math.abs(next - this.zoom) < 0.002) return;
-    this.zoom = next;
-    this.paint(Number.isFinite(this.lastTime) ? this.lastTime : 0, true);
-  }
-
-  private applyTheme(id: string): void {
-    this.themeId = id;
-    const prefix = `--sky-${id}`;
-    this.deep = srgbBytes(token(`${prefix}-deep`));
-    for (const [i, blob] of this.blobs.entries()) {
-      blob.rgb = srgbBytes(token(`${prefix}-${i}`));
-    }
-    document.documentElement.style.setProperty("--maze-void-deep", token(`${prefix}-deep`));
-  }
-
-  paint(time: number, force = false): void {
-    if (!force && Number.isFinite(this.lastTime) && Math.abs(time - this.lastTime) < 1 / 30) return;
-    this.lastTime = time;
-    const width = VoidSky.WIDTH;
-    const height = VoidSky.HEIGHT;
-    const block = Math.max(1, Math.round(this.chunk * 2));
-    const cols = Math.ceil(width / block);
-    const rows = Math.ceil(height / block);
-    const data = this.image.data;
-    const deep = this.deep;
-    const steps = this.steps;
-    const invZoom = 1 / this.zoom;
-    for (let row = 0; row < rows; row += 1) {
-      for (let col = 0; col < cols; col += 1) {
-        const u = 0.5 + ((col + 0.5) / cols - 0.5) * invZoom;
-        const v = 0.5 + ((row + 0.5) / rows - 0.5) * invZoom;
-        let r = deep[0] * 0.35;
-        let g = deep[1] * 0.35;
-        let b = deep[2] * 0.35;
-        let mass = 0.35;
-        for (const blob of this.blobs) {
-          const bx = blob.x + Math.sin(time * blob.speed + blob.phase) * blob.amp;
-          const by = blob.y + Math.cos(time * blob.speed * 0.85 + blob.phase * 1.3) * blob.amp;
-          const radius = blob.r * (0.92 + Math.sin(time * blob.speed * 1.4 + blob.phase) * 0.08);
-          const dx = (u - bx) / radius;
-          const dy = (v - by) / radius;
-          const falloff = Math.max(0, 1 - Math.sqrt(dx * dx + dy * dy));
-          const w = falloff * falloff * blob.weight;
-          if (w <= 0) continue;
-          r += blob.rgb[0] * w;
-          g += blob.rgb[1] * w;
-          b += blob.rgb[2] * w;
-          mass += w;
-        }
-        const inv = 1 / mass;
-        const pr = quantizeByte(r * inv, steps);
-        const pg = quantizeByte(g * inv, steps);
-        const pb = quantizeByte(b * inv, steps);
-        const x0 = col * block;
-        const y0 = row * block;
-        const x1 = Math.min(width, x0 + block);
-        const y1 = Math.min(height, y0 + block);
-        for (let y = y0; y < y1; y += 1) {
-          let i = (y * width + x0) * 4;
-          for (let x = x0; x < x1; x += 1) {
-            data[i] = pr;
-            data[i + 1] = pg;
-            data[i + 2] = pb;
-            data[i + 3] = 255;
-            i += 4;
-          }
-        }
-      }
-    }
-    this.ctx.putImageData(this.image, 0, 0);
-    this.texture.needsUpdate = true;
-  }
-}
-
-function quantizeByte(value: number, steps: number): number {
-  return Math.round((Math.round((value / 255) * steps) / steps) * 255);
-}
-
-function srgbBytes(hex: string): [number, number, number] {
-  const value = new Color(hex).getHex();
-  return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
-}
-
-function paintFloor(ctx: CanvasRenderingContext2D, size: number, kind: WinSceneKind): void {
-  const px = (hex: string, x: number, y: number, w = 1, h = 1): void => {
-    ctx.fillStyle = hex;
-    ctx.fillRect(((x % size) + size) % size, ((y % size) + size) % size, w, h);
-  };
-  const hash = (x: number, y: number): number => {
-    const n = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
-    return n - Math.floor(n);
-  };
-  const soft = (base: string, tint: string, amount: number): string => mixHex(base, tint, amount);
-
-  if (kind === "pasture" || kind === "orchard") {
-    const base = token("--maze-grass");
-    const shade = soft(base, token("--maze-grass-dark"), 0.28);
-    const lit = soft(base, token("--maze-leaf-lit"), 0.22);
-    ctx.fillStyle = base;
-    ctx.fillRect(0, 0, size, size);
-    for (let y = 0; y < size; y += 1) {
-      for (let x = 0; x < size; x += 1) {
-        const n = hash(x, y);
-        if (n > 0.82) px(shade, x, y);
-        else if (n > 0.68) px(lit, x, y);
-      }
-    }
-    return;
-  }
-
-  if (kind === "forest") {
-    const base = token("--maze-moss");
-    const shade = soft(base, token("--maze-grass-dark"), 0.26);
-    const lit = soft(base, token("--maze-moss-lit"), 0.28);
-    const litter = soft(base, token("--maze-autumn"), 0.18);
-    const pine = soft(base, token("--maze-pine"), 0.2);
-    ctx.fillStyle = base;
-    ctx.fillRect(0, 0, size, size);
-    for (let y = 0; y < size; y += 1) {
-      for (let x = 0; x < size; x += 1) {
-        const n = hash(x, y);
-        if (n > 0.84) px(shade, x, y);
-        else if (n > 0.7) px(lit, x, y);
-        if (n > 0.92) px(litter, x, y);
-        if (n > 0.96) px(pine, x, y);
-      }
-    }
-    return;
-  }
-
-  if (kind === "rainforest") {
-    const base = token("--maze-canopy");
-    const shade = soft(base, token("--maze-pine"), 0.24);
-    const lit = soft(base, token("--maze-canopy-lit"), 0.3);
-    const bright = soft(base, token("--maze-canopy-bright"), 0.22);
-    const flower = soft(base, token("--maze-bromeliad"), 0.18);
-    const orchid = soft(base, token("--maze-orchid"), 0.16);
-    ctx.fillStyle = base;
-    ctx.fillRect(0, 0, size, size);
-    for (let y = 0; y < size; y += 1) {
-      for (let x = 0; x < size; x += 1) {
-        const n = hash(x, y);
-        if (n > 0.82) px(shade, x, y);
-        else if (n > 0.66) px(lit, x, y);
-        if (n > 0.9) px(bright, x, y);
-        if (n > 0.955) px(flower, x, y);
-        if (n > 0.98) px(orchid, x, y);
-      }
-    }
-    return;
-  }
-
-  if (kind === "aurora") {
-    const base = token("--maze-space");
-    const shade = soft(base, token("--maze-space-dark"), 0.35);
-    const star = soft(base, token("--maze-star"), 0.55);
-    const green = soft(base, token("--maze-aurora-green"), 0.22);
-    const violet = soft(base, token("--maze-aurora-violet"), 0.2);
-    const pink = soft(base, token("--maze-aurora-pink"), 0.16);
-    ctx.fillStyle = base;
-    ctx.fillRect(0, 0, size, size);
-    for (let y = 0; y < size; y += 1) {
-      for (let x = 0; x < size; x += 1) {
-        const n = hash(x, y);
-        if (n > 0.78) px(shade, x, y);
-        if (n > 0.93) px(star, x, y);
-        if (n > 0.97) px(green, x, y);
-        if (hash(x + 5, y + 2) > 0.975) px(violet, x, y);
-        if (hash(x + 9, y + 4) > 0.98) px(pink, x, y);
-      }
-    }
-    return;
-  }
-
-  if (kind === "disco") {
-    const base = token("--maze-disco-floor");
-    const shade = soft(base, token("--maze-disco-floor-dark"), 0.4);
-    const colors = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => soft(base, token(`--maze-disco-${i}`), 0.35));
-    ctx.fillStyle = base;
-    ctx.fillRect(0, 0, size, size);
-    for (let y = 0; y < size; y += 1) {
-      for (let x = 0; x < size; x += 1) {
-        if (x % 4 === 0 || y % 4 === 0) px(shade, x, y);
-        else {
-          const c = colors[((x >> 2) + (y >> 2)) % colors.length];
-          if (c) px(c, x, y);
-        }
-      }
-    }
-    return;
-  }
-
-  if (kind === "beach") {
-    const base = token("--maze-sand");
-    const shade = soft(base, token("--maze-sand-dark"), 0.3);
-    const wet = soft(base, token("--maze-ocean-deep"), 0.18);
-    ctx.fillStyle = base;
-    ctx.fillRect(0, 0, size, size);
-    for (let y = 0; y < size; y += 1) {
-      for (let x = 0; x < size; x += 1) {
-        const n = hash(x, y);
-        if (n > 0.78) px(shade, x, y);
-        if ((x + y * 2) % 9 === 0 && n > 0.55) px(wet, x, y);
-      }
-    }
-    return;
-  }
-
-  if (kind === "snow") {
-    const base = token("--maze-snow");
-    const shade = soft(base, token("--maze-snow-shade"), 0.32);
-    const lit = soft(base, "#ffffff", 0.2);
-    ctx.fillStyle = base;
-    ctx.fillRect(0, 0, size, size);
-    for (let y = 0; y < size; y += 1) {
-      for (let x = 0; x < size; x += 1) {
-        const n = hash(x, y);
-        if (n > 0.8) px(shade, x, y);
-        else if (n > 0.92) px(lit, x, y);
-      }
-    }
-    return;
-  }
-
-  if (kind === "desert") {
-    const base = token("--maze-dune");
-    const shade = soft(base, token("--maze-dune-dark"), 0.3);
-    const lit = soft(base, token("--maze-sand"), 0.28);
-    ctx.fillStyle = base;
-    ctx.fillRect(0, 0, size, size);
-    for (let y = 0; y < size; y += 1) {
-      for (let x = 0; x < size; x += 1) {
-        const wave = Math.sin((x + y * 0.35) * 0.9);
-        if (wave > 0.55) px(lit, x, y);
-        if (wave < -0.55) px(shade, x, y);
-        if (hash(x, y) > 0.9) px(shade, x, y);
-      }
-    }
-    return;
-  }
-
-  if (kind === "twilight") {
-    const base = token("--maze-lavender");
-    const shade = soft(base, token("--maze-lavender-dark"), 0.3);
-    const lit = soft(base, token("--maze-flower-3"), 0.16);
-    ctx.fillStyle = base;
-    ctx.fillRect(0, 0, size, size);
-    for (let y = 0; y < size; y += 1) {
-      for (let x = 0; x < size; x += 1) {
-        const n = hash(x, y);
-        if (n > 0.8) px(shade, x, y);
-        if (n > 0.94) px(lit, x, y);
-      }
-    }
-    return;
-  }
-
-  if (kind === "underwater") {
-    const base = token("--maze-seabed");
-    const shade = soft(base, token("--maze-seabed-dark"), 0.28);
-    const lit = soft(base, token("--maze-seabed-lit"), 0.3);
-    const sand = soft(base, token("--maze-seabed-sand"), 0.22);
-    const coral = soft(base, token("--maze-coral"), 0.2);
-    ctx.fillStyle = base;
-    ctx.fillRect(0, 0, size, size);
-    for (let y = 0; y < size; y += 1) {
-      for (let x = 0; x < size; x += 1) {
-        const n = hash(x, y);
-        const ripple = Math.sin(x * 0.8 + y * 0.25);
-        if (ripple > 0.55) px(lit, x, y);
-        if (ripple < -0.6) px(shade, x, y);
-        if (n > 0.88) px(sand, x, y);
-        if (n > 0.97) px(coral, x, y);
-      }
-    }
-    return;
-  }
-
-  if (kind === "city") {
-    const base = token("--maze-grass");
-    const shade = soft(base, token("--maze-grass-dark"), 0.28);
-    const lit = soft(base, token("--maze-leaf-lit"), 0.24);
-    const bloom = soft(base, token("--maze-flower-1"), 0.18);
-    const petal = soft(base, token("--maze-flower-2"), 0.14);
-    ctx.fillStyle = base;
-    ctx.fillRect(0, 0, size, size);
-    for (let y = 0; y < size; y += 1) {
-      for (let x = 0; x < size; x += 1) {
-        const n = hash(x, y);
-        if (n > 0.82) px(shade, x, y);
-        else if (n > 0.66) px(lit, x, y);
-        if (n > 0.94) px(bloom, x, y);
-        if (n > 0.975) px(petal, x, y);
-      }
-    }
-    return;
-  }
-
-  if (kind === "village") {
-    const base = token("--maze-cobble");
-    const shade = soft(base, token("--maze-cobble-dark"), 0.3);
-    const lit = soft(base, token("--maze-plaster"), 0.18);
-    ctx.fillStyle = base;
-    ctx.fillRect(0, 0, size, size);
-    for (let y = 0; y < size; y += 4) {
-      for (let x = 0; x < size; x += 4) {
-        const ox = (y / 4) % 2 === 0 ? 0 : 2;
-        px(shade, x + ox, y, 3, 3);
-        if (hash(x, y) > 0.7) px(lit, x + ox + 1, y + 1);
-      }
-    }
-    return;
-  }
-
-  if (kind === "moon") {
-    const base = token("--maze-moon-dust");
-    const shade = soft(base, token("--maze-moon-dust-dark"), 0.3);
-    const rock = soft(base, token("--maze-moon-rock"), 0.26);
-    ctx.fillStyle = base;
-    ctx.fillRect(0, 0, size, size);
-    for (let y = 0; y < size; y += 1) {
-      for (let x = 0; x < size; x += 1) {
-        const n = hash(x, y);
-        if (n > 0.78) px(shade, x, y);
-        if (n > 0.92) px(rock, x, y);
-      }
-    }
-    for (const [cx, cy, r] of [[10, 12, 4], [22, 20, 3]] as const) {
-      for (let y = -r; y <= r; y += 1) {
-        for (let x = -r; x <= r; x += 1) {
-          const d = Math.hypot(x, y);
-          if (d <= r && d > r - 1.2) px(rock, cx + x, cy + y);
-          else if (d <= r - 1.2) px(shade, cx + x, cy + y);
-        }
-      }
-    }
-    return;
-  }
-
-  if (kind === "venus") {
-    const base = token("--maze-venus-ground");
-    const shade = soft(base, token("--maze-venus-ground-dark"), 0.28);
-    const rock = soft(base, token("--maze-venus-rock"), 0.24);
-    const sulfur = soft(base, token("--maze-sulfur"), 0.2);
-    ctx.fillStyle = base;
-    ctx.fillRect(0, 0, size, size);
-    for (let y = 0; y < size; y += 1) {
-      for (let x = 0; x < size; x += 1) {
-        const n = hash(x, y);
-        if (n > 0.78) px(shade, x, y);
-        if (n > 0.9) px(rock, x, y);
-        if (n > 0.96) px(sulfur, x, y);
-      }
-    }
-    return;
-  }
-
-  ctx.fillStyle = token("--maze-grass");
-  ctx.fillRect(0, 0, size, size);
-}
-
-function mixHex(a: string, b: string, t: number): string {
-  const ca = new Color(a);
-  const cb = new Color(b);
-  return `#${ca.lerp(cb, t).getHexString()}`;
-}
-
-type TreeKind = "oak" | "pine" | "birch" | "willow" | "autumn";
-
-type TreeMats = {
-  trunk: MeshToonMaterial;
-  trunkPale: MeshToonMaterial;
-  leaf: MeshToonMaterial;
-  leafLit: MeshToonMaterial;
-  pine: MeshToonMaterial;
-  pineLit: MeshToonMaterial;
-  autumn: MeshToonMaterial;
-  autumnLit: MeshToonMaterial;
-};
-
-function makeTree(kind: TreeKind, x: number, z: number, scale: number, mats: TreeMats): Group {
-  const tree = new Group();
-  tree.position.set(x, 0, z);
-  tree.scale.setScalar(scale);
-  if (kind === "pine") buildPine(tree, mats);
-  else if (kind === "birch") buildBirch(tree, mats);
-  else if (kind === "willow") buildWillow(tree, mats);
-  else if (kind === "autumn") buildAutumn(tree, mats);
-  else buildOak(tree, mats);
-  return tree;
-}
-
-function makeDeadTree(
-  x: number,
-  z: number,
-  scale: number,
-  lean: number,
-  trunk: MeshToonMaterial,
-): Group {
-  const tree = new Group();
-  tree.position.set(x, 0, z);
-  tree.scale.setScalar(scale);
-  tree.rotation.z = lean;
-  voxel(tree, trunk, 0.09, 0.72, 0.09, 0, 0.72, 0);
-  voxel(tree, trunk, 0.14, 0.05, 0.08, 0.08, 0.06, 0.04);
-  voxel(tree, trunk, 0.1, 0.04, 0.12, -0.06, 0.05, -0.05);
-  voxel(tree, trunk, 0.32, 0.035, 0.035, 0.28, 1.15, 0.02);
-  voxel(tree, trunk, 0.12, 0.03, 0.03, 0.48, 1.22, 0.08);
-  voxel(tree, trunk, 0.26, 0.03, 0.03, -0.22, 1.32, -0.04);
-  voxel(tree, trunk, 0.03, 0.03, 0.22, 0.04, 1.42, 0.18);
-  voxel(tree, trunk, 0.03, 0.18, 0.03, -0.08, 1.55, -0.1);
-  voxel(tree, trunk, 0.18, 0.03, 0.03, 0.14, 0.95, -0.12);
-  return tree;
-}
-
-function makeGrave(
-  x: number,
-  z: number,
-  scale: number,
-  yaw: number,
-  glyph: string[],
-  stone: MeshToonMaterial,
-  stoneDark: MeshToonMaterial,
-  crack: MeshToonMaterial,
-  accent: MeshToonMaterial,
-): Group {
-  const grave = new Group();
-  grave.position.set(x, 0, z);
-  grave.scale.setScalar(scale);
-  grave.rotation.y = yaw;
-
-  voxel(grave, stoneDark, 0.42, 0.06, 0.28, 0, 0.06, 0.04);
-  voxel(grave, stone, 0.36, 0.05, 0.55, 0, 0.08, -0.08);
-  voxel(grave, accent, 0.32, 0.48, 0.08, 0, 0.62, -0.42);
-  voxel(grave, stoneDark, 0.36, 0.06, 0.1, 0, 1.12, -0.42);
-  voxel(grave, crack, 0.34, 0.02, 0.02, 0, 0.18, 0.22);
-
-  const rows = glyph.length;
-  let cols = 0;
-  for (const line of glyph) cols = Math.max(cols, line.length);
-  const cell = Math.min(0.055, 0.48 / Math.max(cols, 1));
-  const letterH = cell * rows;
-  const faceZ = -0.34;
-  for (let r = 0; r < rows; r += 1) {
-    const line = glyph[r] ?? "";
-    for (let c = 0; c < line.length; c += 1) {
-      if (line[c] !== "#") continue;
-      const gx = (c + 0.5 - cols * 0.5) * cell;
-      const gy = 0.95 - letterH * 0.5 - (r + 0.5) * cell;
-      voxel(grave, crack, cell * 0.42, cell * 0.42, 0.02, gx, gy, faceZ);
-    }
-  }
-  return grave;
-}
-
-function makeComedySkull(
-  x: number,
-  z: number,
-  scale: number,
-  yaw: number,
-  tip: number,
-  bone: MeshToonMaterial,
-  boneLit: MeshToonMaterial,
-  socket: MeshToonMaterial,
-  shade: MeshToonMaterial,
-): Group {
-  const skull = new Group();
-  skull.position.set(x, 0, z);
-  skull.scale.setScalar(scale);
-  skull.rotation.y = yaw;
-  skull.rotation.z = tip;
-
-  // Oversized dome + cheeks sitting on a little dirt mound.
-  voxel(skull, shade, 0.38, 0.08, 0.3, 0, 0.08, 0.02);
-  voxel(skull, bone, 0.42, 0.36, 0.34, 0, 0.62, 0);
-  voxel(skull, boneLit, 0.34, 0.18, 0.3, 0, 1.02, 0.02);
-  voxel(skull, bone, 0.46, 0.16, 0.28, 0, 0.48, 0.06);
-
-  // Uneven cartoon eye sockets.
-  voxel(skull, socket, 0.14, 0.15, 0.08, -0.16, 0.78, 0.28);
-  voxel(skull, socket, 0.11, 0.12, 0.08, 0.18, 0.74, 0.28);
-  voxel(skull, boneLit, 0.04, 0.04, 0.03, -0.14, 0.72, 0.34);
-  voxel(skull, boneLit, 0.035, 0.035, 0.03, 0.2, 0.7, 0.34);
-
-  // Tiny nose holes + goofy open jaw.
-  voxel(skull, socket, 0.035, 0.05, 0.04, -0.05, 0.52, 0.32);
-  voxel(skull, socket, 0.035, 0.05, 0.04, 0.05, 0.52, 0.32);
-  voxel(skull, bone, 0.28, 0.08, 0.16, 0, 0.28, 0.12);
-  voxel(skull, socket, 0.2, 0.06, 0.1, 0, 0.3, 0.22);
-
-  // Chunky teeth with one missing for the gag.
-  const teeth = [-0.16, -0.08, 0, 0.08, 0.16] as const;
-  for (const [index, tx] of teeth.entries()) {
-    if (index === 2) continue;
-    voxel(skull, boneLit, 0.03, 0.05, 0.03, tx, 0.22, 0.26);
-  }
-  voxel(skull, bone, 0.04, 0.03, 0.12, -0.26, 0.34, 0.02);
-  voxel(skull, bone, 0.04, 0.03, 0.12, 0.26, 0.34, 0.02);
-  return skull;
-}
-
-function makeBone(
-  x: number,
-  z: number,
-  scale: number,
-  yaw: number,
-  tip: number,
-  bone: MeshToonMaterial,
-  boneLit: MeshToonMaterial,
-): Group {
-  const group = new Group();
-  group.position.set(x, 0.06, z);
-  group.scale.setScalar(scale);
-  group.rotation.y = yaw;
-  group.rotation.z = tip;
-  voxel(group, bone, 0.28, 0.035, 0.035, 0, 0.04, 0);
-  voxel(group, boneLit, 0.07, 0.06, 0.06, -0.3, 0.05, 0);
-  voxel(group, boneLit, 0.07, 0.06, 0.06, 0.3, 0.05, 0);
-  voxel(group, bone, 0.04, 0.045, 0.03, -0.34, 0.08, 0.02);
-  voxel(group, bone, 0.04, 0.045, 0.03, -0.34, 0.08, -0.02);
-  voxel(group, bone, 0.04, 0.045, 0.03, 0.34, 0.08, 0.02);
-  voxel(group, bone, 0.04, 0.045, 0.03, 0.34, 0.08, -0.02);
-  return group;
-}
-
-function makeCrow(
-  x: number,
-  y: number,
-  z: number,
-  yaw: number,
-  tip: number,
-  body: MeshToonMaterial,
-  beak: MeshToonMaterial,
-  eye: MeshToonMaterial,
-): Group {
-  const crow = new Group();
-  crow.position.set(x, y, z);
-  crow.rotation.y = yaw;
-  crow.rotation.z = tip;
-  voxel(crow, body, 0.08, 0.05, 0.05, 0, 0.08, 0);
-  voxel(crow, body, 0.05, 0.045, 0.045, 0.08, 0.1, 0);
-  voxel(crow, beak, 0.04, 0.015, 0.015, 0.14, 0.09, 0);
-  voxel(crow, eye, 0.012, 0.012, 0.012, 0.1, 0.12, 0.035);
-  voxel(crow, body, 0.07, 0.015, 0.04, -0.02, 0.1, 0.07);
-  voxel(crow, body, 0.07, 0.015, 0.04, -0.02, 0.1, -0.07);
-  voxel(crow, body, 0.05, 0.015, 0.02, -0.12, 0.08, 0);
-  voxel(crow, body, 0.012, 0.03, 0.012, 0.02, 0.02, 0.03);
-  voxel(crow, body, 0.012, 0.03, 0.012, 0.02, 0.02, -0.03);
-  return crow;
-}
-
-function makeSadShack(
-  x: number,
-  z: number,
-  scale: number,
-  yaw: number,
-  lean: number,
-  kind: "hut" | "lean" | "ruin",
-  mats: {
-    wood: MeshToonMaterial;
-    woodDark: MeshToonMaterial;
-    stone: MeshToonMaterial;
-    shade: MeshToonMaterial;
-  },
-): Group {
-  const shack = new Group();
-  shack.position.set(x, 0, z);
-  shack.scale.setScalar(scale);
-  shack.rotation.y = yaw;
-  shack.rotation.z = lean;
-
-  if (kind === "lean") {
-    // Open lean-to: three posts and a slumped tarp of planks.
-    voxel(shack, mats.woodDark, 0.04, 0.28, 0.04, -0.28, 0.28, -0.18);
-    voxel(shack, mats.woodDark, 0.04, 0.22, 0.04, 0.28, 0.22, -0.18);
-    voxel(shack, mats.woodDark, 0.04, 0.18, 0.04, -0.05, 0.18, 0.22);
-    voxel(shack, mats.wood, 0.34, 0.03, 0.28, 0, 0.42, 0);
-    voxel(shack, mats.woodDark, 0.3, 0.025, 0.22, 0.04, 0.48, -0.04);
-    voxel(shack, mats.shade, 0.12, 0.08, 0.1, 0.22, 0.08, 0.18);
-    voxel(shack, mats.stone, 0.1, 0.05, 0.14, -0.2, 0.05, 0.2);
-    return shack;
-  }
-
-  if (kind === "ruin") {
-    // Half-collapsed stone shell, no roof left.
-    voxel(shack, mats.stone, 0.32, 0.18, 0.04, 0, 0.18, -0.28);
-    voxel(shack, mats.stone, 0.04, 0.22, 0.26, -0.3, 0.22, 0);
-    voxel(shack, mats.shade, 0.04, 0.14, 0.2, 0.3, 0.14, 0.04);
-    voxel(shack, mats.woodDark, 0.22, 0.03, 0.18, 0.08, 0.36, -0.05);
-    voxel(shack, mats.wood, 0.08, 0.03, 0.2, -0.18, 0.08, 0.22);
-    voxel(shack, mats.shade, 0.1, 0.06, 0.08, 0.18, 0.06, 0.2);
-    return shack;
-  }
-
-  // Closed hut — sagging roof, dark doorway, one cracked window.
-  voxel(shack, mats.wood, 0.36, 0.22, 0.28, 0, 0.22, 0);
-  voxel(shack, mats.woodDark, 0.38, 0.04, 0.3, 0, 0.44, 0);
-  // Pitched roof planks, slightly askew.
-  voxel(shack, mats.woodDark, 0.42, 0.03, 0.18, 0, 0.56, -0.08);
-  voxel(shack, mats.wood, 0.4, 0.03, 0.16, 0.02, 0.62, 0.06);
-  voxel(shack, mats.shade, 0.12, 0.02, 0.14, -0.12, 0.68, 0);
-  // Door void + boards.
-  voxel(shack, mats.shade, 0.08, 0.14, 0.02, 0, 0.16, 0.29);
-  voxel(shack, mats.woodDark, 0.1, 0.02, 0.015, 0, 0.22, 0.3);
-  voxel(shack, mats.woodDark, 0.1, 0.02, 0.015, 0, 0.12, 0.3);
-  // Window hole.
-  voxel(shack, mats.shade, 0.07, 0.06, 0.015, -0.18, 0.28, 0.29);
-  // Chimney stump.
-  voxel(shack, mats.stone, 0.07, 0.14, 0.07, 0.18, 0.72, -0.08);
-  voxel(shack, mats.shade, 0.05, 0.04, 0.05, 0.18, 0.84, -0.08);
-  // Debris at the stoop.
-  voxel(shack, mats.wood, 0.1, 0.03, 0.06, 0.22, 0.04, 0.34);
-  voxel(shack, mats.stone, 0.08, 0.04, 0.08, -0.24, 0.04, 0.3);
-  return shack;
-}
-
-function makeBrokenGate(
-  x: number,
-  z: number,
-  scale: number,
-  yaw: number,
-  iron: MeshToonMaterial,
-  post: MeshToonMaterial,
-  rust: MeshToonMaterial,
-): Group {
-  const gate = new Group();
-  gate.position.set(x, 0, z);
-  gate.scale.setScalar(scale);
-  gate.rotation.y = yaw;
-
-  voxel(gate, post, 0.06, 0.55, 0.06, -0.42, 0.55, 0);
-  voxel(gate, post, 0.06, 0.48, 0.06, 0.42, 0.48, 0);
-  voxel(gate, iron, 0.36, 0.04, 0.04, 0, 1.05, 0);
-  voxel(gate, rust, 0.04, 0.04, 0.04, -0.42, 1.12, 0);
-  voxel(gate, rust, 0.04, 0.04, 0.04, 0.42, 1.0, 0);
-
-  // Left door hangs open; right door is cracked and slumped.
-  const left = new Group();
-  left.position.set(-0.2, 0.55, 0.02);
-  left.rotation.y = -0.85;
-  voxel(left, iron, 0.18, 0.42, 0.03, 0, 0, 0);
-  for (const y of [-0.28, -0.08, 0.12, 0.3] as const) {
-    voxel(left, rust, 0.16, 0.015, 0.015, 0, y, 0.03);
-  }
-  for (const xBar of [-0.1, 0, 0.1] as const) {
-    voxel(left, iron, 0.015, 0.4, 0.015, xBar, 0, 0.03);
-  }
-  gate.add(left);
-
-  const right = new Group();
-  right.position.set(0.22, 0.42, 0);
-  right.rotation.z = 0.55;
-  right.rotation.y = 0.25;
-  voxel(right, iron, 0.16, 0.34, 0.03, 0, 0, 0);
-  voxel(right, rust, 0.14, 0.015, 0.015, 0, -0.12, 0.03);
-  voxel(right, rust, 0.14, 0.015, 0.015, 0, 0.1, 0.03);
-  voxel(right, iron, 0.015, 0.3, 0.015, -0.06, 0, 0.03);
-  voxel(right, iron, 0.015, 0.28, 0.015, 0.06, -0.02, 0.03);
-  gate.add(right);
-
-  // Fallen spear tip in the dirt.
-  voxel(gate, iron, 0.03, 0.03, 0.22, 0.55, 0.04, 0.18);
-  voxel(gate, rust, 0.04, 0.04, 0.04, 0.55, 0.05, 0.34);
-  return gate;
-}
-
-function makeOpenCoffin(
-  x: number,
-  z: number,
-  scale: number,
-  yaw: number,
-  tip: number,
-  wood: MeshToonMaterial,
-  woodDark: MeshToonMaterial,
-  lining: MeshToonMaterial,
-  dirt: MeshToonMaterial,
-): Group {
-  const coffin = new Group();
-  coffin.position.set(x, 0, z);
-  coffin.scale.setScalar(scale);
-  coffin.rotation.y = yaw;
-  coffin.rotation.z = tip;
-
-  voxel(coffin, dirt, 0.42, 0.08, 0.28, 0, 0.06, 0.04);
-  voxel(coffin, woodDark, 0.34, 0.08, 0.18, 0, 0.12, 0);
-  voxel(coffin, wood, 0.32, 0.03, 0.03, 0, 0.2, 0.16);
-  voxel(coffin, wood, 0.32, 0.03, 0.03, 0, 0.2, -0.16);
-  voxel(coffin, wood, 0.03, 0.03, 0.16, -0.32, 0.2, 0);
-  voxel(coffin, wood, 0.03, 0.03, 0.16, 0.32, 0.2, 0);
-  voxel(coffin, lining, 0.26, 0.02, 0.12, 0, 0.16, 0);
-
-  const lid = new Group();
-  lid.position.set(0.18, 0.28, 0.22);
-  lid.rotation.x = -1.05;
-  lid.rotation.y = 0.35;
-  voxel(lid, wood, 0.3, 0.03, 0.16, 0, 0, 0);
-  voxel(lid, woodDark, 0.08, 0.02, 0.04, 0, 0.04, 0);
-  coffin.add(lid);
-  return coffin;
-}
-
-function makeGraveLantern(
-  x: number,
-  z: number,
-  scale: number,
-  yaw: number,
-  post: MeshToonMaterial,
-  cage: MeshToonMaterial,
-  flame: MeshToonMaterial,
-  core: MeshToonMaterial,
-): Group {
-  const lantern = new Group();
-  lantern.position.set(x, 0, z);
-  lantern.scale.setScalar(scale);
-  lantern.rotation.y = yaw;
-
-  voxel(lantern, post, 0.035, 0.28, 0.035, 0, 0.28, 0);
-  voxel(lantern, cage, 0.1, 0.02, 0.1, 0, 0.58, 0);
-  voxel(lantern, cage, 0.08, 0.02, 0.08, 0, 0.78, 0);
-  voxel(lantern, post, 0.015, 0.1, 0.015, -0.07, 0.68, -0.07);
-  voxel(lantern, post, 0.015, 0.1, 0.015, 0.07, 0.68, -0.07);
-  voxel(lantern, post, 0.015, 0.1, 0.015, -0.07, 0.68, 0.07);
-  voxel(lantern, post, 0.015, 0.1, 0.015, 0.07, 0.68, 0.07);
-
-  const wick = new Mesh(new BoxGeometry(0.05, 0.1, 0.05), core);
-  wick.position.set(0, 0.66, 0);
-  wick.userData.lanternFlame = true;
-  const glowMesh = new Mesh(new BoxGeometry(0.07, 0.12, 0.07), flame);
-  glowMesh.position.set(0.01, 0.7, 0);
-  glowMesh.userData.lanternFlame = true;
-  lantern.add(wick, glowMesh);
-  return lantern;
-}
-
-function makeGhost(
-  x: number,
-  z: number,
-  scale: number,
-  yaw: number,
-  body: MeshToonMaterial,
-  trim: MeshToonMaterial,
-  eyes: MeshToonMaterial,
-): Group {
-  const ghost = new Group();
-  ghost.position.set(x, 0.55, z);
-  ghost.scale.setScalar(scale);
-  ghost.rotation.y = yaw;
-
-  voxel(ghost, body, 0.18, 0.22, 0.14, 0, 0.2, 0);
-  voxel(ghost, body, 0.14, 0.12, 0.12, 0, 0.48, 0);
-  voxel(ghost, trim, 0.05, 0.08, 0.04, -0.1, -0.08, 0.04);
-  voxel(ghost, trim, 0.05, 0.1, 0.04, 0, -0.1, -0.02);
-  voxel(ghost, trim, 0.05, 0.07, 0.04, 0.1, -0.06, 0.03);
-  voxel(ghost, eyes, 0.035, 0.04, 0.02, -0.05, 0.52, 0.12);
-  voxel(ghost, eyes, 0.035, 0.04, 0.02, 0.05, 0.52, 0.12);
-  voxel(ghost, trim, 0.04, 0.02, 0.02, 0, 0.42, 0.13);
-  return ghost;
-}
-
-function makePalm(
-  x: number,
-  z: number,
-  scale: number,
-  trunk: MeshToonMaterial,
-  leaf: MeshToonMaterial,
-  lit: MeshToonMaterial,
-): Group {
-  const tree = new Group();
-  tree.position.set(x, 0, z);
-  tree.scale.setScalar(scale);
-  voxel(tree, trunk, 0.07, 0.55, 0.07, 0, 0.55, 0);
-  voxel(tree, leaf, 0.34, 0.08, 0.12, 0.2, 1.15, 0);
-  voxel(tree, leaf, 0.34, 0.08, 0.12, -0.2, 1.15, 0);
-  voxel(tree, lit, 0.12, 0.08, 0.34, 0, 1.15, 0.2);
-  voxel(tree, lit, 0.12, 0.08, 0.34, 0, 1.15, -0.2);
-  voxel(tree, lit, 0.14, 0.1, 0.14, 0, 1.28, 0);
-  return tree;
-}
-
-function makeCactus(
-  x: number,
-  z: number,
-  scale: number,
-  body: MeshToonMaterial,
-  lit: MeshToonMaterial,
-): Group {
-  const plant = new Group();
-  plant.position.set(x, 0, z);
-  plant.scale.setScalar(scale);
-  voxel(plant, body, 0.1, 0.4, 0.1, 0, 0.4, 0);
-  voxel(plant, lit, 0.08, 0.08, 0.22, 0.18, 0.5, 0);
-  voxel(plant, lit, 0.08, 0.16, 0.08, 0.28, 0.62, 0);
-  voxel(plant, body, 0.08, 0.08, 0.18, -0.16, 0.42, 0);
-  voxel(plant, body, 0.08, 0.14, 0.08, -0.26, 0.52, 0);
-  return plant;
-}
-
-function makeCottage(
-  x: number,
-  z: number,
-  scale: number,
-  mats: {
-    plaster: MeshToonMaterial;
-    roof: MeshToonMaterial;
-    trunk: MeshToonMaterial;
-    window: MeshToonMaterial;
-  },
-): Group {
-  const house = new Group();
-  house.position.set(x, 0, z);
-  house.scale.setScalar(scale);
-  voxel(house, mats.plaster, 0.28, 0.22, 0.22, 0, 0.28, 0);
-  voxel(house, mats.roof, 0.34, 0.12, 0.26, 0, 0.58, 0);
-  voxel(house, mats.trunk, 0.06, 0.12, 0.04, 0.18, 0.16, 0.22);
-  voxel(house, mats.window, 0.06, 0.06, 0.02, -0.12, 0.3, 0.23);
-  voxel(house, mats.window, 0.06, 0.06, 0.02, 0.06, 0.3, 0.23);
-  return house;
-}
-
-function makeStreetLamp(
-  x: number,
-  z: number,
-  pole: MeshToonMaterial,
-  lamp: MeshToonMaterial,
-): Group {
-  const post = new Group();
-  post.position.set(x, 0, z);
-  voxel(post, pole, 0.035, 0.45, 0.035, 0, 0.45, 0);
-  voxel(post, pole, 0.12, 0.03, 0.03, 0.08, 0.9, 0);
-  voxel(post, lamp, 0.06, 0.06, 0.06, 0.16, 0.86, 0);
-  return post;
-}
-
-function makePlanet(
-  radius: number,
-  body: MeshToonMaterial,
-  shade: MeshToonMaterial,
-  rock: MeshToonMaterial,
-): Group {
-  const planet = new Group();
-  const core = new Mesh(facet(new SphereGeometry(radius, 12, 10)), body);
-  planet.add(core);
-
-  const craters = [
-    { a: 0.55, b: 0.35, r: 0.3 },
-    { a: 2.35, b: -0.25, r: 0.22 },
-    { a: -1.4, b: 0.7, r: 0.18 },
-    { a: 3.7, b: 0.15, r: 0.26 },
-    { a: 1.1, b: -0.75, r: 0.16 },
-  ];
-  const axis = new Vector3(0, 1, 0);
-  const face = new Vector3(0, 0, 1);
-  for (const crater of craters) {
-    const cr = radius * crater.r;
-    const depth = cr * 0.7;
-    const dir = new Vector3(
-      Math.cos(crater.a) * Math.cos(crater.b),
-      Math.sin(crater.b),
-      Math.sin(crater.a) * Math.cos(crater.b),
-    ).normalize();
-
-    // Punch a well into the surface so the crater reads as a recess.
-    const well = new Mesh(
-      new CylinderGeometry(cr * 0.72, cr * 0.98, depth, 12, 1, true),
-      rock,
-    );
-    well.quaternion.setFromUnitVectors(axis, dir);
-    well.position.copy(dir).multiplyScalar(radius - depth * 0.45);
-
-    const floor = new Mesh(new CircleGeometry(cr * 0.72, 12), shade);
-    floor.quaternion.setFromUnitVectors(face, dir);
-    floor.position.copy(dir).multiplyScalar(radius - depth * 0.92);
-
-    const bowl = new Mesh(new CircleGeometry(cr * 0.95, 14), shade);
-    bowl.quaternion.setFromUnitVectors(face, dir);
-    bowl.position.copy(dir).multiplyScalar(radius - depth * 0.55);
-
-    const lip = new Mesh(new RingGeometry(cr * 0.92, cr * 1.08, 18), rock);
-    lip.quaternion.setFromUnitVectors(face, dir);
-    lip.position.copy(dir).multiplyScalar(radius - depth * 0.08);
-
-    planet.add(well, bowl, floor, lip);
-  }
-  return planet;
-}
-
-function makeBench(
-  x: number,
-  z: number,
-  facing: number,
-  wood: MeshToonMaterial,
-  seat: MeshToonMaterial,
-): Group {
-  const bench = new Group();
-  bench.position.set(x, 0, z);
-  bench.rotation.y = facing;
-  voxel(bench, wood, 0.04, 0.18, 0.04, -0.22, 0.18, 0.08);
-  voxel(bench, wood, 0.04, 0.18, 0.04, 0.22, 0.18, 0.08);
-  voxel(bench, wood, 0.04, 0.18, 0.04, -0.22, 0.18, -0.08);
-  voxel(bench, wood, 0.04, 0.18, 0.04, 0.22, 0.18, -0.08);
-  voxel(bench, seat, 0.52, 0.04, 0.22, 0, 0.28, 0);
-  voxel(bench, seat, 0.52, 0.16, 0.04, 0, 0.4, -0.1);
-  return bench;
-}
-
-function makeMushroomPatch(
-  x: number,
-  z: number,
-  scale: number,
-  mats: { stem: MeshToonMaterial; cap: MeshToonMaterial; spot: MeshToonMaterial },
-): Group {
-  const patch = new Group();
-  patch.position.set(x, 0, z);
-  patch.scale.setScalar(scale);
-  const shrooms = [
-    { x: 0, z: 0, s: 1, h: 0.16 },
-    { x: 0.14, z: 0.08, s: 0.7, h: 0.12 },
-    { x: -0.12, z: 0.1, s: 0.55, h: 0.1 },
-    { x: 0.06, z: -0.12, s: 0.6, h: 0.11 },
-  ];
-  for (const shroom of shrooms) {
-    voxel(patch, mats.stem, 0.03 * shroom.s, shroom.h, 0.03 * shroom.s, shroom.x, shroom.h, shroom.z);
-    voxel(patch, mats.cap, 0.08 * shroom.s, 0.04 * shroom.s, 0.08 * shroom.s, shroom.x, shroom.h * 2 + 0.02, shroom.z);
-    voxel(patch, mats.spot, 0.02 * shroom.s, 0.015 * shroom.s, 0.02 * shroom.s, shroom.x + 0.03 * shroom.s, shroom.h * 2 + 0.05, shroom.z);
-  }
-  return patch;
-}
-
-function swimHeight(kind: AnimalKind): number {
-  if (kind === "whale") return 1.15;
-  if (kind === "jelly") return 1.45;
-  if (kind === "shark") return 0.85;
-  if (kind === "fish" || kind === "ray" || kind === "seahorse" || kind === "octopus") return 0.45;
-  return 0;
-}
-
-function animalScale(kind: AnimalKind): number {
-  if (kind === "whale") return 2.15;
-  if (kind === "jelly") return 1.7;
-  if (kind === "shark") return 1.55;
-  if (kind === "elephant") return 1.45;
-  if (kind === "giraffe") return 1.35;
-  return 1;
-}
-
-function buildOak(tree: Group, mats: TreeMats): void {
-  voxel(tree, mats.trunk, 0.1, 0.55, 0.1, 0, 0.55, 0);
-  voxel(tree, mats.leaf, 0.42, 0.32, 0.42, 0, 1.25, 0);
-  voxel(tree, mats.leafLit, 0.28, 0.22, 0.28, 0, 1.55, 0);
-  voxel(tree, mats.leafLit, 0.2, 0.18, 0.2, 0.28, 1.2, 0.16);
-  voxel(tree, mats.leaf, 0.18, 0.16, 0.18, -0.26, 1.15, -0.14);
-}
-
-function buildPine(tree: Group, mats: TreeMats): void {
-  voxel(tree, mats.trunk, 0.07, 0.45, 0.07, 0, 0.45, 0);
-  voxel(tree, mats.pine, 0.38, 0.16, 0.38, 0, 1.0, 0);
-  voxel(tree, mats.pine, 0.28, 0.16, 0.28, 0, 1.28, 0);
-  voxel(tree, mats.pineLit, 0.18, 0.16, 0.18, 0, 1.54, 0);
-  voxel(tree, mats.pineLit, 0.1, 0.14, 0.1, 0, 1.78, 0);
-}
-
-function buildBirch(tree: Group, mats: TreeMats): void {
-  voxel(tree, mats.trunkPale, 0.06, 0.7, 0.06, 0, 0.7, 0);
-  voxel(tree, mats.leafLit, 0.22, 0.18, 0.22, 0, 1.45, 0);
-  voxel(tree, mats.leaf, 0.16, 0.14, 0.16, 0.14, 1.55, 0.08);
-  voxel(tree, mats.leaf, 0.14, 0.12, 0.14, -0.12, 1.5, -0.1);
-  voxel(tree, mats.leafLit, 0.12, 0.12, 0.12, 0.02, 1.7, -0.04);
-}
-
-function buildWillow(tree: Group, mats: TreeMats): void {
-  voxel(tree, mats.trunk, 0.09, 0.5, 0.09, 0, 0.5, 0);
-  voxel(tree, mats.leaf, 0.48, 0.2, 0.48, 0, 1.15, 0);
-  voxel(tree, mats.leafLit, 0.55, 0.12, 0.55, 0, 0.95, 0);
-  voxel(tree, mats.leaf, 0.2, 0.28, 0.12, 0.38, 0.85, 0);
-  voxel(tree, mats.leaf, 0.2, 0.28, 0.12, -0.38, 0.85, 0);
-  voxel(tree, mats.leafLit, 0.12, 0.28, 0.2, 0, 0.85, 0.38);
-  voxel(tree, mats.leafLit, 0.12, 0.28, 0.2, 0, 0.85, -0.38);
-}
-
-function buildAutumn(tree: Group, mats: TreeMats): void {
-  voxel(tree, mats.trunk, 0.09, 0.6, 0.09, 0, 0.6, 0);
-  voxel(tree, mats.autumn, 0.36, 0.28, 0.36, 0, 1.3, 0);
-  voxel(tree, mats.autumnLit, 0.24, 0.2, 0.24, 0, 1.55, 0);
-  voxel(tree, mats.autumnLit, 0.16, 0.14, 0.16, 0.24, 1.25, 0.14);
-  voxel(tree, mats.autumn, 0.14, 0.14, 0.14, -0.22, 1.22, -0.12);
-}
-
-type AnimalMats = {
-  cow: MeshToonMaterial;
-  cowSpot: MeshToonMaterial;
-  sheep: MeshToonMaterial;
-  sheepFace: MeshToonMaterial;
-  dog: MeshToonMaterial;
-  dogEar: MeshToonMaterial;
-  horse: MeshToonMaterial;
-  horseMane: MeshToonMaterial;
-  crab: MeshToonMaterial;
-  seagull: MeshToonMaterial;
-  seagullWing: MeshToonMaterial;
-  turtle: MeshToonMaterial;
-  turtleShell: MeshToonMaterial;
-  seal: MeshToonMaterial;
-  penguin: MeshToonMaterial;
-  penguinBelly: MeshToonMaterial;
-  bear: MeshToonMaterial;
-  fox: MeshToonMaterial;
-  foxTip: MeshToonMaterial;
-  hare: MeshToonMaterial;
-  camel: MeshToonMaterial;
-  giraffe: MeshToonMaterial;
-  giraffeSpot: MeshToonMaterial;
-  elephant: MeshToonMaterial;
-  elephantEar: MeshToonMaterial;
-  elephantTusk: MeshToonMaterial;
-  lizard: MeshToonMaterial;
-  snake: MeshToonMaterial;
-  scorpion: MeshToonMaterial;
-  chicken: MeshToonMaterial;
-  chickenComb: MeshToonMaterial;
-  pig: MeshToonMaterial;
-  goat: MeshToonMaterial;
-  rabbit: MeshToonMaterial;
-  deer: MeshToonMaterial;
-  owl: MeshToonMaterial;
-  raccoon: MeshToonMaterial;
-  fish: MeshToonMaterial;
-  fishFin: MeshToonMaterial;
-  octopus: MeshToonMaterial;
-  seahorse: MeshToonMaterial;
-  ray: MeshToonMaterial;
-  shark: MeshToonMaterial;
-  sharkBelly: MeshToonMaterial;
-  whale: MeshToonMaterial;
-  whaleBelly: MeshToonMaterial;
-  jelly: MeshToonMaterial;
-  jellyGlow: MeshToonMaterial;
-  pigeon: MeshToonMaterial;
-  cat: MeshToonMaterial;
-  rat: MeshToonMaterial;
-  parrot: MeshToonMaterial;
-  parrotWing: MeshToonMaterial;
-  parrotTail: MeshToonMaterial;
-  frog: MeshToonMaterial;
-  frogBelly: MeshToonMaterial;
-  toucan: MeshToonMaterial;
-  toucanBeak: MeshToonMaterial;
-  toucanChest: MeshToonMaterial;
-  monkey: MeshToonMaterial;
-  monkeyFace: MeshToonMaterial;
-};
-
-function makeAnimal(kind: AnimalKind, mats: AnimalMats): AnimalBit {
-  const group = new Group();
-  const build = ANIMAL_BUILDERS[kind];
-  build(group, mats);
-  return { group, kind, facing: 0, baseY: 0, scale: 1 };
-}
-
-const ANIMAL_BUILDERS: Record<AnimalKind, (group: Group, mats: AnimalMats) => void> = {
-  cow: buildCow,
-  sheep: buildSheep,
-  dog: buildDog,
-  horse: buildHorse,
-  crab: buildCrab,
-  seagull: buildSeagull,
-  turtle: buildTurtle,
-  seal: buildSeal,
-  penguin: buildPenguin,
-  bear: buildBear,
-  fox: buildFox,
-  hare: buildHare,
-  camel: buildCamel,
-  giraffe: buildGiraffe,
-  elephant: buildElephant,
-  lizard: buildLizard,
-  snake: buildSnake,
-  scorpion: buildScorpion,
-  chicken: buildChicken,
-  pig: buildPig,
-  goat: buildGoat,
-  rabbit: buildRabbit,
-  deer: buildDeer,
-  owl: buildOwl,
-  raccoon: buildRaccoon,
-  fish: buildFish,
-  octopus: buildOctopus,
-  seahorse: buildSeahorse,
-  ray: buildRay,
-  shark: buildShark,
-  whale: buildWhale,
-  jelly: buildJelly,
-  pigeon: buildPigeon,
-  cat: buildCat,
-  rat: buildRat,
-  parrot: buildParrot,
-  frog: buildFrog,
-  toucan: buildToucan,
-  monkey: buildMonkey,
-};
-
-function voxel(
-  parent: Group,
-  mat: MeshToonMaterial,
-  hx: number,
-  hy: number,
-  hz: number,
-  x: number,
-  y: number,
-  z: number,
-): void {
-  const mesh = new Mesh(new BoxGeometry(hx * 2, hy * 2, hz * 2), mat);
-  if (organicProps) {
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-  }
-  mesh.position.set(x, y, z);
-  parent.add(mesh);
-}
-
-function buildCow(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.cow, 0.28, 0.16, 0.16, 0, 0.34, 0);
-  voxel(group, mats.cowSpot, 0.1, 0.1, 0.17, -0.06, 0.38, 0);
-  voxel(group, mats.cow, 0.12, 0.1, 0.1, 0.34, 0.4, 0);
-  voxel(group, mats.cowSpot, 0.04, 0.05, 0.11, 0.42, 0.42, 0);
-  for (const [x, z] of [[-0.16, 0.1], [-0.16, -0.1], [0.14, 0.1], [0.14, -0.1]] as const) {
-    voxel(group, mats.cowSpot, 0.04, 0.14, 0.04, x, 0.14, z);
-  }
-}
-
-function buildSheep(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.sheep, 0.2, 0.16, 0.16, 0, 0.3, 0);
-  voxel(group, mats.sheep, 0.14, 0.12, 0.14, 0, 0.42, 0);
-  voxel(group, mats.sheepFace, 0.08, 0.07, 0.07, 0.24, 0.3, 0);
-  for (const [x, z] of [[-0.1, 0.08], [-0.1, -0.08], [0.08, 0.08], [0.08, -0.08]] as const) {
-    voxel(group, mats.sheepFace, 0.03, 0.1, 0.03, x, 0.1, z);
-  }
-}
-
-function buildDog(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.dog, 0.16, 0.1, 0.1, 0, 0.22, 0);
-  voxel(group, mats.dog, 0.08, 0.07, 0.07, 0.2, 0.28, 0);
-  voxel(group, mats.dogEar, 0.03, 0.06, 0.02, 0.18, 0.36, 0.07);
-  voxel(group, mats.dogEar, 0.03, 0.06, 0.02, 0.18, 0.36, -0.07);
-  voxel(group, mats.dog, 0.03, 0.03, 0.1, -0.18, 0.24, 0);
-  for (const [x, z] of [[-0.08, 0.06], [-0.08, -0.06], [0.08, 0.06], [0.08, -0.06]] as const) {
-    voxel(group, mats.dogEar, 0.025, 0.09, 0.025, x, 0.09, z);
-  }
-}
-
-function buildHorse(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.horse, 0.3, 0.14, 0.12, 0, 0.36, 0);
-  voxel(group, mats.horse, 0.08, 0.18, 0.08, 0.28, 0.5, 0);
-  voxel(group, mats.horse, 0.1, 0.07, 0.07, 0.4, 0.58, 0);
-  voxel(group, mats.horseMane, 0.04, 0.14, 0.03, 0.24, 0.58, 0);
-  voxel(group, mats.horseMane, 0.03, 0.03, 0.12, -0.3, 0.4, 0);
-  for (const [x, z] of [[-0.18, 0.07], [-0.18, -0.07], [0.14, 0.07], [0.14, -0.07]] as const) {
-    voxel(group, mats.horseMane, 0.035, 0.16, 0.035, x, 0.16, z);
-  }
-}
-
-function buildCrab(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.crab, 0.16, 0.06, 0.12, 0, 0.12, 0);
-  voxel(group, mats.crab, 0.04, 0.04, 0.14, 0.18, 0.12, 0.1);
-  voxel(group, mats.crab, 0.04, 0.04, 0.14, 0.18, 0.12, -0.1);
-  for (const z of [-0.1, -0.04, 0.04, 0.1] as const) {
-    voxel(group, mats.crab, 0.1, 0.02, 0.02, -0.16, 0.08, z);
-  }
-}
-
-function buildSeagull(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.seagull, 0.12, 0.06, 0.08, 0, 0.22, 0);
-  voxel(group, mats.seagull, 0.06, 0.05, 0.05, 0.14, 0.26, 0);
-  voxel(group, mats.seagullWing, 0.04, 0.02, 0.18, 0, 0.24, 0.16);
-  voxel(group, mats.seagullWing, 0.04, 0.02, 0.18, 0, 0.24, -0.16);
-  voxel(group, mats.crab, 0.03, 0.02, 0.02, 0.2, 0.24, 0);
-  for (const z of [-0.04, 0.04] as const) {
-    voxel(group, mats.seagullWing, 0.02, 0.08, 0.02, -0.04, 0.08, z);
-  }
-}
-
-function buildTurtle(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.turtleShell, 0.18, 0.08, 0.14, 0, 0.16, 0);
-  voxel(group, mats.turtle, 0.08, 0.05, 0.06, 0.2, 0.12, 0);
-  for (const [x, z] of [[-0.1, 0.1], [-0.1, -0.1], [0.08, 0.1], [0.08, -0.1]] as const) {
-    voxel(group, mats.turtle, 0.04, 0.03, 0.04, x, 0.06, z);
-  }
-}
-
-function buildSeal(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.seal, 0.26, 0.1, 0.12, 0, 0.16, 0);
-  voxel(group, mats.seal, 0.1, 0.08, 0.08, 0.28, 0.2, 0);
-  voxel(group, mats.seal, 0.08, 0.03, 0.1, -0.28, 0.12, 0);
-  voxel(group, mats.seal, 0.04, 0.06, 0.02, 0.3, 0.28, 0.06);
-  voxel(group, mats.seal, 0.04, 0.06, 0.02, 0.3, 0.28, -0.06);
-}
-
-function buildPenguin(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.penguin, 0.1, 0.18, 0.1, 0, 0.28, 0);
-  voxel(group, mats.penguinBelly, 0.07, 0.12, 0.04, 0.06, 0.26, 0);
-  voxel(group, mats.penguin, 0.08, 0.07, 0.08, 0, 0.48, 0);
-  voxel(group, mats.crab, 0.03, 0.02, 0.02, 0.08, 0.48, 0);
-  for (const z of [-0.06, 0.06] as const) {
-    voxel(group, mats.penguin, 0.03, 0.04, 0.05, 0, 0.06, z);
-  }
-}
-
-function buildBear(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.bear, 0.22, 0.14, 0.14, 0, 0.28, 0);
-  voxel(group, mats.bear, 0.1, 0.1, 0.1, 0.26, 0.34, 0);
-  voxel(group, mats.bear, 0.04, 0.04, 0.03, 0.28, 0.44, 0.06);
-  voxel(group, mats.bear, 0.04, 0.04, 0.03, 0.28, 0.44, -0.06);
-  for (const [x, z] of [[-0.12, 0.08], [-0.12, -0.08], [0.1, 0.08], [0.1, -0.08]] as const) {
-    voxel(group, mats.hare, 0.04, 0.1, 0.04, x, 0.1, z);
-  }
-}
-
-function buildFox(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.fox, 0.18, 0.09, 0.09, 0, 0.2, 0);
-  voxel(group, mats.fox, 0.08, 0.07, 0.07, 0.2, 0.26, 0);
-  voxel(group, mats.fox, 0.03, 0.06, 0.02, 0.18, 0.34, 0.06);
-  voxel(group, mats.fox, 0.03, 0.06, 0.02, 0.18, 0.34, -0.06);
-  voxel(group, mats.fox, 0.04, 0.04, 0.14, -0.2, 0.22, 0);
-  voxel(group, mats.foxTip, 0.03, 0.03, 0.04, -0.3, 0.22, 0);
-  for (const [x, z] of [[-0.08, 0.05], [-0.08, -0.05], [0.08, 0.05], [0.08, -0.05]] as const) {
-    voxel(group, mats.fox, 0.025, 0.08, 0.025, x, 0.08, z);
-  }
-}
-
-function buildHare(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.hare, 0.12, 0.08, 0.08, 0, 0.18, 0);
-  voxel(group, mats.hare, 0.06, 0.06, 0.06, 0.14, 0.22, 0);
-  voxel(group, mats.hare, 0.02, 0.1, 0.02, 0.14, 0.34, 0.04);
-  voxel(group, mats.hare, 0.02, 0.1, 0.02, 0.14, 0.34, -0.04);
-  for (const [x, z] of [[-0.06, 0.04], [-0.06, -0.04], [0.06, 0.04], [0.06, -0.04]] as const) {
-    voxel(group, mats.sheepFace, 0.02, 0.07, 0.02, x, 0.07, z);
-  }
-}
-
-function buildCamel(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.camel, 0.28, 0.12, 0.12, 0, 0.36, 0);
-  voxel(group, mats.camel, 0.1, 0.12, 0.1, -0.05, 0.52, 0);
-  voxel(group, mats.camel, 0.08, 0.16, 0.08, 0.28, 0.48, 0);
-  voxel(group, mats.camel, 0.1, 0.07, 0.07, 0.4, 0.58, 0);
-  for (const [x, z] of [[-0.16, 0.07], [-0.16, -0.07], [0.14, 0.07], [0.14, -0.07]] as const) {
-    voxel(group, mats.horseMane, 0.035, 0.16, 0.035, x, 0.16, z);
-  }
-}
-
-function buildGiraffe(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.giraffe, 0.22, 0.12, 0.1, 0, 0.42, 0);
-  voxel(group, mats.giraffeSpot, 0.08, 0.08, 0.11, -0.04, 0.46, 0);
-  voxel(group, mats.giraffeSpot, 0.06, 0.05, 0.11, 0.1, 0.4, 0);
-  voxel(group, mats.giraffe, 0.05, 0.28, 0.05, 0.22, 0.7, 0);
-  voxel(group, mats.giraffeSpot, 0.04, 0.08, 0.055, 0.22, 0.78, 0);
-  voxel(group, mats.giraffe, 0.08, 0.06, 0.06, 0.3, 0.98, 0);
-  voxel(group, mats.giraffeSpot, 0.02, 0.04, 0.015, 0.28, 1.08, 0.03);
-  voxel(group, mats.giraffeSpot, 0.02, 0.04, 0.015, 0.28, 1.08, -0.03);
-  voxel(group, mats.giraffe, 0.03, 0.03, 0.1, -0.22, 0.46, 0);
-  for (const [x, z] of [[-0.12, 0.06], [-0.12, -0.06], [0.1, 0.06], [0.1, -0.06]] as const) {
-    voxel(group, mats.giraffeSpot, 0.03, 0.2, 0.03, x, 0.2, z);
-  }
-}
-
-function buildElephant(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.elephant, 0.32, 0.18, 0.18, 0, 0.4, 0);
-  voxel(group, mats.elephant, 0.14, 0.12, 0.12, 0.34, 0.48, 0);
-  voxel(group, mats.elephant, 0.04, 0.16, 0.04, 0.44, 0.36, 0);
-  voxel(group, mats.elephant, 0.05, 0.04, 0.04, 0.46, 0.2, 0);
-  voxel(group, mats.elephantEar, 0.02, 0.12, 0.14, 0.28, 0.52, 0.16);
-  voxel(group, mats.elephantEar, 0.02, 0.12, 0.14, 0.28, 0.52, -0.16);
-  voxel(group, mats.elephantTusk, 0.02, 0.02, 0.08, 0.4, 0.36, 0.08);
-  voxel(group, mats.elephantTusk, 0.02, 0.02, 0.08, 0.4, 0.36, -0.08);
-  voxel(group, mats.elephant, 0.04, 0.04, 0.12, -0.32, 0.42, 0);
-  for (const [x, z] of [[-0.16, 0.1], [-0.16, -0.1], [0.14, 0.1], [0.14, -0.1]] as const) {
-    voxel(group, mats.elephantEar, 0.05, 0.16, 0.05, x, 0.16, z);
-  }
-}
-
-function buildLizard(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.lizard, 0.22, 0.05, 0.08, 0, 0.1, 0);
-  voxel(group, mats.lizard, 0.06, 0.04, 0.05, 0.22, 0.12, 0);
-  voxel(group, mats.lizard, 0.03, 0.02, 0.12, -0.22, 0.1, 0);
-  for (const [x, z] of [[-0.06, 0.1], [-0.06, -0.1], [0.08, 0.1], [0.08, -0.1]] as const) {
-    voxel(group, mats.lizard, 0.03, 0.02, 0.06, x, 0.06, z);
-  }
-}
-
-function buildSnake(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.snake, 0.08, 0.05, 0.05, 0.16, 0.08, 0);
-  voxel(group, mats.snake, 0.1, 0.05, 0.05, 0.02, 0.08, 0.04);
-  voxel(group, mats.snake, 0.1, 0.05, 0.05, -0.12, 0.08, -0.04);
-  voxel(group, mats.snake, 0.08, 0.05, 0.05, -0.24, 0.08, 0.04);
-  voxel(group, mats.crab, 0.03, 0.02, 0.02, 0.24, 0.1, 0);
-}
-
-function buildScorpion(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.scorpion, 0.14, 0.05, 0.1, 0, 0.1, 0);
-  voxel(group, mats.scorpion, 0.04, 0.1, 0.04, -0.14, 0.18, 0);
-  voxel(group, mats.scorpion, 0.03, 0.03, 0.08, -0.14, 0.28, 0);
-  voxel(group, mats.crab, 0.08, 0.03, 0.03, 0.16, 0.1, 0.1);
-  voxel(group, mats.crab, 0.08, 0.03, 0.03, 0.16, 0.1, -0.1);
-  for (const z of [-0.1, -0.04, 0.04, 0.1] as const) {
-    voxel(group, mats.scorpion, 0.08, 0.015, 0.015, -0.02, 0.06, z);
-  }
-}
-
-function buildChicken(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.chicken, 0.1, 0.08, 0.08, 0, 0.2, 0);
-  voxel(group, mats.chicken, 0.06, 0.05, 0.05, 0.12, 0.26, 0);
-  voxel(group, mats.chickenComb, 0.02, 0.04, 0.03, 0.12, 0.34, 0);
-  voxel(group, mats.crab, 0.03, 0.02, 0.02, 0.18, 0.24, 0);
-  for (const z of [-0.04, 0.04] as const) {
-    voxel(group, mats.sheepFace, 0.02, 0.07, 0.02, 0, 0.07, z);
-  }
-}
-
-function buildPig(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.pig, 0.2, 0.12, 0.12, 0, 0.24, 0);
-  voxel(group, mats.pig, 0.08, 0.07, 0.08, 0.22, 0.26, 0);
-  voxel(group, mats.pig, 0.04, 0.03, 0.04, 0.3, 0.24, 0);
-  voxel(group, mats.pig, 0.03, 0.04, 0.02, 0.2, 0.34, 0.06);
-  voxel(group, mats.pig, 0.03, 0.04, 0.02, 0.2, 0.34, -0.06);
-  for (const [x, z] of [[-0.1, 0.06], [-0.1, -0.06], [0.08, 0.06], [0.08, -0.06]] as const) {
-    voxel(group, mats.pig, 0.03, 0.08, 0.03, x, 0.08, z);
-  }
-}
-
-function buildGoat(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.goat, 0.18, 0.1, 0.1, 0, 0.26, 0);
-  voxel(group, mats.goat, 0.07, 0.08, 0.07, 0.2, 0.34, 0);
-  voxel(group, mats.goat, 0.015, 0.08, 0.015, 0.2, 0.46, 0.04);
-  voxel(group, mats.goat, 0.015, 0.08, 0.015, 0.2, 0.46, -0.04);
-  for (const [x, z] of [[-0.1, 0.05], [-0.1, -0.05], [0.08, 0.05], [0.08, -0.05]] as const) {
-    voxel(group, mats.sheepFace, 0.025, 0.1, 0.025, x, 0.1, z);
-  }
-}
-
-function buildRabbit(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.rabbit, 0.1, 0.08, 0.08, 0, 0.16, 0);
-  voxel(group, mats.rabbit, 0.05, 0.05, 0.05, 0.12, 0.2, 0);
-  voxel(group, mats.rabbit, 0.015, 0.1, 0.015, 0.12, 0.32, 0.03);
-  voxel(group, mats.rabbit, 0.015, 0.1, 0.015, 0.12, 0.32, -0.03);
-  for (const [x, z] of [[-0.04, 0.04], [-0.04, -0.04], [0.04, 0.04], [0.04, -0.04]] as const) {
-    voxel(group, mats.hare, 0.02, 0.06, 0.02, x, 0.06, z);
-  }
-}
-
-function buildDeer(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.deer, 0.22, 0.12, 0.1, 0, 0.34, 0);
-  voxel(group, mats.deer, 0.07, 0.16, 0.07, 0.24, 0.48, 0);
-  voxel(group, mats.deer, 0.08, 0.06, 0.06, 0.34, 0.58, 0);
-  voxel(group, mats.horseMane, 0.02, 0.1, 0.02, 0.34, 0.7, 0.05);
-  voxel(group, mats.horseMane, 0.02, 0.1, 0.02, 0.34, 0.7, -0.05);
-  for (const [x, z] of [[-0.12, 0.06], [-0.12, -0.06], [0.1, 0.06], [0.1, -0.06]] as const) {
-    voxel(group, mats.deer, 0.03, 0.14, 0.03, x, 0.14, z);
-  }
-}
-
-function buildOwl(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.owl, 0.12, 0.14, 0.1, 0, 0.28, 0);
-  voxel(group, mats.owl, 0.1, 0.08, 0.1, 0, 0.44, 0);
-  voxel(group, mats.foxTip, 0.03, 0.03, 0.02, 0.08, 0.46, 0.04);
-  voxel(group, mats.foxTip, 0.03, 0.03, 0.02, 0.08, 0.46, -0.04);
-  voxel(group, mats.crab, 0.03, 0.02, 0.02, 0.12, 0.42, 0);
-  for (const z of [-0.05, 0.05] as const) {
-    voxel(group, mats.owl, 0.03, 0.06, 0.02, 0, 0.08, z);
-  }
-}
-
-function buildRaccoon(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.raccoon, 0.16, 0.09, 0.1, 0, 0.2, 0);
-  voxel(group, mats.raccoon, 0.07, 0.06, 0.07, 0.18, 0.24, 0);
-  voxel(group, mats.sheep, 0.08, 0.04, 0.04, 0.18, 0.26, 0);
-  voxel(group, mats.raccoon, 0.04, 0.04, 0.12, -0.18, 0.2, 0);
-  voxel(group, mats.sheep, 0.03, 0.03, 0.04, -0.26, 0.2, 0);
-  for (const [x, z] of [[-0.08, 0.05], [-0.08, -0.05], [0.08, 0.05], [0.08, -0.05]] as const) {
-    voxel(group, mats.raccoon, 0.025, 0.08, 0.025, x, 0.08, z);
-  }
-}
-
-function buildFish(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.fish, 0.16, 0.07, 0.06, 0, 0.24, 0);
-  voxel(group, mats.fishFin, 0.04, 0.05, 0.02, -0.16, 0.26, 0);
-  voxel(group, mats.fishFin, 0.03, 0.02, 0.08, 0, 0.28, 0.08);
-  voxel(group, mats.sheep, 0.02, 0.02, 0.02, 0.14, 0.26, 0.03);
-}
-
-function buildOctopus(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.octopus, 0.14, 0.1, 0.14, 0, 0.24, 0);
-  for (const [x, z] of [[0.14, 0.1], [0.14, -0.1], [-0.14, 0.1], [-0.14, -0.1], [0.1, 0.16], [-0.1, -0.16]] as const) {
-    voxel(group, mats.octopus, 0.03, 0.12, 0.03, x, 0.12, z);
-  }
-}
-
-function buildSeahorse(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.seahorse, 0.06, 0.16, 0.06, 0, 0.28, 0);
-  voxel(group, mats.seahorse, 0.05, 0.05, 0.05, 0.06, 0.42, 0);
-  voxel(group, mats.fishFin, 0.02, 0.06, 0.04, -0.06, 0.3, 0);
-  voxel(group, mats.seahorse, 0.04, 0.03, 0.03, 0, 0.12, 0.04);
-}
-
-function buildRay(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.ray, 0.28, 0.04, 0.2, 0, 0.16, 0);
-  voxel(group, mats.ray, 0.08, 0.04, 0.06, 0.24, 0.16, 0);
-  voxel(group, mats.sheepFace, 0.03, 0.02, 0.08, -0.24, 0.16, 0);
-}
-
-function buildShark(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.shark, 0.36, 0.12, 0.14, 0, 0.28, 0);
-  voxel(group, mats.sharkBelly, 0.3, 0.06, 0.12, 0.02, 0.2, 0);
-  voxel(group, mats.shark, 0.12, 0.1, 0.1, 0.4, 0.3, 0);
-  voxel(group, mats.shark, 0.04, 0.14, 0.04, -0.05, 0.48, 0);
-  voxel(group, mats.shark, 0.1, 0.04, 0.18, -0.05, 0.28, 0.2);
-  voxel(group, mats.shark, 0.1, 0.04, 0.18, -0.05, 0.28, -0.2);
-  voxel(group, mats.shark, 0.08, 0.1, 0.03, -0.4, 0.3, 0);
-  voxel(group, mats.shark, 0.06, 0.04, 0.08, -0.48, 0.24, 0);
-  voxel(group, mats.sheep, 0.02, 0.02, 0.02, 0.48, 0.34, 0.05);
-}
-
-function buildWhale(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.whale, 0.55, 0.22, 0.24, 0, 0.36, 0);
-  voxel(group, mats.whaleBelly, 0.48, 0.1, 0.2, 0.04, 0.22, 0);
-  voxel(group, mats.whale, 0.18, 0.16, 0.16, 0.58, 0.38, 0);
-  voxel(group, mats.whale, 0.08, 0.06, 0.06, 0.72, 0.28, 0);
-  voxel(group, mats.whale, 0.12, 0.04, 0.28, -0.1, 0.34, 0.3);
-  voxel(group, mats.whale, 0.12, 0.04, 0.28, -0.1, 0.34, -0.3);
-  voxel(group, mats.whale, 0.06, 0.16, 0.04, -0.1, 0.58, 0);
-  voxel(group, mats.whale, 0.16, 0.14, 0.04, -0.62, 0.4, 0);
-  voxel(group, mats.whale, 0.08, 0.06, 0.18, -0.78, 0.36, 0);
-  voxel(group, mats.sheep, 0.03, 0.03, 0.03, 0.7, 0.42, 0.08);
-  voxel(group, mats.sheep, 0.03, 0.03, 0.03, 0.7, 0.42, -0.08);
-}
-
-function buildJelly(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.jellyGlow, 0.28, 0.14, 0.28, 0, 0.55, 0);
-  voxel(group, mats.jelly, 0.22, 0.1, 0.22, 0, 0.42, 0);
-  voxel(group, mats.jellyGlow, 0.16, 0.06, 0.16, 0, 0.64, 0);
-  for (const [x, z] of [
-    [0.14, 0.1],
-    [0.14, -0.1],
-    [-0.14, 0.1],
-    [-0.14, -0.1],
-    [0.05, 0.18],
-    [-0.05, -0.18],
-    [0.18, 0],
-    [-0.18, 0],
-  ] as const) {
-    voxel(group, mats.jelly, 0.025, 0.28, 0.025, x, 0.18, z);
-    voxel(group, mats.jellyGlow, 0.02, 0.08, 0.02, x, -0.02, z);
-  }
-}
-
-function buildPigeon(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.pigeon, 0.1, 0.06, 0.08, 0, 0.2, 0);
-  voxel(group, mats.pigeon, 0.05, 0.05, 0.05, 0.12, 0.24, 0);
-  voxel(group, mats.seagullWing, 0.03, 0.02, 0.12, 0, 0.22, 0.12);
-  voxel(group, mats.seagullWing, 0.03, 0.02, 0.12, 0, 0.22, -0.12);
-  for (const z of [-0.03, 0.03] as const) {
-    voxel(group, mats.pigeon, 0.015, 0.06, 0.015, 0, 0.06, z);
-  }
-}
-
-function buildCat(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.cat, 0.14, 0.08, 0.09, 0, 0.18, 0);
-  voxel(group, mats.cat, 0.07, 0.06, 0.07, 0.16, 0.24, 0);
-  voxel(group, mats.cat, 0.025, 0.05, 0.02, 0.14, 0.32, 0.04);
-  voxel(group, mats.cat, 0.025, 0.05, 0.02, 0.14, 0.32, -0.04);
-  voxel(group, mats.cat, 0.03, 0.03, 0.12, -0.16, 0.2, 0);
-  for (const [x, z] of [[-0.06, 0.05], [-0.06, -0.05], [0.06, 0.05], [0.06, -0.05]] as const) {
-    voxel(group, mats.cat, 0.02, 0.07, 0.02, x, 0.07, z);
-  }
-}
-
-function buildRat(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.rat, 0.12, 0.06, 0.07, 0, 0.14, 0);
-  voxel(group, mats.rat, 0.05, 0.04, 0.05, 0.12, 0.16, 0);
-  voxel(group, mats.rat, 0.02, 0.02, 0.14, -0.16, 0.14, 0);
-  voxel(group, mats.rat, 0.015, 0.04, 0.015, 0.12, 0.22, 0.03);
-  voxel(group, mats.rat, 0.015, 0.04, 0.015, 0.12, 0.22, -0.03);
-  for (const [x, z] of [[-0.04, 0.04], [-0.04, -0.04], [0.04, 0.04], [0.04, -0.04]] as const) {
-    voxel(group, mats.rat, 0.015, 0.05, 0.015, x, 0.05, z);
-  }
-}
-
-function buildParrot(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.parrot, 0.1, 0.08, 0.08, 0, 0.24, 0);
-  voxel(group, mats.parrot, 0.06, 0.06, 0.06, 0.12, 0.3, 0);
-  voxel(group, mats.parrotWing, 0.04, 0.03, 0.14, 0, 0.26, 0.12);
-  voxel(group, mats.parrotTail, 0.04, 0.03, 0.14, 0, 0.26, -0.12);
-  voxel(group, mats.parrotTail, 0.1, 0.03, 0.04, -0.16, 0.22, 0);
-  voxel(group, mats.parrotWing, 0.03, 0.02, 0.02, 0.16, 0.28, 0.03);
-  for (const z of [-0.03, 0.03] as const) {
-    voxel(group, mats.parrot, 0.015, 0.07, 0.015, 0, 0.08, z);
-  }
-}
-
-function buildFrog(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.frog, 0.14, 0.07, 0.1, 0, 0.16, 0);
-  voxel(group, mats.frogBelly, 0.1, 0.04, 0.08, 0.02, 0.12, 0);
-  voxel(group, mats.frog, 0.06, 0.05, 0.06, 0.14, 0.2, 0);
-  voxel(group, mats.frog, 0.03, 0.03, 0.02, 0.12, 0.26, 0.04);
-  voxel(group, mats.frog, 0.03, 0.03, 0.02, 0.12, 0.26, -0.04);
-  for (const [x, z] of [[-0.08, 0.08], [-0.08, -0.08], [0.08, 0.08], [0.08, -0.08]] as const) {
-    voxel(group, mats.frog, 0.03, 0.05, 0.03, x, 0.06, z);
-  }
-}
-
-function buildToucan(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.toucan, 0.12, 0.08, 0.08, 0, 0.24, 0);
-  voxel(group, mats.toucanChest, 0.06, 0.05, 0.07, 0.08, 0.2, 0);
-  voxel(group, mats.toucan, 0.06, 0.06, 0.06, 0.14, 0.3, 0);
-  voxel(group, mats.toucanBeak, 0.12, 0.035, 0.035, 0.28, 0.28, 0);
-  voxel(group, mats.seagullWing, 0.03, 0.02, 0.12, 0, 0.26, 0.12);
-  voxel(group, mats.seagullWing, 0.03, 0.02, 0.12, 0, 0.26, -0.12);
-  for (const z of [-0.03, 0.03] as const) {
-    voxel(group, mats.toucan, 0.015, 0.07, 0.015, 0, 0.08, z);
-  }
-}
-
-function buildMonkey(group: Group, mats: AnimalMats): void {
-  voxel(group, mats.monkey, 0.12, 0.1, 0.1, 0, 0.28, 0);
-  voxel(group, mats.monkeyFace, 0.07, 0.07, 0.07, 0.14, 0.34, 0);
-  voxel(group, mats.monkey, 0.04, 0.05, 0.02, 0.12, 0.42, 0.05);
-  voxel(group, mats.monkey, 0.04, 0.05, 0.02, 0.12, 0.42, -0.05);
-  voxel(group, mats.monkey, 0.03, 0.03, 0.14, -0.14, 0.26, 0);
-  for (const [x, z] of [[-0.06, 0.06], [-0.06, -0.06], [0.06, 0.06], [0.06, -0.06]] as const) {
-    voxel(group, mats.monkey, 0.025, 0.1, 0.025, x, 0.1, z);
-  }
-}
-
-function starGeometry(): BufferGeometry {
-  const shape = new Shape();
-  const spikes = 5;
-  const outer = 0.22;
-  const inner = 0.1;
-  for (let i = 0; i < spikes * 2; i += 1) {
-    const radius = i % 2 === 0 ? outer : inner;
-    const angle = (Math.PI / 2) + (i * Math.PI) / spikes;
-    const x = Math.cos(angle) * radius;
-    const y = Math.sin(angle) * radius;
-    if (i === 0) shape.moveTo(x, y);
-    else shape.lineTo(x, y);
-  }
-  shape.closePath();
-  const geo = new ExtrudeGeometry(shape, {
-    depth: 0.1,
-    bevelEnabled: true,
-    bevelThickness: 0.025,
-    bevelSize: 0.018,
-    bevelSegments: 1,
-  });
-  geo.center();
-  return geo;
-}
-
-/** One wing half (points +X). Mirrored in the pickup for a left/right pair. */
-function wingGeometry(): BufferGeometry {
-  const shape = new Shape();
-  // Root near the body, tip high and out — classic angel/bird wing.
-  shape.moveTo(0.01, 0.04);
-  shape.bezierCurveTo(0.1, 0.18, 0.22, 0.3, 0.36, 0.34);
-  shape.bezierCurveTo(0.42, 0.28, 0.44, 0.18, 0.4, 0.1);
-  // Scalloped trailing edge (feathers).
-  shape.quadraticCurveTo(0.36, 0.02, 0.34, -0.02);
-  shape.quadraticCurveTo(0.3, 0.04, 0.26, -0.04);
-  shape.quadraticCurveTo(0.22, 0.03, 0.18, -0.06);
-  shape.quadraticCurveTo(0.14, 0.02, 0.1, -0.05);
-  shape.quadraticCurveTo(0.06, 0.01, 0.03, -0.02);
-  shape.lineTo(0.01, -0.02);
-  shape.closePath();
-  const geo = new ExtrudeGeometry(shape, {
-    depth: 0.055,
-    bevelEnabled: true,
-    bevelThickness: 0.016,
-    bevelSize: 0.012,
-    bevelSegments: 1,
-  });
-  geo.translate(0, 0, -0.0275);
-  geo.center();
-  // Sit the root closer to x=0 so mirrored halves meet in the middle.
-  geo.translate(0.02, 0.02, 0);
-  return geo;
-}
-
-/** Cartoon ghost: domed head, scalloped hem, two eye cutouts. Faces +Z. */
-function ghostGeometry(): BufferGeometry {
-  const shape = new Shape();
-  shape.moveTo(-0.18, -0.18);
-  shape.lineTo(-0.18, 0.04);
-  shape.bezierCurveTo(-0.18, 0.22, -0.1, 0.3, 0, 0.3);
-  shape.bezierCurveTo(0.1, 0.3, 0.18, 0.22, 0.18, 0.04);
-  shape.lineTo(0.18, -0.18);
-  shape.quadraticCurveTo(0.13, -0.09, 0.09, -0.18);
-  shape.quadraticCurveTo(0.045, -0.09, 0, -0.18);
-  shape.quadraticCurveTo(-0.045, -0.09, -0.09, -0.18);
-  shape.quadraticCurveTo(-0.13, -0.09, -0.18, -0.18);
-  // Large oval cutouts so the eyes read clearly while the pickup spins.
-  for (const x of [-0.07, 0.07]) {
-    const eye = new Path();
-    eye.absellipse(x, 0.08, 0.042, 0.058, 0, Math.PI * 2, true, 0);
-    shape.holes.push(eye);
-  }
-  const geo = new ExtrudeGeometry(shape, {
-    depth: 0.1,
-    bevelEnabled: true,
-    bevelThickness: 0.012,
-    bevelSize: 0.01,
-    bevelSegments: 1,
-    curveSegments: 12,
-  });
-  geo.translate(0, 0, -0.05);
-  geo.center();
-  return geo;
-}
-
-function arrowGeometry(): BufferGeometry {
-  const shaft = new BoxGeometry(0.08, 0.028, 0.14);
-  shaft.translate(0, 0, 0.02);
-  const head = new BoxGeometry(0.18, 0.028, 0.08);
-  head.translate(0, 0, -0.09);
-  const merged = mergeGeometries([shaft, head]);
-  shaft.dispose();
-  head.dispose();
-  if (!merged) throw new Error("Arrow geometry failed");
-  return merged;
-}
-
-const RAMP_WIDTH = 32;
-const ramp = shadeRamp(3);
-let paintedSteps = 3;
-let paintedNormal = false;
-let organicProps = false;
-
-function shadeRamp(bands: number): DataTexture {
-  const tex = new DataTexture(rampBytes(bands, false), RAMP_WIDTH, 1);
-  tex.magFilter = NearestFilter;
-  tex.minFilter = NearestFilter;
-  tex.wrapS = ClampToEdgeWrapping;
-  tex.wrapT = ClampToEdgeWrapping;
-  tex.generateMipmaps = false;
-  tex.needsUpdate = true;
-  return tex;
-}
-
-function paintRamp(tex: DataTexture, bands: number, normal = false): void {
-  tex.image.data = rampBytes(bands, normal);
-  tex.image.width = RAMP_WIDTH;
-  tex.image.height = 1;
-  tex.needsUpdate = true;
-  paintedSteps = bands;
-  paintedNormal = normal;
-}
-
-function rampBytes(bands: number, normal: boolean): Uint8Array {
-  const data = new Uint8Array(RAMP_WIDTH * 4);
-  for (let i = 0; i < RAMP_WIDTH; i += 1) {
-    const t = i / (RAMP_WIDTH - 1);
-    const tone = 72 + Math.round((255 - 72) * (normal ? t : quantize(t, bands)));
-    const offset = i * 4;
-    data[offset] = tone;
-    data[offset + 1] = tone;
-    data[offset + 2] = tone;
-    data[offset + 3] = 255;
-  }
-  return data;
-}
-
-function quantize(t: number, bands: number): number {
-  const lo = Math.max(2, Math.floor(bands));
-  const blend = bands - lo;
-  return bandValue(t, lo) + (bandValue(t, lo + 1) - bandValue(t, lo)) * blend;
-}
-
-function bandValue(t: number, bands: number): number {
-  const span = bands - 1;
-  return Math.round(t * span) / span;
-}
-
-function makeCrumbleMat(): MeshToonMaterial {
-  return new MeshToonMaterial({
-    color: "#ffffff",
-    map: makeCrumbleTexture(),
-    emissive: token("--maze-crumble-mark"),
-    emissiveIntensity: 0.03,
-    gradientMap: ramp,
-  });
-}
-
-function makeCrumbleTexture(): Texture {
-  const tex = new CanvasTexture(makeCrumbleCanvas());
-  tex.colorSpace = SRGBColorSpace;
-  tex.magFilter = NearestFilter;
-  tex.minFilter = NearestFilter;
-  tex.wrapS = ClampToEdgeWrapping;
-  tex.wrapT = ClampToEdgeWrapping;
-  tex.generateMipmaps = false;
-  tex.needsUpdate = true;
-  return tex;
-}
-
-function makeCrumbleWell(
-  piece: Piece,
-  pitMat: MeshToonMaterial,
-  lipMat: MeshToonMaterial,
-  voidMat: ShaderMaterial,
-): Group {
-  const well = new Group();
-  const thickness = 0.05;
-  const top = -0.008;
-  const floor = -PIT_WELL;
-  const mid = (top + floor) / 2;
-  const hy = (top - floor) / 2;
-  const half = CELL / 2;
-  // Overlap past half so walls seal at corners (matches pitCell in layout.ts).
-  const wallAlong = half + 0.01;
-  const wallInset = half - thickness / 2;
-  const voidHalf = half + 0.02;
-  const originY = piece.y;
-  const sides: Array<[number, number, number, number, number, number]> = [
-    [0, mid - originY, -wallInset, wallAlong, hy, thickness / 2],
-    [0, mid - originY, wallInset, wallAlong, hy, thickness / 2],
-    [-wallInset, mid - originY, 0, thickness / 2, hy, wallAlong],
-    [wallInset, mid - originY, 0, thickness / 2, hy, wallAlong],
-  ];
-  for (const [x, y, z, hx, halfY, hz] of sides) {
-    const wall = new Mesh(new BoxGeometry(hx * 2, halfY * 2, hz * 2), pitMat);
-    wall.position.set(x, y, z);
-    well.add(wall);
-  }
-  const voidFloor = new Mesh(new BoxGeometry(voidHalf * 2, 0.06, voidHalf * 2), voidMat);
-  voidFloor.position.set(0, floor - 0.03 - originY, 0);
-  voidFloor.renderOrder = -1;
-  well.add(voidFloor);
-  const lipT = 0.03;
-  const lipY = 0.014 - originY;
-  const lipAlong = half + 0.01;
-  const lipInset = half - lipT / 2;
-  const lips: Array<[number, number, number, number, number, number]> = [
-    [0, lipY, -lipInset, lipAlong, 0.012, lipT / 2],
-    [0, lipY, lipInset, lipAlong, 0.012, lipT / 2],
-    [-lipInset, lipY, 0, lipT / 2, 0.012, lipAlong],
-    [lipInset, lipY, 0, lipT / 2, 0.012, lipAlong],
-  ];
-  for (const [x, y, z, hx, halfY, hz] of lips) {
-    const lip = new Mesh(new BoxGeometry(hx * 2, halfY * 2, hz * 2), lipMat);
-    lip.position.set(x, y, z);
-    well.add(lip);
-  }
-  return well;
-}
-
-function makeVoidStarMat(resolution: Vector2, camDir: Vector3): ShaderMaterial {
-  const deep = token("--maze-pit");
-  const star = token("--maze-void-star");
-  const dim = token("--maze-void-star-dim");
-  const glow = token("--maze-void-glow");
-  return new ShaderMaterial({
-    uniforms: {
-      uTime: { value: 0 },
-      uResolution: { value: resolution },
-      uCamDir: { value: camDir },
-      uDeep: { value: hexToVec3(deep) },
-      uStar: { value: hexToVec3(star) },
-      uDim: { value: hexToVec3(dim) },
-      uGlow: { value: hexToVec3(glow) },
-    },
-    vertexShader: `
-      varying vec4 vClip;
-      void main() {
-        vClip = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        gl_Position = vClip;
-      }
-    `,
-    fragmentShader: `
-      uniform float uTime;
-      uniform vec2 uResolution;
-      uniform vec3 uCamDir;
-      uniform vec3 uDeep;
-      uniform vec3 uStar;
-      uniform vec3 uDim;
-      uniform vec3 uGlow;
-      varying vec4 vClip;
-
-      float hash21(vec2 p) {
-        p = fract(p * vec2(123.34, 456.21));
-        p += dot(p, p + 45.32);
-        return fract(p.x * p.y);
-      }
-
-      // Soft point inside a cell; always visible, pulses brighter for drama.
-      float softStar(vec2 uv, float seed, float radius, float density) {
-        vec2 cell = floor(uv);
-        float n = hash21(cell + seed);
-        if (n < density) return 0.0;
-        vec2 local = fract(uv) - 0.5;
-        vec2 offset = vec2(hash21(cell + seed + 1.7), hash21(cell + seed + 3.1)) - 0.5;
-        local -= offset * 0.55;
-        float d = length(local);
-        float core = smoothstep(radius, 0.0, d);
-        float phase = uTime * (1.8 + n * 3.4) + n * 12.0;
-        // Floor stays lit; crest punches hard so the twinkle reads dramatic.
-        float pulse = 0.55 + 0.45 * pow(0.5 + 0.5 * sin(phase), 2.0);
-        float flash = 0.2 * pow(max(0.0, sin(phase * 0.65 + n * 4.0)), 6.0);
-        return core * min(1.0, pulse + flash);
-      }
-
-      void main() {
-        vec2 screen = (vClip.xy / max(vClip.w, 0.0001)) * 0.5 + 0.5;
-        float aspect = max(uResolution.x, 1.0) / max(uResolution.y, 1.0);
-        // Chunk to screen pixels so the field feels like the rest of the game.
-        float px = 140.0;
-        screen = floor(screen * vec2(px * aspect, px)) / vec2(px * aspect, px);
-        // Screen-space field so stars drift differently from pit geometry when the board tilts.
-        vec2 base = screen;
-        base.x *= aspect;
-        base += uCamDir.xz * vec2(0.22, 0.16);
-        base -= uCamDir.y * 0.08;
-
-        vec3 color = uDeep;
-        float dust = hash21(floor(base * 26.0 + uCamDir.zx * 3.0));
-        color += uGlow * step(0.88, dust) * 0.05;
-
-        float far = softStar(base * 48.0 + vec2(uTime * 0.02, -uTime * 0.014), 0.0, 0.13, 0.78);
-        float mid = softStar(base * 72.0 + uCamDir.xz * 3.0 + vec2(-uTime * 0.03, uTime * 0.022), 11.0, 0.095, 0.82);
-        float near = softStar(base * 104.0 + vec2(uTime * 0.016, uTime * 0.024), 29.0, 0.065, 0.86);
-        float spark = softStar(base * 130.0 + uCamDir.xz * 1.5 + vec2(-uTime * 0.022, -uTime * 0.018), 47.0, 0.05, 0.88);
-
-        color = mix(color, uDim, clamp(far, 0.0, 1.0));
-        color = mix(color, mix(uDim, uStar, 0.55), clamp(mid, 0.0, 1.0));
-        color = mix(color, uStar, clamp(near, 0.0, 1.0));
-        color = mix(color, uStar, clamp(spark, 0.0, 1.0));
-
-        gl_FragColor = vec4(color, 1.0);
-      }
-    `,
-    depthWrite: true,
-    depthTest: true,
-  });
-}
-
-function hexToVec3(hex: string): Vector3 {
-  const raw = hex.trim().replace("#", "");
-  const full = raw.length === 3
-    ? raw.split("").map((ch) => ch + ch).join("")
-    : raw.padStart(6, "0").slice(0, 6);
-  const value = Number.parseInt(full, 16);
-  if (!Number.isFinite(value)) return new Vector3(0, 0, 0);
-  return new Vector3(
-    ((value >> 16) & 255) / 255,
-    ((value >> 8) & 255) / 255,
-    (value & 255) / 255,
-  );
-}
-
-function crumbleChunks(parent: Mesh, piece: Piece, material: MeshToonMaterial): Mesh[] {
-  const cols = 3;
-  const rows = 3;
-  const gap = 0.028;
-  const sizeX = (piece.hx * 2 - gap * (cols - 1)) / cols;
-  const sizeZ = (piece.hz * 2 - gap * (rows - 1)) / rows;
-  const sizeY = piece.hy * 2;
-  const chunks: Mesh[] = [];
-  for (let iz = 0; iz < rows; iz += 1) {
-    for (let ix = 0; ix < cols; ix += 1) {
-      const geo = new BoxGeometry(sizeX, sizeY, sizeZ);
-      setCrumbleChunkUVs(geo, ix, iz, cols, rows);
-      const chunk = new Mesh(geo, material);
-      const restX = (ix - (cols - 1) / 2) * (sizeX + gap);
-      const restZ = (iz - (rows - 1) / 2) * (sizeZ + gap);
-      chunk.position.set(restX, 0, restZ);
-      chunk.castShadow = true;
-      chunk.receiveShadow = true;
-      chunk.userData.restX = restX;
-      chunk.userData.restZ = restZ;
-      chunk.userData.dirX = ix - (cols - 1) / 2;
-      chunk.userData.dirZ = iz - (rows - 1) / 2;
-      chunk.userData.tilt = ((ix * 5 + iz * 3) % 5) - 2;
-      parent.add(chunk);
-      chunks.push(chunk);
-    }
-  }
-  return chunks;
-}
-
-function setCrumbleChunkUVs(geo: BoxGeometry, ix: number, iz: number, cols: number, rows: number): void {
-  const uv = geo.getAttribute("uv");
-  if (!uv) return;
-  const u0 = ix / cols;
-  const u1 = (ix + 1) / cols;
-  const v0 = 1 - (iz + 1) / rows;
-  const v1 = 1 - iz / rows;
-  // BoxGeometry face order: +x, -x, +y, -y, +z, -z. Remap every face so pieces share one tile atlas.
-  for (let face = 0; face < 6; face += 1) {
-    const i = face * 4;
-    uv.setXY(i, u0, v1);
-    uv.setXY(i + 1, u1, v1);
-    uv.setXY(i + 2, u0, v0);
-    uv.setXY(i + 3, u1, v0);
-  }
-  uv.needsUpdate = true;
-}
-
-function toon(color: string, emissive = "#000000", emissiveIntensity = 0): MeshToonMaterial {
-  return new MeshToonMaterial({
-    color,
-    emissive,
-    emissiveIntensity,
-    gradientMap: ramp,
-  });
-}
-
-function glow(color: string): MeshToonMaterial {
-  const mat = toon(color, color, 0.7);
-  mat.side = DoubleSide;
-  mat.toneMapped = false;
-  mat.polygonOffset = true;
-  mat.polygonOffsetFactor = -4;
-  mat.polygonOffsetUnits = -4;
-  return mat;
-}
-
-function facet(geo: BufferGeometry): BufferGeometry {
-  const flat = geo.toNonIndexed();
-  geo.dispose();
-  flat.computeVertexNormals();
-  return flat;
-}
-
-function gateSignMaterial(color: string, kind: "ok" | "no"): MeshBasicMaterial {
-  const size = 32;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Gate sign canvas unavailable");
-  ctx.clearRect(0, 0, size, size);
-  ctx.fillStyle = color;
-  if (kind === "ok") {
-    ctx.beginPath();
-    ctx.moveTo(6, 17);
-    ctx.lineTo(13, 24);
-    ctx.lineTo(26, 8);
-    ctx.lineWidth = 5;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.strokeStyle = color;
-    ctx.stroke();
-  } else {
-    ctx.fillRect(13, 5, 6, 16);
-    ctx.beginPath();
-    ctx.arc(16, 26, 3.2, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  const tex = new CanvasTexture(canvas);
-  tex.colorSpace = SRGBColorSpace;
-  tex.magFilter = NearestFilter;
-  tex.minFilter = NearestFilter;
-  tex.generateMipmaps = false;
-  tex.needsUpdate = true;
-  const mat = new MeshBasicMaterial({
-    map: tex,
-    transparent: true,
-    depthWrite: false,
-    toneMapped: false,
-    side: DoubleSide,
-  });
-  mat.polygonOffset = true;
-  mat.polygonOffsetFactor = -2;
-  mat.polygonOffsetUnits = -2;
-  return mat;
-}
-
-function token(name: string): string {
-  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  if (value.length === 0) throw new Error(`Missing CSS token ${name}`);
-  return value;
 }

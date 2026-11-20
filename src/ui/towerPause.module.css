@@ -37,9 +37,8 @@
   }
 }
 
-.scrim {
-  position: absolute;
-  inset: 0;
+/* Base: .kit-scrim (tinted for the full-screen pause). */
+.root > .scrim {
   background: color-mix(in srgb, var(--maze-void) 62%, transparent);
 }
 
@@ -197,9 +196,6 @@
   font-weight: 500;
 }
 
-.ghost {
-  color: var(--ink-dim);
-}
 
 @media (max-width: 720px) {
   .head {

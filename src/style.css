@@ -24,7 +24,22 @@
   --scrim: rgba(0, 0, 0, 0.55);
   --page-blur: 0px;
   --seam: #ffbc61;
+  --danger: #e64545;
   --gap: 14px;
+  --space-1: 4px;
+  --space-2: 6px;
+  --space-3: 10px;
+  --space-4: 14px;
+  --space-5: 18px;
+  --space-6: 26px;
+  --space-7: 32px;
+  --text-xs: 13px;
+  --text-sm: 14px;
+  --text-md: 16px;
+  --text-lg: 17px;
+  --text-xl: 22px;
+  --text-display: 64px;
+  --control-height: 44px;
   --icon: 52px;
   --chrome-top: 22px;
   --chrome-edge: 20px;
@@ -250,6 +265,7 @@
   --maze-building: #e8c96a;
   --maze-building-lit: #f4efe4;
   --maze-building-brick: #d45a4a;
+  --maze-building-brick-old: #8f5a48;
   --maze-building-glass: #5a9ec4;
   --maze-awning: #c75c29;
   --maze-lamp: #ffbc61;
@@ -347,7 +363,6 @@
   --maze-venus-sky: #c47a3a;
   --maze-forest-sky: #6aa88a;
   --maze-rainforest-sky: #4a9a8a;
-  --maze-aurora-sky: #060814;
   --maze-disco-sky: #120818;
   --maze-disco-floor: #1a1218;
   --maze-disco-floor-dark: #0c080c;
@@ -359,14 +374,7 @@
   --maze-disco-5: #ff5a3c;
   --maze-disco-6: #6a7dff;
   --maze-disco-7: #ff9ad5;
-  --maze-space: #12161f;
   --maze-space-dark: #080a10;
-  --maze-star: #e8eef4;
-  --maze-aurora-green: #5dffb0;
-  --maze-aurora-teal: #4ad4c8;
-  --maze-aurora-violet: #9a7dff;
-  --maze-aurora-pink: #ff7ad9;
-  --maze-aurora-blue: #6aafdf;
   --maze-moss: #3f6b3a;
   --maze-moss-lit: #5a8f52;
   --maze-mushroom: #e8d5b8;
@@ -504,13 +512,21 @@ body,
   filter: blur(var(--page-blur));
 }
 
+/* Home gives #play-hud pointer-events for 3D menu hits — release them for overlays. */
+#app:has(#overlay[data-phase="in"]) #play-hud,
+#app:has(#editor[data-phase="in"]) #play-hud,
+#app:has(#picker[data-phase="in"]) #play-hud,
+#app:has(#pause[data-phase="in"]) #play-hud,
+#app:has(#library[data-phase="in"]) #play-hud {
+  pointer-events: none;
+}
+
 /* Menu screens own the shell — maze/chrome are not underneath them.
    Home keeps the world viewport visible for the storm-tower backdrop. */
 #app[data-screen="tower"] #viewport,
 #app[data-screen="settings"] #viewport,
 #app[data-screen="create"] #viewport,
 #app[data-screen="saved"] #viewport,
-#app[data-screen="home"] #chrome,
 #app[data-screen="tower"] #chrome,
 #app[data-screen="settings"] #chrome,
 #app[data-screen="create"] #chrome,
@@ -524,14 +540,39 @@ body,
   pointer-events: none;
 }
 
+/* Home: keep the fixed admin/debug row; hide the rest of play chrome. */
+#app[data-screen="home"] #chrome {
+  visibility: visible;
+  pointer-events: none;
+  z-index: 10;
+}
+
+#app[data-screen="home"] #chrome > *:not([data-admin]) {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+#app[data-screen="home"] #chrome [data-admin] {
+  visibility: visible;
+  pointer-events: none;
+}
+
+#app[data-screen="home"] #chrome [data-admin] button {
+  pointer-events: auto;
+}
+
 #app[data-screen="home"] #play-hud {
   z-index: 9;
   pointer-events: auto;
 }
 
-/* Load modal floats over the in-world Tower submenu. */
+/* Load modal / practice picker float over the in-world Tower submenu + chrome. */
 #app[data-screen="home"] #tower-intro {
   z-index: 12;
+}
+
+#app[data-screen="home"] #picker {
+  z-index: 13;
 }
 
 #app[data-screen="tower"] #play-hud,
@@ -639,65 +680,6 @@ body,
 button:focus-visible {
   outline: 2px solid var(--seam);
   outline-offset: 3px;
-}
-
-.glass-btn,
-.glass-pill {
-  appearance: none;
-  border: 0;
-  position: relative;
-  color: var(--ink);
-  background: var(--panel-fill);
-  box-shadow: inset 0 0 0 2px var(--glass-border);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  transition:
-    transform 0.12s ease,
-    background 0.16s ease,
-    color 0.16s ease;
-
-  & .btn-icon {
-    width: 18px;
-    height: 18px;
-    display: block;
-    stroke: currentColor;
-    fill: none;
-    stroke-linecap: square;
-    stroke-linejoin: miter;
-    stroke-width: 2;
-    shape-rendering: crispEdges;
-    pointer-events: none;
-  }
-
-  &.selected {
-    background: var(--selected-fill);
-    color: var(--selected-ink);
-  }
-
-  &:active {
-    transform: scale(0.96);
-  }
-}
-
-.glass-btn {
-  width: var(--icon);
-  height: var(--icon);
-  border-radius: var(--control-radius);
-  flex: 0 0 var(--icon);
-}
-
-.glass-pill {
-  height: var(--icon);
-  padding: 0 18px;
-  border-radius: var(--control-radius);
-  font-size: 17px;
-}
-
-.metal-ring {
-  box-shadow: inset 0 0 0 2px var(--seam);
 }
 
 .boot-error {

@@ -206,8 +206,27 @@
   color: var(--ink-faint);
 }
 
+/* Campaign author: floors list is hidden — keep Tools as a narrow strip. */
+.root[data-mode="campaign"] .body {
+  grid-template-columns: 148px minmax(0, 1fr);
+
+  @media (max-width: 960px) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .root[data-mode="campaign"] .sideCols {
   grid-template-columns: minmax(0, 1fr);
+}
+
+.root[data-mode="campaign"] .toolsPanel {
+  padding: 10px 6px;
+}
+
+.root[data-mode="campaign"] button.swatch {
+  padding: 6px;
+  gap: 6px;
+  font-size: 11px;
 }
 
 .floorNav {
@@ -1113,6 +1132,61 @@ button.gapBtn {
   }
 }
 
+.chrome button.handle[data-tip] {
+  position: relative;
+}
+
+.chrome [data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  z-index: 20;
+  box-sizing: border-box;
+  padding: 4px 8px;
+  border-radius: var(--control-radius);
+  background: color-mix(in srgb, var(--panel-fill) 92%, var(--ink) 8%);
+  color: var(--ink);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--maze-void) 35%, transparent);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  transition-delay: 0s;
+}
+
+.chrome [data-tip]:is(:hover, :focus-visible)::after {
+  opacity: 1;
+  transition-delay: 0.45s;
+}
+
+.chrome [data-tip-side="left"]::after {
+  right: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.chrome [data-tip-side="right"]::after {
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.chrome [data-tip-side="top"]::after {
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.chrome [data-tip-side="bottom"]::after {
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+}
+
 button.edgePill {
   position: absolute;
   z-index: 5;
@@ -1175,7 +1249,8 @@ button.edgePill {
 .edgeSouth {
   left: 8%;
   right: 8%;
-  bottom: -18px;
+  /* Sit past the play-frame wall so the bound stays visible. */
+  bottom: calc(-1 * (var(--frame) + 22px));
   height: 18px;
   border-radius: 999px;
 }
@@ -1183,7 +1258,7 @@ button.edgePill {
 .edgeEast {
   top: 8%;
   bottom: 8%;
-  right: -18px;
+  right: calc(-1 * (var(--frame) + 22px));
   width: 18px;
   border-radius: 999px;
 }
@@ -1411,10 +1486,17 @@ button.deleteBtn {
     }
 
     &[data-brush="wall"] .wall:hover::before,
-    &[data-brush="gate"] .wall:hover::before,
+    &[data-brush="gate"] .wall:not([data-one-way]):hover::before,
     &[data-brush="erase"] .wall:hover::before {
       opacity: 1;
       background: var(--seam);
+    }
+
+    /* Keep green/red gate faces visible while flipping direction. */
+    &[data-brush="gate"] .wall[data-one-way]:hover::before {
+      box-shadow:
+        0 0 0 2px color-mix(in srgb, var(--seam) 80%, transparent),
+        0 0 10px color-mix(in srgb, var(--seam) 40%, transparent);
     }
 
     /* Erasable tiles only — empty floor / start / goal / hatch stay quiet. */
@@ -2060,4 +2142,138 @@ button.tileMenuItem {
   color: #111 !important;
   background: var(--seam) !important;
   box-shadow: none !important;
+}
+
+.drafts {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  pointer-events: auto;
+
+  &[hidden] {
+    display: none;
+  }
+}
+
+.draftsScrim {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--maze-void) 55%, transparent);
+}
+
+.draftsCard {
+  position: relative;
+  z-index: 1;
+  width: min(420px, 100%);
+  max-height: min(70vh, 560px);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border-radius: var(--panel-radius);
+  background: var(--panel-fill);
+  box-shadow: var(--panel-shadow);
+  border: 1px solid var(--glass-border);
+  overflow: hidden;
+}
+
+.draftsHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.draftsTitle {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+
+.draftsNote {
+  margin: 0;
+  padding: 10px 16px;
+  color: var(--ink-faint);
+  font-size: 12px;
+  line-height: 1.35;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.draftsList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  min-height: 0;
+}
+
+.draftsEmpty {
+  margin: 12px 4px;
+  color: var(--ink-faint);
+  font-size: 13px;
+  text-align: center;
+}
+
+.draftItem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  gap: 6px;
+  align-items: center;
+}
+
+.draftOpen {
+  appearance: none;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--control-radius);
+  margin: 0;
+  min-height: 44px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--glass);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+
+  &:focus-visible {
+    outline: 1px solid var(--seam);
+    outline-offset: 1px;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    &:hover {
+      background: color-mix(in srgb, var(--glass) 80%, var(--ink) 8%);
+    }
+  }
+}
+
+.draftName {
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.draftMeta {
+  flex: 0 0 auto;
+  color: var(--ink-faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.draftDelete {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
 }

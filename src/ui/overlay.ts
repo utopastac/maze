@@ -1,4 +1,13 @@
 import { formatTime } from "../core/format.ts";
+import {
+  createActions,
+  createButton,
+  createCard,
+  createKicker,
+  createScrim,
+  playEnter,
+  playExit,
+} from "./kit/index.ts";
 import styles from "./overlay.module.css";
 
 export interface OverlayCallbacks {
@@ -17,25 +26,46 @@ export class Overlay {
   constructor(root: HTMLElement, callbacks: OverlayCallbacks) {
     this.root = root;
     this.root.className = styles.root;
-    this.root.innerHTML = `
-      <div class="${styles.scrim}"></div>
-      <div class="${styles.card}">
-        <p class="${styles.kicker}">Through.</p>
-        <p class="${styles.time}" data-time>0:00.0</p>
-        <p class="${styles.detail}" data-detail>Clean run.</p>
-        <div class="${styles.actions}">
-          <button type="button" class="glass-pill metal-ring ${styles.again}" data-again>Again</button>
-          <button type="button" class="glass-pill ${styles.leave}" data-leave hidden>Home</button>
-        </div>
-      </div>
-    `;
-    this.kicker = this.require(`.${styles.kicker}`);
-    this.timeEl = this.require("[data-time]");
-    this.detailEl = this.require("[data-detail]");
-    this.againBtn = this.require("[data-again]");
-    this.leaveBtn = this.require("[data-leave]");
-    this.againBtn.addEventListener("click", () => callbacks.onAgain());
-    this.leaveBtn.addEventListener("click", () => callbacks.onLeave());
+    this.kicker = createKicker("Through.");
+    this.timeEl = document.createElement("p");
+    this.timeEl.className = styles.time;
+    this.timeEl.dataset.time = "";
+    this.timeEl.textContent = "0:00.0";
+    this.detailEl = document.createElement("p");
+    this.detailEl.className = styles.detail;
+    this.detailEl.dataset.detail = "";
+    this.detailEl.textContent = "Clean run.";
+    this.againBtn = createButton({
+      label: "Again",
+      tone: "accent",
+      className: styles.again,
+      data: { again: "" },
+      onClick: () => callbacks.onAgain(),
+    });
+    this.leaveBtn = createButton({
+      label: "Home",
+      tone: "ghost",
+      data: { leave: "" },
+      hidden: true,
+      onClick: () => callbacks.onLeave(),
+    });
+    this.root.replaceChildren(
+      createScrim({ className: styles.scrim }),
+      createCard({
+        center: true,
+        className: styles.card,
+        children: [
+          this.kicker,
+          this.timeEl,
+          this.detailEl,
+          createActions({
+            center: true,
+            className: styles.actions,
+            children: [this.againBtn, this.leaveBtn],
+          }),
+        ],
+      }),
+    );
   }
 
   showWin(seconds: number, drops: number): void {
@@ -74,22 +104,11 @@ export class Overlay {
 
   private open(kind: "win" | "loss"): void {
     this.root.dataset.kind = kind;
-    this.root.hidden = false;
-    this.root.dataset.phase = "out";
-    requestAnimationFrame(() => {
-      this.root.dataset.phase = "in";
-    });
+    playEnter(this.root);
   }
 
   hide(): void {
-    delete this.root.dataset.phase;
     delete this.root.dataset.kind;
-    this.root.hidden = true;
-  }
-
-  private require<T extends Element>(selector: string): T {
-    const el = this.root.querySelector<T>(selector);
-    if (!el) throw new Error(`Missing ${selector}`);
-    return el;
+    playExit(this.root);
   }
 }

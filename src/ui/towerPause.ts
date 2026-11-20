@@ -1,7 +1,14 @@
 import { formatTime } from "../core/format.ts";
 import type { Maze } from "../core/maze.ts";
 import type { FloorThemeId } from "../core/theme.ts";
-import { iconSvg } from "./icons.ts";
+import {
+  createActions,
+  createButton,
+  createConfirmDialog,
+  createScrim,
+  playEnter,
+  playExit,
+} from "./kit/index.ts";
 import { renderMazeBoardPreview } from "./mazeBoardPreview.ts";
 import { TowerMap } from "./towerMap.ts";
 import styles from "./towerPause.module.css";
@@ -23,7 +30,6 @@ export interface TowerPauseStats {
 
 export interface TowerPauseCallbacks {
   onResume: () => void;
-  onSettings: () => void;
   onQuit: () => void;
   onSave: () => void;
   onSaveLeave: () => void;
@@ -50,17 +56,23 @@ export class TowerPause {
   private readonly remixBtn: HTMLButtonElement;
   private readonly saveLevelBtn: HTMLButtonElement;
   private readonly mapSlot: HTMLElement;
+  private readonly confirmRoot: HTMLElement;
+  private readonly confirmTitle: HTMLElement;
+  private readonly confirmBody: HTMLElement;
+  private readonly confirmOk: HTMLButtonElement;
+  private readonly confirm: ReturnType<typeof createConfirmDialog>;
   private readonly tower: TowerMap;
   private open = false;
+  private mode: TowerPauseStats["mode"] = "free";
 
   constructor(root: HTMLElement, callbacks: TowerPauseCallbacks) {
     this.root = root;
     this.callbacks = callbacks;
     this.root.className = styles.root;
     this.root.innerHTML = `
-      <div class="${styles.scrim}" data-scrim></div>
+      <div data-scrim-slot></div>
       <div class="${styles.card}">
-        <header class="${styles.head}">
+        <header class="${styles.head}" data-head>
           <div class="${styles.brand}">
             <h2 class="${styles.title}">Paused</h2>
             <p class="${styles.meta}" data-meta></p>
@@ -70,7 +82,6 @@ export class TowerPause {
             <p class="${styles.stat}"><strong data-lives>3</strong><span>Hearts</span></p>
             <p class="${styles.stat}"><strong data-time>0:00.0</strong><span>Time</span></p>
           </div>
-          <button type="button" class="glass-btn ${styles.close}" data-close aria-label="Resume">${iconSvg("close")}</button>
         </header>
         <div class="${styles.body}">
           <div class="${styles.mapSlot}" data-map></div>
@@ -79,58 +90,145 @@ export class TowerPause {
             <div class="${styles.floorThumb}" data-floor-thumb></div>
           </div>
         </div>
-        <div class="${styles.actions}">
-          <button type="button" class="glass-pill metal-ring ${styles.primary}" data-resume>Resume</button>
-          <button type="button" class="glass-pill ${styles.primary}" data-settings>Settings</button>
-          <button type="button" class="glass-pill ${styles.primary}" data-remix data-free-only>Remix</button>
-          <button type="button" class="glass-pill ${styles.primary}" data-save-level data-free-only>Save</button>
-          <button type="button" class="glass-pill ${styles.primary}" data-save data-campaign-only>Save</button>
-          <button type="button" class="glass-pill ${styles.ghost}" data-save-leave data-campaign-only>Save & leave</button>
-          <button type="button" class="glass-pill ${styles.ghost}" data-clear data-campaign-only hidden>Delete this save</button>
-          <button type="button" class="glass-pill ${styles.ghost}" data-new data-campaign-only>New run</button>
-          <button type="button" class="glass-pill ${styles.ghost}" data-quit data-free-only>Quit</button>
-        </div>
+        <div data-actions-slot></div>
       </div>
+      <div data-confirm-slot></div>
     `;
+
+    const resume = (): void => {
+      if (this.confirmOpen()) {
+        this.hideQuitConfirm();
+        return;
+      }
+      this.callbacks.onResume();
+    };
+
+    this.require("[data-scrim-slot]").replaceWith(
+      this.scrimEl(resume),
+    );
+    this.require("[data-head]").append(
+      createButton({
+        variant: "icon",
+        icon: "close",
+        ariaLabel: "Resume",
+        className: styles.close,
+        data: { close: "" },
+        onClick: resume,
+      }),
+    );
+
+    this.saveBtn = createButton({
+      label: "Save",
+      className: styles.primary,
+      data: { save: "", campaignOnly: "" },
+      onClick: () => this.callbacks.onSave(),
+    });
+    this.saveLeaveBtn = createButton({
+      label: "Save & leave",
+      tone: "ghost",
+      data: { saveLeave: "", campaignOnly: "" },
+      onClick: () => this.callbacks.onSaveLeave(),
+    });
+    this.clearBtn = createButton({
+      label: "Delete this save",
+      tone: "ghost",
+      data: { clear: "", campaignOnly: "" },
+      hidden: true,
+      onClick: () => this.callbacks.onClearSave(),
+    });
+    this.newBtn = createButton({
+      label: "New run",
+      tone: "ghost",
+      data: { new: "", campaignOnly: "" },
+      onClick: () => this.callbacks.onNewRun(),
+    });
+    this.quitBtn = createButton({
+      label: "Quit",
+      tone: "ghost",
+      data: { quit: "" },
+      onClick: () => this.openQuitConfirm(),
+    });
+    this.remixBtn = createButton({
+      label: "Remix",
+      className: styles.primary,
+      data: { remix: "", freeOnly: "" },
+      onClick: () => this.callbacks.onRemix(),
+    });
+    this.saveLevelBtn = createButton({
+      label: "Save",
+      className: styles.primary,
+      data: { saveLevel: "", freeOnly: "" },
+      onClick: () => this.callbacks.onSaveLevel(),
+    });
+    this.require("[data-actions-slot]").replaceWith(
+      createActions({
+        className: styles.actions,
+        children: [
+          createButton({
+            label: "Resume",
+            tone: "accent",
+            className: styles.primary,
+            data: { resume: "" },
+            onClick: resume,
+          }),
+          this.remixBtn,
+          this.saveLevelBtn,
+          this.saveBtn,
+          this.saveLeaveBtn,
+          this.clearBtn,
+          this.newBtn,
+          this.quitBtn,
+        ],
+      }),
+    );
+
+    this.confirm = createConfirmDialog({
+      titleId: "pause-quit-title",
+      bodyId: "pause-quit-body",
+      title: "Quit?",
+      confirmLabel: "Quit",
+      onCancel: () => this.hideQuitConfirm(),
+      onConfirm: () => this.commitQuitConfirm(),
+    });
+    this.confirm.title.dataset.confirmTitle = "";
+    this.confirm.body.dataset.confirmBody = "";
+    this.require("[data-confirm-slot]").replaceWith(this.confirm.root);
+
     this.metaEl = this.require("[data-meta]");
     this.floorEl = this.require("[data-floor]");
     this.livesEl = this.require("[data-lives]");
     this.timeEl = this.require("[data-time]");
     this.floorLabel = this.require("[data-floor-label]");
     this.floorThumb = this.require("[data-floor-thumb]");
-    this.saveBtn = this.require("[data-save]");
-    this.saveLeaveBtn = this.require("[data-save-leave]");
-    this.clearBtn = this.require("[data-clear]");
-    this.newBtn = this.require("[data-new]");
-    this.quitBtn = this.require("[data-quit]");
-    this.remixBtn = this.require("[data-remix]");
-    this.saveLevelBtn = this.require("[data-save-level]");
     this.mapSlot = this.require("[data-map]");
-    this.tower = new TowerMap(this.mapSlot, "full");
-    this.require("[data-close]").addEventListener("click", () => this.callbacks.onResume());
-    this.require("[data-scrim]").addEventListener("click", () => this.callbacks.onResume());
-    this.require("[data-resume]").addEventListener("click", () => this.callbacks.onResume());
-    this.require("[data-settings]").addEventListener("click", () => this.callbacks.onSettings());
-    this.quitBtn.addEventListener("click", () => this.callbacks.onQuit());
-    this.saveBtn.addEventListener("click", () => this.callbacks.onSave());
-    this.saveLeaveBtn.addEventListener("click", () => this.callbacks.onSaveLeave());
-    this.clearBtn.addEventListener("click", () => this.callbacks.onClearSave());
-    this.newBtn.addEventListener("click", () => this.callbacks.onNewRun());
-    this.remixBtn.addEventListener("click", () => this.callbacks.onRemix());
-    this.saveLevelBtn.addEventListener("click", () => this.callbacks.onSaveLevel());
+    this.confirmRoot = this.confirm.root;
+    this.confirmTitle = this.confirm.title;
+    this.confirmBody = this.confirm.body;
+    this.confirmOk = this.require("[data-confirm-ok]");
+    this.tower = new TowerMap(this.mapSlot);
   }
 
   isOpen(): boolean {
     return this.open;
   }
 
+  confirmOpen(): boolean {
+    return !this.confirmRoot.hidden;
+  }
+
+  /** Dismiss quit warning if open. Returns true when it handled the input. */
+  dismissConfirm(): boolean {
+    if (!this.confirmOpen()) return false;
+    this.hideQuitConfirm();
+    return true;
+  }
+
   show(stats: TowerPauseStats): void {
     this.open = true;
+    this.hideQuitConfirm();
     this.apply(stats);
-    this.root.hidden = false;
-    this.root.dataset.phase = "out";
+    playEnter(this.root);
     requestAnimationFrame(() => {
-      this.root.dataset.phase = "in";
       this.tower.setCurrent(stats.floor);
     });
   }
@@ -142,13 +240,14 @@ export class TowerPause {
 
   hide(): void {
     this.open = false;
+    this.hideQuitConfirm();
     this.tower.hide();
     this.floorThumb.replaceChildren();
-    delete this.root.dataset.phase;
-    this.root.hidden = true;
+    playExit(this.root);
   }
 
   private apply(stats: TowerPauseStats): void {
+    this.mode = stats.mode;
     this.root.dataset.mode = stats.mode;
     const note = stats.note?.trim() ?? "";
     this.metaEl.textContent = note;
@@ -166,6 +265,31 @@ export class TowerPause {
         landing: stats.landing,
       }));
     }
+  }
+
+  private openQuitConfirm(): void {
+    this.confirmTitle.textContent = "Quit?";
+    this.confirmBody.textContent = this.mode === "campaign"
+      ? "Leave this run? Unsaved progress will be lost."
+      : "Leave this level? You'll return home.";
+    this.confirmOk.textContent = "Quit";
+    this.confirm.show();
+    this.confirmOk.focus();
+  }
+
+  private hideQuitConfirm(): void {
+    this.confirm.hide();
+  }
+
+  private commitQuitConfirm(): void {
+    this.hideQuitConfirm();
+    this.callbacks.onQuit();
+  }
+
+  private scrimEl(onClick: () => void): HTMLElement {
+    const scrim = createScrim({ className: styles.scrim, data: "scrim" });
+    scrim.addEventListener("click", onClick);
+    return scrim;
   }
 
   private require<T extends Element>(selector: string): T {

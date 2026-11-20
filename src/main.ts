@@ -1,4 +1,5 @@
 import "./style.css";
+import "./ui/kit/kit.css";
 import { App } from "./app/App.ts";
 
 async function boot(): Promise<void> {
@@ -13,6 +14,7 @@ async function boot(): Promise<void> {
   const picker = document.querySelector<HTMLElement>("#picker");
   const library = document.querySelector<HTMLElement>("#library");
   const editor = document.querySelector<HTMLElement>("#editor");
+  const toast = document.querySelector<HTMLElement>("#toast");
   if (
     !canvas
     || !playHud
@@ -25,6 +27,7 @@ async function boot(): Promise<void> {
     || !picker
     || !library
     || !editor
+    || !toast
   ) {
     throw new Error("Mazespire shell markup is missing.");
   }
@@ -41,6 +44,7 @@ async function boot(): Promise<void> {
     picker,
     library,
     editor,
+    toast,
   );
   await app.start();
 }

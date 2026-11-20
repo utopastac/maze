@@ -112,27 +112,22 @@
   scrollbar-width: thin;
 }
 
-.empty {
+/* Base: .kit-empty */
+.list .empty {
   margin: 24px 0 8px;
-  color: var(--ink-faint);
-  font-size: 14px;
-  text-align: center;
 }
 
-.save {
+/* Base: .kit-list-row — grid layout overrides (`.list` raises specificity). */
+.list .save {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
-  margin: 0;
+  width: auto;
   padding: 14px 12px 14px 16px;
   border: 1px solid var(--glass-border);
-  border-radius: var(--control-radius);
   background: color-mix(in srgb, var(--ink) 6%, transparent);
-  color: var(--ink);
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
+  box-shadow: none;
 
   &:hover,
   &:focus-visible {
@@ -141,7 +136,7 @@
   }
 }
 
-.saveAutosave {
+.list .saveAutosave {
   border-color: color-mix(in srgb, var(--maze-goal) 45%, var(--glass-border));
   background: color-mix(in srgb, var(--maze-goal) 12%, transparent);
 
@@ -155,19 +150,12 @@
   }
 }
 
-.saveCopy {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.saveTitle {
+/* Base: .kit-list-copy / .kit-list-title / .kit-list-detail */
+.list .saveTitle {
   font-size: 15px;
-  font-weight: 500;
 }
 
-.saveDetail {
-  color: var(--ink-dim);
+.list .saveDetail {
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }

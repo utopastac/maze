@@ -16,6 +16,7 @@ const MAIN_ITEMS: { action: PlayHudHomeAction; label: string }[] = [
 const TOWER_ITEMS: { action: PlayHudHomeAction; label: string }[] = [
   { action: "towerNew", label: "New game" },
   { action: "towerLoad", label: "Load" },
+  { action: "towerPractice", label: "Practice" },
   { action: "towerBack", label: "Back" },
 ];
 

@@ -1,5 +1,4 @@
 import {
-  WARP_COLOR_COUNT,
   hasCoin,
   hasGhost,
   hasHeart,
@@ -7,8 +6,6 @@ import {
   hasWings,
   interiorClosed,
   oneWayAt,
-  tileAt,
-  type Direction,
   type Maze,
   type WallAxis,
 } from "../core/maze.ts";
@@ -16,38 +13,17 @@ import { parseFloorTheme } from "../core/theme.ts";
 import { installCrumblePreviewCss } from "../render/crumblePaint.ts";
 import editor from "./editor.module.css";
 import { setPickupIcon, type CellMarkIcon } from "./icons.ts";
+import {
+  describeCell,
+  openWarpPairs,
+  type MazeCellKind,
+} from "./mazeCellKind.ts";
 import styles from "./mazeBoardPreview.module.css";
-
-type CellKind =
-  | "floor"
-  | "start"
-  | "goal"
-  | "hatch"
-  | "pit"
-  | "boost"
-  | "ice"
-  | "crumble"
-  | "block"
-  | "warp"
-  | "switch"
-  | "heart"
-  | "coin"
-  | "star"
-  | "wings"
-  | "ghost";
-
-type CellPaint = {
-  kind: CellKind;
-  dir?: Direction;
-  pair?: number;
-  open?: boolean;
-};
 
 /** Read-only board that matches the level editor’s cell/wall look. */
 export function renderMazeBoardPreview(maze: Maze, opts: { showGoal?: boolean; landing?: boolean } = {}): HTMLElement {
   installCrumblePreviewCss();
   const showGoal = opts.showGoal !== false;
-  const landing = opts.landing === true;
   const theme = parseFloorTheme(maze.theme);
   const wrap = document.createElement("div");
   wrap.className = styles.preview;
@@ -107,14 +83,14 @@ export function renderMazeBoardPreview(maze: Maze, opts: { showGoal?: boolean; l
   for (const [id, cell] of cells) {
     const [c, r] = id.split(",").map(Number);
     if (c === undefined || r === undefined) continue;
-    const paint = describeCell(maze, c, r, openPairs, showGoal, landing);
+    const paint = describeCell(maze, c, r, openPairs, showGoal);
     cell.dataset.kind = paint.kind;
     if (paint.dir) cell.dataset.dir = paint.dir;
     if (paint.pair !== undefined) cell.dataset.pair = String(paint.pair);
     if (paint.open) cell.dataset.open = "true";
 
     const spot = { c, r };
-    const otherPickup = (kind: CellKind) =>
+    const otherPickup = (kind: MazeCellKind) =>
       (["heart", "coin", "star", "wings", "ghost"] as const).some((other) => other !== kind && paint.kind === other);
     const showHeart = paint.kind === "heart" || (hasHeart(maze, spot) && !otherPickup("heart"));
     const showCoin = paint.kind === "coin" || (hasCoin(maze, spot) && !otherPickup("coin"));
@@ -181,60 +157,10 @@ function makeWall(maze: Maze, axis: WallAxis, c: number, r: number): HTMLElement
   return wall;
 }
 
-function openWarpPairs(maze: Maze): Set<number> {
-  const counts = new Map<number, number>();
-  for (const tile of maze.tiles) {
-    if (tile.kind !== "warp") continue;
-    counts.set(tile.pair, (counts.get(tile.pair) ?? 0) + 1);
-  }
-  const open = new Set<number>();
-  for (const [pair, count] of counts) {
-    if (count < 2) open.add(pair);
-  }
-  return open;
-}
-
 function switchTone(maze: Maze, axis: WallAxis, c: number, r: number): number | null {
   for (const tile of maze.tiles) {
     if (tile.kind !== "switch" || !tile.wall) continue;
     if (tile.wall.axis === axis && tile.wall.c === c && tile.wall.r === r) return tile.tone % 6;
   }
   return null;
-}
-
-function describeCell(
-  maze: Maze,
-  c: number,
-  r: number,
-  openPairs: Set<number>,
-  showGoal: boolean,
-  _landing: boolean,
-): CellPaint {
-  if (maze.start.c === c && maze.start.r === r) {
-    return { kind: "start" };
-  }
-  if (maze.hatch && maze.hatch.c === c && maze.hatch.r === r) return { kind: "hatch" };
-  if (showGoal && maze.goal.c === c && maze.goal.r === r) return { kind: "goal" };
-  if (maze.holes.some((hole) => hole.c === c && hole.r === r)) return { kind: "pit" };
-  const tile = tileAt(maze, c, r);
-  if (tile?.kind === "boost") return { kind: "boost", dir: tile.dir };
-  if (tile?.kind === "ice") return { kind: "ice" };
-  if (tile?.kind === "crumble") return { kind: "crumble" };
-  if (tile?.kind === "block") return { kind: "block" };
-  if (tile?.kind === "switch") {
-    return { kind: "switch", pair: tile.tone % 6, open: tile.wall === null };
-  }
-  if (tile?.kind === "warp") {
-    return {
-      kind: "warp",
-      pair: tile.pair % WARP_COLOR_COUNT,
-      open: openPairs.has(tile.pair),
-    };
-  }
-  if (hasHeart(maze, { c, r })) return { kind: "heart" };
-  if (hasCoin(maze, { c, r })) return { kind: "coin" };
-  if (hasStar(maze, { c, r })) return { kind: "star" };
-  if (hasWings(maze, { c, r })) return { kind: "wings" };
-  if (hasGhost(maze, { c, r })) return { kind: "ghost" };
-  return { kind: "floor" };
 }

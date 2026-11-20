@@ -24,7 +24,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm test
       - run: npm run build
+      # Full e2e runs on CI (ci.yml); deploy keeps the Pages path fast.
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

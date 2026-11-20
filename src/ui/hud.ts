@@ -1,20 +1,34 @@
 import { formatTime } from "../core/format.ts";
+import {
+  actionHeld,
+  formatKey,
+  hudKeyForAction,
+  KEY_DEFAULTS,
+  type KeyAction,
+  type Keybinds,
+} from "../core/keybinds.ts";
 import { iconSvg } from "./icons.ts";
+import { createButton } from "./kit/index.ts";
 import styles from "./hud.module.css";
+
+const HUD_KEY_ACTIONS = [
+  "tiltUp",
+  "tiltLeft",
+  "tiltDown",
+  "tiltRight",
+  "angleDown",
+  "angleUp",
+  "orbitLeft",
+  "orbitRight",
+  "zoomOut",
+  "zoomIn",
+] as const satisfies readonly KeyAction[];
 
 export interface HudCallbacks {
   onHome: () => void;
-  onLevel: () => void;
-  onReset: () => void;
-  onNew: () => void;
-  onCampaign: () => void;
-  onLevels: () => void;
-  onSaved: () => void;
-  onMotion: () => void;
   onSettings: () => void;
   onEdit: () => void;
   onAuthor: () => void;
-  onShare: () => void;
   onWins: () => void;
   onWinScene: (index: number) => void;
   onPause: () => void;
@@ -29,15 +43,10 @@ export class Hud {
   private readonly noteEl: HTMLElement;
   private readonly hint: HTMLElement;
   private readonly bubble: HTMLElement;
-  private readonly motionBtn: HTMLButtonElement;
   private readonly settingsBtn: HTMLButtonElement;
   private readonly editBtn: HTMLButtonElement;
   private readonly authorBtn: HTMLButtonElement;
-  private readonly shareBtn: HTMLButtonElement;
   private readonly winsBtn: HTMLButtonElement;
-  private readonly campaignBtn: HTMLButtonElement;
-  private readonly levelsBtn: HTMLButtonElement;
-  private readonly savedBtn: HTMLButtonElement;
   private readonly pauseBtn: HTMLButtonElement;
   private readonly livesEl: HTMLElement;
   private readonly lifeCount: HTMLElement;
@@ -47,13 +56,15 @@ export class Hud {
   private readonly winGallery: HTMLElement;
   private readonly winList: HTMLElement;
   private readonly keycaps: HTMLElement[];
+  private keybinds: Keybinds = { ...KEY_DEFAULTS };
+  private heldKeys: ReadonlySet<string> = new Set();
 
   constructor(root: HTMLElement, callbacks: HudCallbacks) {
     this.root = root;
     this.callbacks = callbacks;
     const fine = window.matchMedia("(pointer: fine)").matches;
     this.root.className = styles.root;
-    const hint = fine ? "Drag to tilt the maze, or use the arrow keys." : "Drag to tilt the maze.";
+    const hint = fine ? "Drag to tilt the maze, or use the keyboard." : "Drag to tilt the maze.";
     this.root.innerHTML = `
       <div class="${styles.vignette}"></div>
       <header class="${styles.top}">
@@ -77,92 +88,137 @@ export class Hud {
         <div class="${styles.winHead}">
           <div>
             <p class="${styles.winTitle}">Victory screens</p>
-            <p class="${styles.winMeta}" data-win-meta>1 / 16 · [ ]</p>
+            <p class="${styles.winMeta}" data-win-meta>1 / 15 · [ ]</p>
           </div>
-          <button type="button" class="glass-btn ${styles.winClose}" data-win-close aria-label="Close victory screens" title="Close">${iconSvg("close")}</button>
+          <span data-slot="winClose"></span>
         </div>
         <div class="${styles.winList}" data-win-list role="listbox" aria-label="Victory screens"></div>
       </aside>
-      <div class="${styles.debug}" aria-label="Debug menu">
-        <button type="button" class="glass-btn" data-home aria-label="Home" title="Home">${iconSvg("home")}</button>
-        <button type="button" class="glass-btn" data-motion hidden aria-label="Use device tilt">${iconSvg("motion")}</button>
-        <button type="button" class="glass-btn" data-level aria-label="Level the maze" title="Level">${iconSvg("level")}</button>
-        <button type="button" class="glass-btn" data-reset aria-label="Reset the ball" title="Reset">${iconSvg("reset")}</button>
-        <button type="button" class="glass-btn" data-edit aria-label="Edit level" title="Edit & share">${iconSvg("edit")}</button>
-        <button type="button" class="glass-btn" data-author aria-label="Author campaign" title="Author campaign">${iconSvg("author")}</button>
-        <button type="button" class="glass-btn" data-share aria-label="Copy level link" title="Copy link">${iconSvg("share")}</button>
-        <button type="button" class="glass-btn" data-saved aria-label="Saved levels" title="Saved levels" aria-pressed="false">${iconSvg("saved")}</button>
-        <button type="button" class="glass-btn" data-wins aria-label="Victory screens" title="Victory screens" aria-pressed="false">${iconSvg("wins")}</button>
-        <button type="button" class="glass-btn" data-new aria-label="New maze" title="New maze">${iconSvg("new")}</button>
-        <button type="button" class="glass-btn" data-campaign aria-label="Campaign" title="Campaign" aria-pressed="false">${iconSvg("campaign")}</button>
-        <button type="button" class="glass-btn" data-pause hidden aria-label="Pause" title="Pause">${iconSvg("pause")}</button>
-        <button type="button" class="glass-btn" data-levels aria-label="Level select" title="Level select" aria-pressed="false">${iconSvg("levels")}</button>
-        <button type="button" class="glass-btn" data-settings aria-label="Settings" title="Settings">${iconSvg("settings")}</button>
+      <div class="${styles.debug}" data-admin aria-label="Debug menu">
+        <span data-slot="home"></span>
+        <span data-slot="edit"></span>
+        <span data-slot="author"></span>
+        <span data-slot="wins"></span>
+        <span data-slot="settings"></span>
       </div>
-      <div class="${styles.controlsDock}">
-        <button
-          type="button"
-          class="glass-btn ${styles.controlsBtn}"
-          data-controls-trigger
-          aria-label="Keyboard controls"
-          aria-expanded="false"
-          aria-controls="hud-keyboard-controls"
-          title="Keyboard controls"
-        >${iconSvg("keyboard")}</button>
-        <div
-          class="${styles.controls}"
-          id="hud-keyboard-controls"
-          data-controls-panel
-          aria-label="Keyboard controls"
-        >
-          <div class="${styles.cluster}">
-            <p class="${styles.controlLabel}">move</p>
-            <div class="${styles.pad}">
-              <kbd class="${styles.key}" data-key="arrowup">↑</kbd>
-              <kbd class="${styles.key}" data-key="arrowleft">←</kbd>
-              <kbd class="${styles.key}" data-key="arrowdown">↓</kbd>
-              <kbd class="${styles.key}" data-key="arrowright">→</kbd>
+      <div class="${styles.cornerActions}">
+        <span data-slot="pause"></span>
+        <div class="${styles.controlsDock}">
+          <span data-slot="controls"></span>
+          <div
+            class="${styles.controls}"
+            id="hud-keyboard-controls"
+            data-controls-panel
+            aria-label="Keyboard controls"
+          >
+            <div class="${styles.cluster}">
+              <p class="${styles.controlLabel}">move</p>
+              <div class="${styles.pad}">
+                <kbd class="${styles.key}" data-action="tiltUp"></kbd>
+                <kbd class="${styles.key}" data-action="tiltLeft"></kbd>
+                <kbd class="${styles.key}" data-action="tiltDown"></kbd>
+                <kbd class="${styles.key}" data-action="tiltRight"></kbd>
+              </div>
             </div>
-          </div>
-          <div class="${styles.cluster}">
-            <p class="${styles.controlLabel}">rotate</p>
-            <div class="${styles.orbitRow}">
-              <kbd class="${styles.key} ${styles.orbit}" data-key="q">${iconSvg("angleDown", 10)}<span>Q</span></kbd>
-              <kbd class="${styles.key} ${styles.orbit}" data-key="e">${iconSvg("angleUp", 10)}<span>E</span></kbd>
+            <div class="${styles.cluster}">
+              <p class="${styles.controlLabel}">rotate</p>
+              <div class="${styles.orbitRow}">
+                <kbd class="${styles.key} ${styles.orbit}" data-action="angleDown">${iconSvg("angleDown", 10)}<span data-label></span></kbd>
+                <kbd class="${styles.key} ${styles.orbit}" data-action="angleUp">${iconSvg("angleUp", 10)}<span data-label></span></kbd>
+              </div>
             </div>
-          </div>
-          <div class="${styles.cluster}">
-            <p class="${styles.controlLabel}">orbit</p>
-            <div class="${styles.orbitRow}">
-              <kbd class="${styles.key} ${styles.orbit}" data-key="z">${iconSvg("orbitLeft", 10)}<span>Z</span></kbd>
-              <kbd class="${styles.key} ${styles.orbit}" data-key="c">${iconSvg("orbitRight", 10)}<span>C</span></kbd>
+            <div class="${styles.cluster}">
+              <p class="${styles.controlLabel}">orbit</p>
+              <div class="${styles.orbitRow}">
+                <kbd class="${styles.key} ${styles.orbit}" data-action="orbitLeft">${iconSvg("orbitLeft", 10)}<span data-label></span></kbd>
+                <kbd class="${styles.key} ${styles.orbit}" data-action="orbitRight">${iconSvg("orbitRight", 10)}<span data-label></span></kbd>
+              </div>
             </div>
-          </div>
-          <div class="${styles.cluster}">
-            <p class="${styles.controlLabel}">zoom</p>
-            <div class="${styles.orbitRow}">
-              <kbd class="${styles.key} ${styles.orbit}" data-key="-">${iconSvg("minus", 10)}<span>-</span></kbd>
-              <kbd class="${styles.key} ${styles.orbit}" data-key="=">${iconSvg("plus", 10)}<span>+</span></kbd>
+            <div class="${styles.cluster}">
+              <p class="${styles.controlLabel}">zoom</p>
+              <div class="${styles.orbitRow}">
+                <kbd class="${styles.key} ${styles.orbit}" data-action="zoomOut">${iconSvg("minus", 10)}<span data-label></span></kbd>
+                <kbd class="${styles.key} ${styles.orbit}" data-action="zoomIn">${iconSvg("plus", 10)}<span data-label></span></kbd>
+              </div>
             </div>
           </div>
         </div>
       </div>
     `;
+    this.mountSlot("winClose", createButton({
+      icon: "close",
+      ariaLabel: "Close victory screens",
+      title: "Close",
+      className: styles.winClose,
+      data: { winClose: "" },
+      onClick: () => this.callbacks.onWins(),
+    }));
+    this.mountSlot("home", createButton({
+      icon: "home",
+      ariaLabel: "Home",
+      title: "Home",
+      data: { home: "" },
+      onClick: () => this.callbacks.onHome(),
+    }));
+    this.mountSlot("edit", createButton({
+      icon: "edit",
+      ariaLabel: "Edit level",
+      title: "Edit & share",
+      data: { edit: "" },
+      onClick: () => this.callbacks.onEdit(),
+    }));
+    this.mountSlot("author", createButton({
+      icon: "author",
+      ariaLabel: "Author campaign",
+      title: "Author campaign",
+      data: { author: "" },
+      onClick: () => this.callbacks.onAuthor(),
+    }));
+    this.mountSlot("wins", createButton({
+      icon: "wins",
+      ariaLabel: "Victory screens",
+      title: "Victory screens",
+      pressed: false,
+      data: { wins: "" },
+      onClick: () => this.callbacks.onWins(),
+    }));
+    this.mountSlot("settings", createButton({
+      icon: "settings",
+      ariaLabel: "Settings",
+      title: "Settings",
+      data: { settings: "" },
+      onClick: () => this.callbacks.onSettings(),
+    }));
+    this.mountSlot("pause", createButton({
+      icon: "pause",
+      ariaLabel: "Pause",
+      title: "Pause",
+      className: styles.pauseBtn,
+      hidden: true,
+      data: { pause: "" },
+      onClick: () => this.callbacks.onPause(),
+    }));
+    const controlsTrigger = createButton({
+      icon: "keyboard",
+      ariaLabel: "Keyboard controls",
+      title: "Keyboard controls",
+      className: styles.controlsBtn,
+      data: { controlsTrigger: "" },
+    });
+    controlsTrigger.setAttribute("aria-expanded", "false");
+    controlsTrigger.setAttribute("aria-controls", "hud-keyboard-controls");
+    this.mountSlot("controls", controlsTrigger);
+
     this.timeEl = this.require("[data-time]");
     this.titleEl = this.require("[data-title]");
     this.floorEl = this.require("[data-floor]");
     this.noteEl = this.require("[data-note]");
     this.hint = this.require("[data-hint]");
     this.bubble = this.require("[data-bubble]");
-    this.motionBtn = this.require("[data-motion]");
     this.settingsBtn = this.require("[data-settings]");
     this.editBtn = this.require("[data-edit]");
     this.authorBtn = this.require("[data-author]");
-    this.shareBtn = this.require("[data-share]");
     this.winsBtn = this.require("[data-wins]");
-    this.campaignBtn = this.require("[data-campaign]");
-    this.levelsBtn = this.require("[data-levels]");
-    this.savedBtn = this.require("[data-saved]");
     this.pauseBtn = this.require("[data-pause]");
     this.livesEl = this.require("[data-lives]");
     this.lifeCount = this.require("[data-life-count]");
@@ -171,21 +227,6 @@ export class Hud {
     this.coinCount = this.require("[data-coin-count]");
     this.winGallery = this.require("[data-win-gallery]");
     this.winList = this.require("[data-win-list]");
-    this.require<HTMLButtonElement>("[data-home]").addEventListener("click", () => this.callbacks.onHome());
-    this.require<HTMLButtonElement>("[data-level]").addEventListener("click", () => this.callbacks.onLevel());
-    this.require<HTMLButtonElement>("[data-reset]").addEventListener("click", () => this.callbacks.onReset());
-    this.require<HTMLButtonElement>("[data-new]").addEventListener("click", () => this.callbacks.onNew());
-    this.pauseBtn.addEventListener("click", () => this.callbacks.onPause());
-    this.motionBtn.addEventListener("click", () => this.callbacks.onMotion());
-    this.settingsBtn.addEventListener("click", () => this.callbacks.onSettings());
-    this.editBtn.addEventListener("click", () => this.callbacks.onEdit());
-    this.authorBtn.addEventListener("click", () => this.callbacks.onAuthor());
-    this.shareBtn.addEventListener("click", () => this.callbacks.onShare());
-    this.savedBtn.addEventListener("click", () => this.callbacks.onSaved());
-    this.winsBtn.addEventListener("click", () => this.callbacks.onWins());
-    this.require<HTMLButtonElement>("[data-win-close]").addEventListener("click", () => this.callbacks.onWins());
-    this.campaignBtn.addEventListener("click", () => this.callbacks.onCampaign());
-    this.levelsBtn.addEventListener("click", () => this.callbacks.onLevels());
     this.winList.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>("[data-win-index]");
       if (!button) return;
@@ -193,9 +234,8 @@ export class Hud {
       if (!Number.isFinite(index)) return;
       this.callbacks.onWinScene(index);
     });
-    this.keycaps = [...this.root.querySelectorAll<HTMLElement>(`.${styles.controls} [data-key]`)];
+    this.keycaps = [...this.root.querySelectorAll<HTMLElement>(`.${styles.controls} [data-action]`)];
     const controlsDock = this.require<HTMLElement>(`.${styles.controlsDock}`);
-    const controlsTrigger = this.require<HTMLButtonElement>("[data-controls-trigger]");
     const syncControlsOpen = (open: boolean): void => {
       controlsTrigger.setAttribute("aria-expanded", String(open));
       controlsDock.dataset.open = open ? "true" : "";
@@ -208,8 +248,21 @@ export class Hud {
       if (next && controlsDock.contains(next)) return;
       syncControlsOpen(false);
     });
-    const coarse = window.matchMedia("(pointer: coarse)").matches;
-    this.setMotionVisible(coarse);
+    this.setKeybinds(this.keybinds);
+  }
+
+  setKeybinds(binds: Keybinds): void {
+    this.keybinds = { ...binds };
+    for (const cap of this.keycaps) {
+      const action = cap.dataset.action as KeyAction | undefined;
+      if (!action || !(HUD_KEY_ACTIONS as readonly string[]).includes(action)) continue;
+      const key = hudKeyForAction(this.keybinds, action);
+      const label = formatKey(key);
+      const labelEl = cap.querySelector<HTMLElement>("[data-label]");
+      if (labelEl) labelEl.textContent = label;
+      else cap.textContent = label;
+    }
+    this.setHeld(this.heldKeys);
   }
 
   setStats(seconds: number, drops: number): void {
@@ -220,15 +273,13 @@ export class Hud {
   }
 
   setCampaign(active: boolean): void {
-    this.campaignBtn.classList.toggle("selected", active);
-    this.campaignBtn.setAttribute("aria-pressed", active ? "true" : "false");
     this.editBtn.hidden = active;
     this.authorBtn.hidden = active;
-    this.shareBtn.hidden = active;
     this.winsBtn.hidden = active;
   }
 
-  setPauseVisible(on: boolean): void {
+  /** Free-play pause control — opens the homemade level pause screen. */
+  setPauseAvailable(on: boolean): void {
     this.pauseBtn.hidden = !on;
   }
 
@@ -290,19 +341,11 @@ export class Hud {
   }
 
   setHeld(keys: ReadonlySet<string>): void {
-    const held = new Set<string>();
-    if (keys.has("arrowup") || keys.has("w")) held.add("arrowup");
-    if (keys.has("arrowdown") || keys.has("s")) held.add("arrowdown");
-    if (keys.has("arrowleft") || keys.has("a")) held.add("arrowleft");
-    if (keys.has("arrowright") || keys.has("d")) held.add("arrowright");
-    if (keys.has("q")) held.add("q");
-    if (keys.has("e")) held.add("e");
-    if (keys.has("z")) held.add("z");
-    if (keys.has("c")) held.add("c");
-    if (keys.has("-") || keys.has("_")) held.add("-");
-    if (keys.has("=") || keys.has("+")) held.add("=");
-    for (const key of this.keycaps) {
-      key.classList.toggle(styles.down, held.has(key.dataset.key ?? ""));
+    this.heldKeys = keys;
+    for (const cap of this.keycaps) {
+      const action = cap.dataset.action as KeyAction | undefined;
+      const on = !!action && actionHeld(this.keybinds, action, keys);
+      cap.classList.toggle(styles.down, on);
     }
   }
 
@@ -322,15 +365,6 @@ export class Hud {
   setCelebrate(on: boolean): void {
     if (on) this.root.dataset.celebrate = "";
     else delete this.root.dataset.celebrate;
-  }
-
-  setMotionVisible(visible: boolean): void {
-    this.motionBtn.hidden = !visible;
-  }
-
-  setMotionSelected(selected: boolean): void {
-    this.motionBtn.classList.toggle("selected", selected);
-    this.motionBtn.setAttribute("aria-label", selected ? "Stop device tilt" : "Use device tilt");
   }
 
   setSettingsSelected(selected: boolean): void {
@@ -368,10 +402,10 @@ export class Hud {
     if (existing !== scenes.length) {
       this.winList.replaceChildren(
         ...scenes.map((name, sceneIndex) => {
-          const button = document.createElement("button");
-          button.type = "button";
-          button.className = `glass-pill ${styles.winItem}`;
-          button.dataset.winIndex = String(sceneIndex);
+          const button = createButton({
+            className: styles.winItem,
+            data: { winIndex: String(sceneIndex) },
+          });
           button.setAttribute("role", "option");
           button.textContent = name.charAt(0).toUpperCase() + name.slice(1);
           return button;
@@ -385,16 +419,8 @@ export class Hud {
     }
   }
 
-  setLevelsSelected(selected: boolean): void {
-    this.levelsBtn.classList.toggle("selected", selected);
-    this.levelsBtn.setAttribute("aria-pressed", selected ? "true" : "false");
-    this.levelsBtn.setAttribute("aria-label", selected ? "Close level select" : "Level select");
-  }
-
-  setSavedSelected(selected: boolean): void {
-    this.savedBtn.classList.toggle("selected", selected);
-    this.savedBtn.setAttribute("aria-pressed", selected ? "true" : "false");
-    this.savedBtn.setAttribute("aria-label", selected ? "Close saved levels" : "Saved levels");
+  private mountSlot(name: string, el: HTMLElement): void {
+    this.require(`[data-slot="${name}"]`).replaceWith(el);
   }
 
   private require<T extends Element>(selector: string): T {

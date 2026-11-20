@@ -7,8 +7,6 @@ const FLOOR_MAX_FALLBACK = 24;
 /** Keep tiny floors readable without stretching them to full column width. */
 const FLOOR_WIDTH_MIN_PCT = 18;
 
-export type TowerMapMode = "hud" | "full";
-
 export class TowerMap {
   private readonly root: HTMLElement;
   private readonly bars: HTMLElement;
@@ -22,12 +20,10 @@ export class TowerMap {
   private sectioned = false;
   private windowStart = 0;
   private onTap: (() => void) | null = null;
-  private readonly mode: TowerMapMode;
 
-  constructor(parent: HTMLElement, mode: TowerMapMode = "hud") {
-    this.mode = mode;
+  constructor(parent: HTMLElement) {
     this.root = document.createElement("div");
-    this.root.className = mode === "full" ? `${styles.tower} ${styles.full}` : styles.tower;
+    this.root.className = `${styles.tower} ${styles.full}`;
     this.root.hidden = true;
     this.bars = document.createElement("div");
     this.bars.className = styles.bars;
@@ -81,7 +77,6 @@ export class TowerMap {
         ? `Floor ${this.current} of ${this.sizes.length}. Tap for full tower.`
         : `Floor ${this.current} of ${this.sizes.length}`,
     );
-    this.placeMark();
   }
 
   hide(): void {
@@ -107,16 +102,14 @@ export class TowerMap {
     if (this.visibleCount() !== prevWindow || this.windowStart !== prevStart) {
       this.rebuild();
     }
-    this.placeMark();
   }
 
   /** How many floor bars fit at max height in the current column. */
   private fitCapacity(): number {
     const height = this.bars.clientHeight;
     if (height <= 0) return SECTION_WINDOW_FALLBACK;
-    const full = this.mode === "full";
-    const gap = full ? 3 : window.matchMedia("(max-height: 760px)").matches ? 1 : 2;
-    const pad = full ? 20 : 16;
+    const gap = 3;
+    const pad = 20;
     const floorMax = this.floorMaxPx();
     const inner = Math.max(0, height - pad);
     return Math.max(1, Math.floor((inner + gap) / (floorMax + gap)));
@@ -139,11 +132,9 @@ export class TowerMap {
   }
 
   private syncInteractive(): void {
-    const interactive = this.mode === "hud" && this.sectioned && this.onTap !== null && !this.root.hidden;
-    this.root.classList.toggle(styles.interactive, interactive);
-    this.root.tabIndex = interactive ? 0 : -1;
-    if (interactive) this.root.setAttribute("role", "button");
-    else this.root.removeAttribute("role");
+    this.root.classList.toggle(styles.interactive, false);
+    this.root.tabIndex = -1;
+    this.root.removeAttribute("role");
   }
 
   private computeWindowStart(): number {
@@ -209,12 +200,4 @@ export class TowerMap {
     this.bars.append(frag);
   }
 
-  private placeMark(): void {
-    if (this.mode === "full") return;
-    const local = this.current - 1 - this.windowStart;
-    const step = this.steps[local];
-    if (!step || this.root.hidden) return;
-    const top = this.bars.offsetTop + step.offsetTop + step.offsetHeight / 2;
-    this.mark.style.top = `${top}px`;
-  }
 }

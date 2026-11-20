@@ -1,9 +1,8 @@
 import { Wall, type Maze } from "../core/maze.ts";
 import { parseFloorTheme } from "../core/theme.ts";
 import { installCrumblePreviewCss } from "../render/crumblePaint.ts";
+import { thumbnailCellKind } from "./mazeCellKind.ts";
 import styles from "./mazeThumbnail.module.css";
-
-type CellKind = "floor" | "start" | "goal" | "hatch" | "pit" | "boost" | "ice" | "crumble" | "block" | "warp" | "switch";
 
 export function renderMazeThumbnail(maze: Maze): HTMLElement {
   installCrumblePreviewCss();
@@ -23,25 +22,10 @@ export function renderMazeThumbnail(maze: Maze): HTMLElement {
       if ((bits & Wall.west) !== 0) cell.dataset.w = "";
       if (r === maze.rows - 1 && (bits & Wall.south) !== 0) cell.dataset.s = "";
       if (c === maze.cols - 1 && (bits & Wall.east) !== 0) cell.dataset.e = "";
-      cell.dataset.kind = cellKind(maze, c, r);
+      cell.dataset.kind = thumbnailCellKind(maze, c, r);
       board.append(cell);
     }
   }
 
   return board;
-}
-
-function cellKind(maze: Maze, c: number, r: number): CellKind {
-  if (maze.start.c === c && maze.start.r === r) return "start";
-  if (maze.hatch && maze.hatch.c === c && maze.hatch.r === r) return "hatch";
-  if (!maze.hatch && maze.goal.c === c && maze.goal.r === r) return "goal";
-  if (maze.holes.some((hole) => hole.c === c && hole.r === r)) return "pit";
-  const tile = maze.tiles.find((item) => item.c === c && item.r === r);
-  if (!tile) return "floor";
-  if (tile.kind === "boost") return "boost";
-  if (tile.kind === "ice") return "ice";
-  if (tile.kind === "crumble") return "crumble";
-  if (tile.kind === "block") return "block";
-  if (tile.kind === "warp") return "warp";
-  return "switch";
 }

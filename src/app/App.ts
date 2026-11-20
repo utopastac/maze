@@ -6,15 +6,8 @@ import {
   generateCampaign,
   type Campaign,
 } from "../core/campaign.ts";
-import {
-  AUTOSAVE_ID,
-  clearCampaignAutosave,
-  deleteCampaignProgress,
-  loadCampaignProgress,
-  saveCampaignAutosave,
-  saveCampaignProgress,
-  type CampaignProgress,
-} from "../core/campaignProgress.ts";
+import type { CampaignProgress } from "../core/campaignProgress.ts";
+import { blankAuthorTower } from "../core/blankTower.ts";
 import { STORY, layoutMaze, layoutPlans, layoutTower, type TowerLayout } from "../core/layout.ts";
 import { copyText, forgetLevel, hasLevelHash, levelFromHash, rememberLevel } from "../core/share.ts";
 import {
@@ -26,6 +19,7 @@ import {
   maxHeartsOf,
   type Tower,
 } from "../core/tower.ts";
+import { anyTiltHeld } from "../core/keybinds.ts";
 import { PlaySettings, snapPixels } from "../core/playSettings.ts";
 import {
   isMenuScreen,
@@ -34,12 +28,12 @@ import {
   routesEqual,
   type AppRoute,
 } from "../core/route.ts";
-import { initPhysics, Simulation } from "../core/simulation.ts";
+import { initPhysics, Simulation, type Pose } from "../core/simulation.ts";
 import { TiltController } from "../core/tilt.ts";
 import { applyRendererLook, createRenderer } from "../render/createRenderer.ts";
 import { MazeWorld, type EnterPlayKind } from "../render/MazeWorld.ts";
 import { PlayHud, type PlayHudHomeAction } from "../render/playHud.ts";
-import { cloneMaze, resizeMaze } from "../core/maze.ts";
+import { cloneMaze } from "../core/maze.ts";
 import { saveLevel } from "../core/savedLevels.ts";
 import { DEFAULT_FLOOR_THEME, parseFloorTheme } from "../core/theme.ts";
 import { LevelEditor, type EditorMode } from "../ui/editor.ts";
@@ -51,13 +45,29 @@ import { SavedLevelsPanel } from "../ui/savedLevels.ts";
 import { SettingsPanel } from "../ui/settingsPanel.ts";
 import { TowerIntro } from "../ui/towerIntro.ts";
 import { TowerPause } from "../ui/towerPause.ts";
+import { Toast } from "../ui/toast.ts";
 import type { WebGLRenderer } from "three";
+import { CampaignSession, type CampaignRunState } from "./campaignSession.ts";
+import { PlayInput, type PlayInputHost } from "./playInput.ts";
 
 const FIRST_SEED = 11;
 const LEVEL_SELECT_SEED = FIRST_SEED;
-const TILT_KEYS = ["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d"];
-const CAMERA_KEYS = new Set(["q", "e", "z", "c", "-", "_", "=", "+"]);
-const ZOOM_SPEED = 0.45;
+
+/** Idle pose for browsing victory scenes when no play sim is mounted (e.g. from home). */
+const GALLERY_POSE: Pose = {
+  board: { x: 0, y: 0, z: 0, w: 1 },
+  ballPosition: { x: 0, y: 0, z: 0 },
+  ballRotation: { x: 0, y: 0, z: 0, w: 1 },
+  ballScale: 1,
+  starPower: 0,
+  hoverPower: 0,
+  ghostPower: 0,
+  fallingThrough: false,
+  crumbles: [],
+  gates: [],
+  oneWays: [],
+  smashed: [],
+};
 
 type Phase = "play" | "falling" | "escaping" | "failing" | "won" | "lost";
 type Mode = "free" | "campaign";
@@ -78,6 +88,7 @@ export class App {
   private readonly editor: LevelEditor;
   private readonly picker: LevelSelect;
   private readonly library: SavedLevelsPanel;
+  private readonly toast: Toast;
   private route: AppRoute = { kind: "home" };
   private settingsReturn: AppRoute = { kind: "home" };
   /** Mid-play settings: cover the run without parking/disposing it. */
@@ -91,8 +102,7 @@ export class App {
   private tower: Tower | null = null;
   private authored: Tower | null = null;
   private mode: Mode = "free";
-  private campaign: Campaign | null = null;
-  private campaignSaveId: string | null = null;
+  private readonly session = new CampaignSession();
   private pickerCampaign: Campaign | null = null;
   private lives = CAMPAIGN_LIVES;
   private livesEnabled = false;
@@ -104,7 +114,7 @@ export class App {
   private floorCount = 1;
   private floorCaption: string | null = null;
   private titleCaption = "Untitled";
-  private readonly keys = new Set<string>();
+  private readonly input: PlayInput;
   private renderer: WebGLRenderer | null = null;
   private view: MazeWorld | null = null;
   private sim: Simulation | null = null;
@@ -121,15 +131,9 @@ export class App {
   } | null = null;
   private last = 0;
   private fallTimer = 0;
-  private dragPointer: number | null = null;
-  private lastX = 0;
-  private lastY = 0;
-  private dragging = false;
-  private recallCamera = false;
-  private motion = false;
   private browsingWins = false;
-  private calibrateMotion = false;
-  private motionOrigin: { beta: number; gamma: number } | null = null;
+  /** Close the gallery back to the title screen instead of remounting a maze. */
+  private winsFromHome = false;
   private seed = FIRST_SEED;
   private readonly reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -145,11 +149,20 @@ export class App {
     picker: HTMLElement,
     library: HTMLElement,
     editor: HTMLElement,
+    toast: HTMLElement,
   ) {
     this.canvas = canvas;
+    this.input = new PlayInput({
+      canvas,
+      settings: this.settings,
+      tilt: this.tilt,
+      view: () => this.view,
+      host: this.inputHost(),
+    });
     this.playHudCanvas = playHudCanvas;
     this.playHud = new PlayHud(playHudCanvas);
     this.shell = document.querySelector<HTMLElement>("#app") ?? document.body;
+    this.toast = new Toast(toast);
     this.panel = new SettingsPanel(sheet, this.settings, {
       onSave: () => this.leaveSettings(),
     });
@@ -159,12 +172,19 @@ export class App {
       this.view?.applyCamera();
       this.view?.applyPicture();
       this.panel.refresh();
+      this.hud.setKeybinds(this.settings.keybinds);
+      this.hud.setHeld(this.input.keys);
       this.resize();
     });
     this.editor = new LevelEditor(editor, {
       onPlay: (tower) => this.playEdited(tower),
       onClose: () => this.finishEditing(),
-      onShare: (tower) => this.publish(tower),
+      onShare: async (tower) => {
+        const result = await this.publish(tower);
+        this.noteShare(result);
+        return result;
+      },
+      onToast: (message) => this.toast.show(message),
     });
     this.picker = new LevelSelect(picker, {
       onPick: (index) => this.playCampaignFloor(index),
@@ -176,33 +196,22 @@ export class App {
     });
     this.hud = new Hud(chrome, {
       onHome: () => this.goHome(),
-      onLevel: () => this.level(),
-      onReset: () => this.resetBall(),
-      onNew: () => this.newMaze(),
-      onCampaign: () => this.startCampaign(),
-      onLevels: () => this.toggleLevelSelect(),
-      onSaved: () => this.toggleSavedLevels(),
-      onMotion: () => this.toggleMotion(),
       onSettings: () => this.toggleSettings(),
       onEdit: () => {
         if (this.authored) this.setRoute({ kind: "create" });
       },
       onAuthor: () => this.openEditor("campaign"),
-      onShare: () => {
-        if (!this.authored) return;
-        void this.publish(this.authored).then((result) => this.noteShare(result));
-      },
       onWins: () => this.toggleWinGallery(),
       onWinScene: (index) => this.jumpWinScene(index),
       onPause: () => this.openPause(),
     });
+    this.hud.setKeybinds(this.settings.keybinds);
     this.overlay = new Overlay(overlay, {
       onAgain: () => this.replay(),
       onLeave: () => this.goHome(),
     });
     this.pause = new TowerPause(pause, {
       onResume: () => this.closePause(),
-      onSettings: () => this.openSettingsFromPause(),
       onQuit: () => this.quitFromPause(),
       onSave: () => this.saveTowerProgress(false),
       onSaveLeave: () => this.saveTowerProgress(true),
@@ -223,18 +232,11 @@ export class App {
         else this.goHome();
       },
     });
-    this.canvas.addEventListener("pointerdown", this.onPointerDown);
-    this.canvas.addEventListener("pointermove", this.onPointerMove);
-    this.canvas.addEventListener("pointerup", this.onPointerUp);
-    this.canvas.addEventListener("pointercancel", this.onPointerUp);
+    this.input.attach();
     this.canvas.addEventListener("contextmenu", (event) => event.preventDefault());
     this.playHudCanvas.addEventListener("pointerdown", this.onHomePointerDown);
     this.playHudCanvas.addEventListener("pointermove", this.onHomePointerMove);
-    window.addEventListener("keydown", this.onKeyDown);
-    window.addEventListener("keyup", this.onKeyUp);
-    window.addEventListener("blur", this.onBlur);
     window.addEventListener("resize", () => this.resize());
-    window.addEventListener("deviceorientation", this.onOrientation);
     window.addEventListener("hashchange", this.onHashChange);
   }
 
@@ -435,24 +437,22 @@ export class App {
   private parkWorld(): void {
     this.overlay.hide();
     forgetLevel();
-    this.dragging = false;
-    this.dragPointer = null;
-    this.keys.clear();
-    this.hud.setHeld(this.keys);
+    this.input.releaseAll();
     this.running = false;
     this.awaitingStart = false;
     this.enteringPlay = null;
     this.browsingWins = false;
+    this.winsFromHome = false;
     this.playHud.setSuppressPlayChrome(false);
     this.playHud.setStartGate(null);
     this.hud.hideHint();
     this.hud.setCelebrate(false);
     this.hud.setWinsSelected(false);
+    this.hud.setWinGallery(false);
     this.mode = "free";
-    this.campaign = null;
-    this.campaignSaveId = null;
+    this.session.reset();
     this.hud.setCampaign(false);
-    this.hud.setPauseVisible(false);
+    this.hud.setPauseAvailable(false);
     this.sim?.dispose();
     this.sim = null;
     this.tower = null;
@@ -476,8 +476,8 @@ export class App {
     if (this.view?.isHomeBackdrop()) this.view.setHomeView("menu");
     else this.view?.enterHomeBackdrop();
     this.playHud.setVisible(true);
-    this.playHud.setHomeMenu(true);
     this.playHud.setHomeMenuMode("main");
+    this.playHud.setHomeMenu(true);
     this.playHudCanvas.style.cursor = "default";
   }
 
@@ -510,6 +510,9 @@ export class App {
       case "towerLoad":
         this.openTowerLoadModal();
         break;
+      case "towerPractice":
+        this.openPracticeSelect();
+        break;
       case "towerBack":
         this.goHome();
         break;
@@ -537,8 +540,7 @@ export class App {
 
   private mountTower(tower: Tower, shared: boolean): void {
     this.mode = "free";
-    this.campaign = null;
-    this.campaignSaveId = null;
+    this.session.reset();
     this.hud.setCampaign(false);
     const view = this.view;
     if (!view) return;
@@ -554,7 +556,7 @@ export class App {
   }
 
   private mountCampaign(fromFloor = 1): void {
-    const campaign = this.campaign;
+    const campaign = this.session.campaign;
     const view = this.view;
     if (!campaign || !view) return;
     this.mode = "campaign";
@@ -608,12 +610,12 @@ export class App {
     this.clearShareNote();
     this.hud.setNote("");
     this.hud.setStats(0, 0);
-    this.hud.setPauseVisible(true);
     this.setTitleCaption();
     this.setFloorCaption(this.floorAt, this.floorCount);
     this.syncCollectHud();
     this.playHud.setVisible(true);
     this.syncPlayHud();
+    this.hud.setPauseAvailable(true);
     if (this.enteringPlay) {
       this.playHud.setSuppressPlayChrome(true);
       this.playHud.setStartGate(null);
@@ -654,7 +656,7 @@ export class App {
     const enter = this.enteringPlay;
     if (!view || !enter || !view.enterPlayNeedsSwap()) return;
     if (enter.kind === "tower") {
-      if (!this.campaign) return;
+      if (!this.session.campaign) return;
       const saved = enter.save;
       this.mountCampaign(saved?.floor ?? enter.floor ?? 1);
       if (saved) {
@@ -667,19 +669,6 @@ export class App {
       this.mount(this.seed);
     }
     view.notifyEnterPlaySwapped();
-  }
-
-  private startCampaign(): void {
-    if (!this.view) return;
-    if (this.canPause()) {
-      this.openPause();
-      return;
-    }
-    if (this.intro.isOpen() || this.route.kind === "tower") {
-      this.goHome();
-      return;
-    }
-    this.setRoute({ kind: "tower" });
   }
 
   private openTowerScreen(): void {
@@ -695,8 +684,9 @@ export class App {
     this.home.setMode("tower");
     this.view?.setHomeView("tower");
     this.playHud.setVisible(true);
-    this.playHud.setHomeMenu(true);
+    // Mode before open so the Mazespire hero intro does not flash.
     this.playHud.setHomeMenuMode("tower");
+    this.playHud.setHomeMenu(true);
     this.playHudCanvas.style.cursor = "default";
   }
 
@@ -723,11 +713,10 @@ export class App {
     this.closeTowerLoadModal();
     this.closeHome(true);
     this.playReturn = null;
-    this.campaignSaveId = null;
     this.lives = CAMPAIGN_LIVES;
     this.seconds = 0;
     this.drops = 0;
-    this.campaign = generateCampaign(Math.floor(Math.random() * 0x7fffffff));
+    this.session.beginNew();
     if (this.view?.isHomeBackdrop() && this.view.beginEnterPlay("tower")) {
       this.enteringPlay = { kind: "tower", floor: 1 };
       this.playHud.setSuppressPlayChrome(true);
@@ -744,14 +733,12 @@ export class App {
   private beginCampaignLoad(save: CampaignProgress): void {
     this.closeTowerLoadModal();
     this.closeHome(true);
-    const fresh = loadCampaignProgress(save.id) ?? save;
+    const fresh = this.session.fresh(save);
     if (this.view?.isHomeBackdrop() && this.view.beginEnterPlay("tower")) {
       this.enteringPlay = { kind: "tower", floor: fresh.floor, save: fresh };
       this.playHud.setSuppressPlayChrome(true);
       this.playReturn = null;
-      this.campaignSaveId = fresh.id;
-      this.lives = Math.max(1, fresh.lives);
-      this.campaign = generateCampaign(fresh.seed);
+      this.lives = this.session.load(fresh);
       this.markPlaying();
       this.resize();
       return;
@@ -762,9 +749,7 @@ export class App {
 
   private resumeCampaign(saved: CampaignProgress): void {
     this.playReturn = null;
-    this.campaignSaveId = saved.id;
-    this.lives = Math.max(1, saved.lives);
-    this.campaign = generateCampaign(saved.seed);
+    this.lives = this.session.load(saved);
     this.mountCampaign(saved.floor);
     this.seconds = saved.seconds;
     this.drops = saved.drops;
@@ -775,6 +760,7 @@ export class App {
   }
 
   private markPlaying(shared = false): void {
+    this.hud.setPauseAvailable(true);
     if (shared || hasLevelHash(location.hash)) {
       this.route = { kind: "level" };
       this.setShellScreen("level");
@@ -787,11 +773,6 @@ export class App {
     this.syncingHash = true;
     history.replaceState(null, "", next);
     this.syncingHash = false;
-  }
-
-  private toggleLevelSelect(): void {
-    if (this.picker.isOpen()) this.closeLevelSelect();
-    else this.openLevelSelect();
   }
 
   private openPracticeSelect(): void {
@@ -813,21 +794,16 @@ export class App {
     this.closeSavedLevels(false);
     this.closeSettingsScreen(false);
     this.closeWinGallery(false);
-    this.dragging = false;
-    this.dragPointer = null;
-    this.keys.clear();
-    this.hud.setHeld(this.keys);
+    this.input.releaseAll();
     this.running = false;
-    this.pickerCampaign = this.campaign ?? this.pickerCampaign ?? generateCampaign(LEVEL_SELECT_SEED);
-    this.picker.show(this.pickerCampaign);
-    this.hud.setLevelsSelected(true);
+    this.pickerCampaign = this.session.campaign ?? this.pickerCampaign ?? generateCampaign(LEVEL_SELECT_SEED);
+    this.picker.show(this.pickerCampaign, { practice: this.practiceFromTower });
     this.hud.hideHint();
   }
 
   private closeLevelSelect(restore = true): void {
     if (!this.picker.isOpen()) return;
     this.picker.hide();
-    this.hud.setLevelsSelected(false);
     if (!restore) {
       this.practiceFromTower = false;
       return;
@@ -842,11 +818,6 @@ export class App {
     }
   }
 
-  private toggleSavedLevels(): void {
-    if (this.library.isOpen() || this.route.kind === "saved") this.goHome();
-    else this.setRoute({ kind: "saved" });
-  }
-
   private openSavedScreen(): void {
     this.closeAllMenus(false);
     this.closeHome(false);
@@ -855,13 +826,11 @@ export class App {
     this.playHud.setVisible(false);
     this.setShellScreen("saved");
     this.library.show();
-    this.hud.setSavedSelected(true);
   }
 
   private closeSavedLevels(returnHome = true): void {
     if (!this.library.isOpen()) return;
     this.library.hide();
-    this.hud.setSavedSelected(false);
     if (returnHome && this.route.kind === "saved") {
       this.goHome();
     }
@@ -889,7 +858,7 @@ export class App {
   }
 
   private playCampaignFloor(index: number): void {
-    const campaign = this.pickerCampaign ?? this.campaign;
+    const campaign = this.pickerCampaign ?? this.session.campaign;
     const floor = campaign?.floors[index];
     const view = this.view;
     if (!campaign || !floor || !view) return;
@@ -901,8 +870,7 @@ export class App {
       maze.hatch = null;
     }
     this.mode = "free";
-    this.campaign = null;
-    this.campaignSaveId = null;
+    this.session.reset();
     this.hud.setCampaign(false);
     this.tower = { floors: [maze] };
     this.authored = cloneTower(this.tower);
@@ -923,6 +891,10 @@ export class App {
   private openWinGallery(): void {
     const view = this.view;
     if (!view || this.mode === "campaign") return;
+    this.winsFromHome =
+      this.home.isOpen()
+      || this.route.kind === "home"
+      || view.isHomeBackdrop();
     if (this.home.isOpen()) this.closeHome(true);
     if (this.editor.isOpen()) {
       this.editor.hide();
@@ -934,13 +906,12 @@ export class App {
     this.closeSavedLevels(false);
     this.closeSettingsScreen(false);
     this.clearFall();
-    this.dragging = false;
-    this.dragPointer = null;
-    this.keys.clear();
-    this.hud.setHeld(this.keys);
+    this.input.releaseAll();
     this.running = false;
     this.awaitingStart = false;
     this.playHud.setStartGate(null);
+    // Leave the home shell so the gallery panel and viewport can paint.
+    this.setShellScreen("play");
     this.browsingWins = true;
     this.phase = "won";
     this.tilt.level();
@@ -960,9 +931,16 @@ export class App {
   private closeWinGallery(remount = true): void {
     if (!this.browsingWins) return;
     this.browsingWins = false;
+    const backHome = this.winsFromHome;
+    this.winsFromHome = false;
     this.hud.setWinsSelected(false);
     this.hud.setWinGallery(false);
+    this.hud.setCelebrate(false);
     if (!remount) return;
+    if (backHome) {
+      this.goHome();
+      return;
+    }
     if (this.authored) {
       this.mountTower(cloneTower(this.authored), hasLevelHash(location.hash));
       this.resize();
@@ -1001,7 +979,6 @@ export class App {
         this.sim.hold();
         view.update(now / 1000, this.sim.pose());
       }
-      view.renderEnterPortal(renderer);
       renderer.render(view.scene, view.camera);
       this.playHud.update(dt, this.reduceMotion);
       if (done) {
@@ -1019,6 +996,17 @@ export class App {
         view.updateHome(now / 1000);
         renderer.render(view.scene, view.camera);
       }
+      this.playHud.update(dt, this.reduceMotion);
+      requestAnimationFrame(this.frame);
+      return;
+    }
+
+    if (this.browsingWins && view && renderer) {
+      this.tilt.level();
+      this.tilt.smooth(dt);
+      this.input.driveCamera(dt, false);
+      view.update(now / 1000, this.sim?.pose() ?? GALLERY_POSE);
+      renderer.render(view.scene, view.camera);
       this.playHud.update(dt, this.reduceMotion);
       requestAnimationFrame(this.frame);
       return;
@@ -1052,8 +1040,8 @@ export class App {
     if (this.awaitingStart) {
       this.tilt.level();
       this.tilt.smooth(dt);
-      this.recallCamera = false;
-      this.driveCamera(dt, false);
+      this.input.recallCamera = false;
+      this.input.driveCamera(dt, false);
       sim.hold();
       this.hud.setStats(this.seconds, this.drops);
       this.hud.setTilt(0, 0);
@@ -1074,16 +1062,16 @@ export class App {
       if (this.phase !== "escaping" && this.phase !== "failing") {
         const beforePitch = this.tilt.targetPitch;
         const beforeRoll = this.tilt.targetRoll;
-        this.tilt.applyKeys(dt, this.keys);
+        this.tilt.applyKeys(dt, this.input.keys);
         if (this.tilt.targetPitch !== beforePitch || this.tilt.targetRoll !== beforeRoll) {
           this.noteActivity();
         }
-        tilting = TILT_KEYS.some((key) => this.keys.has(key)) || this.recallCamera;
+        tilting = anyTiltHeld(this.settings.keybinds, this.input.keys) || this.input.recallCamera;
       }
       this.tilt.smooth(dt);
     }
-    this.recallCamera = false;
-    this.driveCamera(dt, tilting);
+    this.input.recallCamera = false;
+    this.input.driveCamera(dt, tilting);
 
     const pitch = this.phase === "won" || this.phase === "lost" ? 0 : this.tilt.pitch;
     const roll = this.phase === "won" || this.phase === "lost" ? 0 : this.tilt.roll;
@@ -1150,8 +1138,7 @@ export class App {
     if (!sim || !view || !this.tower) return;
     this.tilt.level();
     this.tilt.snap();
-    this.dragging = false;
-    this.dragPointer = null;
+    this.input.cancelDrag();
     view.crumbleTop();
     view.shatterRoof();
     sim.dropTop();
@@ -1176,8 +1163,7 @@ export class App {
     this.phase = "escaping";
     this.tilt.level();
     this.tilt.snap();
-    this.dragging = false;
-    this.dragPointer = null;
+    this.input.cancelDrag();
     view.shatterEscape();
     sim.beginEscape();
     this.clearShareNote();
@@ -1186,7 +1172,7 @@ export class App {
   }
 
   private extendCampaign(): void {
-    const campaign = this.campaign;
+    const campaign = this.session.campaign;
     const sim = this.sim;
     const view = this.view;
     if (!campaign || !sim || !view) return;
@@ -1303,8 +1289,7 @@ export class App {
     this.phase = "failing";
     this.tilt.level();
     this.tilt.snap();
-    this.dragging = false;
-    this.dragPointer = null;
+    this.input.cancelDrag();
     view.shatterFail();
     sim.beginFail();
     this.clearShareNote();
@@ -1322,12 +1307,11 @@ export class App {
 
   private win(): void {
     this.closePause();
-    if (this.mode === "campaign") this.endCampaignRunSaves();
+    if (this.mode === "campaign") this.session.endRun();
     this.phase = "won";
     this.clearShareNote();
     this.running = false;
-    this.dragging = false;
-    this.dragPointer = null;
+    this.input.cancelDrag();
     this.tilt.level();
     this.tilt.snap();
     this.sim?.hold();
@@ -1346,12 +1330,11 @@ export class App {
 
   private finishLose(): void {
     this.closePause();
-    if (this.mode === "campaign") this.endCampaignRunSaves();
+    if (this.mode === "campaign") this.session.endRun();
     this.phase = "lost";
     this.clearShareNote();
     this.running = false;
-    this.dragging = false;
-    this.dragPointer = null;
+    this.input.cancelDrag();
     this.tilt.level();
     this.tilt.snap();
     this.sim?.hold();
@@ -1368,16 +1351,13 @@ export class App {
   }
 
   private canPause(): boolean {
-    if (!this.sim || this.awaitingStart) return false;
+    if (!this.sim) return false;
     if (this.route.kind !== "play" && this.route.kind !== "level") return false;
     return this.phase === "play" || this.phase === "falling";
   }
 
   private freezeForPause(): void {
-    this.dragging = false;
-    this.dragPointer = null;
-    this.keys.clear();
-    this.hud.setHeld(this.keys);
+    this.input.releaseAll();
     this.running = false;
     this.tilt.level();
     this.tilt.snap();
@@ -1421,7 +1401,7 @@ export class App {
   }
 
   private towerPauseStats(note = this.pauseNote) {
-    const campaign = this.campaign;
+    const campaign = this.session.campaign;
     const tower = this.tower;
     const campaignMode = this.mode === "campaign";
     const maze = campaignMode
@@ -1444,8 +1424,7 @@ export class App {
       maze,
       showGoal: this.floorAt >= (campaignMode ? CAMPAIGN_FLOORS : this.floorCount),
       landing: this.floorAt > 1,
-      hasSave: this.campaignSaveId !== null
-        && loadCampaignProgress(this.campaignSaveId) !== null,
+      hasSave: this.session.hasSave(),
       note,
     };
   }
@@ -1460,82 +1439,52 @@ export class App {
     if (this.mode !== "free" || !this.authored) return;
     const saved = saveLevel(this.authored);
     if (!saved) {
-      this.setPauseNote("Couldn’t save");
+      this.toast.show("Couldn’t save");
       return;
     }
-    this.setPauseNote(`Saved “${saved.name}”`);
+    this.toast.show(`Saved “${saved.name}”`);
     this.pause.update(this.towerPauseStats());
   }
 
+  private runState(): CampaignRunState {
+    return { floor: this.floorAt, lives: this.lives, seconds: this.seconds, drops: this.drops };
+  }
+
   private saveTowerProgress(leave: boolean): void {
-    const campaign = this.campaign;
-    if (!campaign || this.mode !== "campaign") return;
-    // Keep manual saves off the reserved autosave id so the slot stays distinct.
-    const manualId = this.campaignSaveId && this.campaignSaveId !== AUTOSAVE_ID
-      ? this.campaignSaveId
-      : undefined;
-    const saved = saveCampaignProgress({
-      id: manualId,
-      seed: campaign.seed,
-      floor: this.floorAt,
-      lives: this.lives,
-      seconds: this.seconds,
-      drops: this.drops,
-    });
-    if (!saved) {
-      this.setPauseNote("Couldn’t save");
+    if (!this.session.campaign || this.mode !== "campaign") return;
+    if (!this.session.saveManual(this.runState())) {
+      this.toast.show("Couldn’t save");
       return;
     }
-    this.campaignSaveId = saved.id;
     this.autosaveTowerProgress();
+    this.toast.show("Saved on this device");
     if (leave) {
       this.closePause();
-      this.campaignSaveId = null;
+      this.session.detachSave();
       this.playReturn = null;
       this.setRoute({ kind: "tower" });
       return;
     }
-    this.setPauseNote("Saved on this device");
     this.pause.update(this.towerPauseStats());
   }
 
   private autosaveTowerProgress(): void {
-    const campaign = this.campaign;
-    if (!campaign || this.mode !== "campaign") return;
-    const saved = saveCampaignAutosave({
-      seed: campaign.seed,
-      floor: this.floorAt,
-      lives: this.lives,
-      seconds: this.seconds,
-      drops: this.drops,
-    });
-    if (!saved) return;
-    if (!this.campaignSaveId) this.campaignSaveId = saved.id;
+    if (this.mode !== "campaign") return;
+    this.session.autosave(this.runState());
   }
 
   private clearTowerProgress(): void {
-    this.forgetActiveCampaignSave();
+    this.session.forgetActive();
     this.setPauseNote("Save cleared");
     this.pause.update(this.towerPauseStats());
   }
 
-  private forgetActiveCampaignSave(): void {
-    if (this.campaignSaveId) deleteCampaignProgress(this.campaignSaveId);
-    this.campaignSaveId = null;
-  }
-
-  private endCampaignRunSaves(): void {
-    this.forgetActiveCampaignSave();
-    clearCampaignAutosave();
-  }
-
   private restartCampaignFresh(): void {
     this.closePause();
-    this.campaignSaveId = null;
     this.lives = CAMPAIGN_LIVES;
     this.seconds = 0;
     this.drops = 0;
-    this.campaign = generateCampaign(Math.floor(Math.random() * 0x7fffffff));
+    this.session.beginNew();
     this.mountCampaign(1);
     this.resize();
   }
@@ -1579,9 +1528,9 @@ export class App {
 
   private replay(): void {
     this.closeWinGallery(false);
-    if (this.mode === "campaign" && this.campaign) {
+    if (this.mode === "campaign" && this.session.campaign) {
       this.lives = CAMPAIGN_LIVES;
-      this.campaign = generateCampaign(this.campaign.seed);
+      this.session.replay();
       this.mountCampaign();
       this.resize();
       return;
@@ -1606,12 +1555,6 @@ export class App {
     this.resize();
   }
 
-  private level(): void {
-    this.tilt.level();
-    this.calibrateMotion = true;
-    this.recallCamera = true;
-  }
-
   private openEditor(mode: EditorMode): void {
     if (this.editor.isOpen()) return;
     if (mode === "share" && !this.authored) return;
@@ -1622,10 +1565,7 @@ export class App {
     this.closeSavedLevels(false);
     this.closeSettingsScreen(false);
     this.closeWinGallery();
-    this.dragging = false;
-    this.dragPointer = null;
-    this.keys.clear();
-    this.hud.setHeld(this.keys);
+    this.input.releaseAll();
     this.view?.restCamera();
     const tower = mode === "campaign"
       ? (this.authored ? cloneTower(this.authored) : blankAuthorTower())
@@ -1767,36 +1707,70 @@ export class App {
     if (showing) this.hud.setNote("");
   }
 
+  private inputHost(): PlayInputHost {
+    return {
+      isMenuBlocking: () => (
+        this.home.isOpen()
+        || this.editor.isOpen()
+        || this.picker.isOpen()
+        || this.library.isOpen()
+        || this.pause.isOpen()
+        || this.intro.isOpen()
+        || this.panel.isOpen()
+        || this.settingsOverlay
+      ),
+      isPointerBlocked: () => (
+        (!this.browsingWins && isMenuScreen(this.route))
+        || this.home.isOpen()
+        || this.intro.isOpen()
+      ),
+      isModalOpen: () => (
+        this.editor.isOpen()
+        || this.picker.isOpen()
+        || this.library.isOpen()
+        || this.pause.isOpen()
+      ),
+      isHomeOrIntroOpen: () => this.home.isOpen() || this.intro.isOpen(),
+      onMenuEscape: () => {
+        // Nested first: settings → pause → load modal → tower submenu → other menus.
+        if (this.panel.isOpen() || this.settingsOverlay) this.leaveSettings();
+        else if (this.pause.isOpen()) {
+          if (!this.pause.dismissConfirm()) this.closePause();
+        }
+        else if (this.picker.isOpen()) this.closeLevelSelect();
+        else if (this.library.isOpen()) this.closeSavedLevels();
+        else if (this.editor.isOpen()) this.finishEditing();
+        else if (this.intro.isModal()) this.closeTowerLoadModal();
+        else if (this.intro.isOpen()) this.closeTowerIntro();
+        else if (this.home.isOpen() && this.playHud.homeMenuModeOf() === "tower") this.goHome();
+      },
+      phase: () => this.phase,
+      isBrowsingWins: () => this.browsingWins,
+      isAwaitingStart: () => this.awaitingStart,
+      canPause: () => this.canPause(),
+      hitTestStart: (x, y) => this.playHud.hitTestStart(x, y),
+      setCanvasCursor: (cursor) => {
+        this.canvas.style.cursor = cursor;
+      },
+      onPressStart: () => this.pressStart(),
+      onTiltActivity: () => this.noteActivity(),
+      onKeysChanged: () => this.hud.setHeld(this.input.keys),
+      onOpenPause: () => this.openPause(),
+      onGoHome: () => this.goHome(),
+      onCloseWinGallery: () => this.closeWinGallery(),
+      onCycleWinScene: (dir) => {
+        this.view?.cycleWinScene(dir);
+        if (this.browsingWins) this.noteWinGallery();
+      },
+      onResetBall: () => this.resetBall(),
+      onNewMaze: () => this.newMaze(),
+    };
+  }
+
   private noteActivity(): void {
     if (this.phase !== "play" || this.awaitingStart) return;
     this.running = true;
     this.hud.hideHint();
-  }
-
-  private toggleMotion(): void {
-    if (this.motion) {
-      this.motion = false;
-      this.hud.setMotionSelected(false);
-      return;
-    }
-    void this.enableMotion();
-  }
-
-  private async enableMotion(): Promise<void> {
-    const ctor = DeviceOrientationEvent as typeof DeviceOrientationEvent & {
-      requestPermission?: () => Promise<"granted" | "denied">;
-    };
-    if (typeof ctor.requestPermission === "function") {
-      try {
-        const result = await ctor.requestPermission();
-        if (result !== "granted") return;
-      } catch {
-        return;
-      }
-    }
-    this.motion = true;
-    this.calibrateMotion = true;
-    this.hud.setMotionSelected(true);
   }
 
   private clearFall(): void {
@@ -1816,216 +1790,5 @@ export class App {
     const action = this.playHud.hitTestHome(event.clientX, event.clientY);
     this.playHud.setHomeHover(action);
     this.playHudCanvas.style.cursor = action ? "pointer" : "default";
-  };
-
-  private onPointerDown = (event: PointerEvent): void => {
-    if (event.button !== 0) return;
-    if (isMenuScreen(this.route) || this.home.isOpen() || this.intro.isOpen()) return;
-    if (
-      this.editor.isOpen()
-      || this.picker.isOpen()
-      || this.library.isOpen()
-      || this.pause.isOpen()
-      || this.phase === "escaping"
-      || this.phase === "failing"
-    ) return;
-    if (this.awaitingStart) {
-      if (this.playHud.hitTestStart(event.clientX, event.clientY)) this.pressStart();
-      return;
-    }
-    this.dragPointer = event.pointerId;
-    this.lastX = event.clientX;
-    this.lastY = event.clientY;
-    this.dragging = true;
-    this.canvas.setPointerCapture(event.pointerId);
-  };
-
-  private onPointerMove = (event: PointerEvent): void => {
-    if (isMenuScreen(this.route) || this.home.isOpen() || this.intro.isOpen()) return;
-    if (this.awaitingStart) {
-      this.canvas.style.cursor = this.playHud.hitTestStart(event.clientX, event.clientY)
-        ? "pointer"
-        : "default";
-      return;
-    }
-    if (event.pointerId !== this.dragPointer) return;
-    const dx = event.clientX - this.lastX;
-    const dy = event.clientY - this.lastY;
-    this.lastX = event.clientX;
-    this.lastY = event.clientY;
-    if (dx === 0 && dy === 0) return;
-    if (this.phase === "won" || this.phase === "lost") {
-      this.view?.nudgeCamera(-dy * 0.16, -dx * 0.28);
-      return;
-    }
-    this.tilt.drag(dx, dy);
-    this.recallCamera = true;
-    this.noteActivity();
-  };
-
-  private onPointerUp = (event: PointerEvent): void => {
-    if (event.pointerId !== this.dragPointer) return;
-    this.dragPointer = null;
-    this.dragging = false;
-  };
-
-  private onKeyDown = (event: KeyboardEvent): void => {
-    if (
-      this.home.isOpen()
-      || this.editor.isOpen()
-      || this.picker.isOpen()
-      || this.library.isOpen()
-      || this.pause.isOpen()
-      || this.intro.isOpen()
-      || this.panel.isOpen()
-      || this.settingsOverlay
-    ) {
-      if (event.key.toLowerCase() === "escape") {
-        // Nested first: settings → pause → load modal → tower submenu → other menus.
-        if (this.panel.isOpen() || this.settingsOverlay) this.leaveSettings();
-        else if (this.pause.isOpen()) this.closePause();
-        else if (this.picker.isOpen()) this.closeLevelSelect();
-        else if (this.library.isOpen()) this.closeSavedLevels();
-        else if (this.editor.isOpen()) this.finishEditing();
-        else if (this.intro.isModal()) this.closeTowerLoadModal();
-        else if (this.intro.isOpen()) this.closeTowerIntro();
-        else if (this.home.isOpen() && this.playHud.homeMenuModeOf() === "tower") this.goHome();
-      }
-      return;
-    }
-    const key = event.key.toLowerCase();
-    if (key === "escape") {
-      if (this.browsingWins) this.closeWinGallery();
-      else if (this.canPause()) this.openPause();
-      else this.goHome();
-      return;
-    }
-    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
-    if (event.key.startsWith("Arrow") || event.key === " ") event.preventDefault();
-    if (
-      !event.repeat
-      && (this.browsingWins || this.phase === "escaping" || this.phase === "won")
-      && (key === "t" || key === "]" || key === "[")
-    ) {
-      this.view?.cycleWinScene(key === "[" ? -1 : 1);
-      if (this.browsingWins) this.noteWinGallery();
-      return;
-    }
-    if (this.awaitingStart) {
-      if (!event.repeat && (key === "enter" || event.key === " ")) this.pressStart();
-      return;
-    }
-    const chord = event.metaKey || event.ctrlKey || event.altKey;
-    if (!(chord && CAMERA_KEYS.has(key))) this.keys.add(key);
-    this.hud.setHeld(this.keys);
-    if (event.repeat) return;
-    if (key === "r") this.resetBall();
-    if (key === "n") this.newMaze();
-    if (key === "l" || event.key === " ") this.level();
-  };
-
-  private onKeyUp = (event: KeyboardEvent): void => {
-    this.keys.delete(event.key.toLowerCase());
-    this.hud.setHeld(this.keys);
-  };
-
-  private onBlur = (): void => {
-    this.keys.clear();
-    this.hud.setHeld(this.keys);
-    this.dragging = false;
-    this.dragPointer = null;
-  };
-
-  private driveCamera(dt: number, tilting: boolean): void {
-    const view = this.view;
-    if (!view) return;
-    if (this.phase === "won" || this.phase === "lost") {
-      let dAngle = 0;
-      let dOrbit = 0;
-      if (this.keys.has("q") || this.keys.has("arrowdown") || this.keys.has("s")) dAngle -= 28 * dt;
-      if (this.keys.has("e") || this.keys.has("arrowup") || this.keys.has("w")) dAngle += 28 * dt;
-      if (this.keys.has("z") || this.keys.has("arrowleft") || this.keys.has("a")) dOrbit -= 80 * dt;
-      if (this.keys.has("c") || this.keys.has("arrowright") || this.keys.has("d")) dOrbit += 80 * dt;
-      if (dAngle !== 0 || dOrbit !== 0) view.nudgeCamera(dAngle, dOrbit);
-    } else if (tilting) {
-      view.recallCamera();
-    } else {
-      let dAngle = 0;
-      let dOrbit = 0;
-      if (this.keys.has("q")) dAngle -= 28 * dt;
-      if (this.keys.has("e")) dAngle += 28 * dt;
-      if (this.keys.has("z")) dOrbit -= 80 * dt;
-      if (this.keys.has("c")) dOrbit += 80 * dt;
-      if (dAngle !== 0 || dOrbit !== 0) view.nudgeCamera(dAngle, dOrbit);
-    }
-    let dZoom = 0;
-    if (this.keys.has("=") || this.keys.has("+")) dZoom += ZOOM_SPEED * dt;
-    if (this.keys.has("-") || this.keys.has("_")) dZoom -= ZOOM_SPEED * dt;
-    if (dZoom !== 0) this.settings.set("zoom", this.settings.values.zoom + dZoom);
-    view.stepCamera(dt);
-  };
-
-  private onOrientation = (event: DeviceOrientationEvent): void => {
-    if (
-      this.home.isOpen()
-      || this.editor.isOpen()
-      || this.picker.isOpen()
-      || this.library.isOpen()
-      || this.pause.isOpen()
-      || this.intro.isOpen()
-      || this.awaitingStart
-      || !this.motion
-      || this.dragging
-      || this.phase === "won"
-      || this.phase === "lost"
-      || this.phase === "escaping"
-      || this.phase === "failing"
-    ) return;
-    if (event.beta === null || event.gamma === null) return;
-    if (this.calibrateMotion || !this.motionOrigin) {
-      this.motionOrigin = { beta: event.beta, gamma: event.gamma };
-      this.calibrateMotion = false;
-      this.tilt.level();
-      return;
-    }
-    const deg = Math.PI / 180;
-    const gain = (this.settings.tiltRad / (16 * deg)) * this.settings.values.sensitivity;
-    const pitch = (event.beta - this.motionOrigin.beta) * deg * gain;
-    const roll = (event.gamma - this.motionOrigin.gamma) * deg * gain;
-    const beforePitch = this.tilt.targetPitch;
-    const beforeRoll = this.tilt.targetRoll;
-    this.tilt.setAbsolute(-pitch * this.settings.pitchSign(), -roll);
-    if (Math.abs(this.tilt.targetPitch - beforePitch) > 0.01 || Math.abs(this.tilt.targetRoll - beforeRoll) > 0.01) {
-      this.recallCamera = true;
-    }
-    this.noteActivity();
-  };
-}
-
-function blankAuthorTower(): Tower {
-  return {
-    floors: [
-      resizeMaze(
-        {
-          cols: 1,
-          rows: 1,
-          walls: [[0]],
-          holes: [],
-          tiles: [],
-          hearts: [],
-          coins: [],
-          stars: [],
-          wings: [],
-          ghosts: [],
-          oneWays: [],
-          start: { c: 0, r: 0 },
-          goal: { c: 0, r: 0 },
-          hatch: null,
-          theme: DEFAULT_FLOOR_THEME,
-        },
-        7,
-        7,
-      ),
-    ],
   };
 }

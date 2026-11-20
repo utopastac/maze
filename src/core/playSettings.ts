@@ -1,3 +1,11 @@
+import {
+  cloneKeybinds,
+  KEY_DEFAULTS,
+  parseKeybinds,
+  setKeybind as assignKeybind,
+  type KeyAction,
+  type Keybinds,
+} from "./keybinds.ts";
 import { clamp } from "./math.ts";
 
 export type SettingKey =
@@ -111,6 +119,7 @@ export class PlaySettings {
   readonly values: Record<SettingKey, number> = { ...SETTING_DEFAULTS };
   invertY = true;
   normalLook = false;
+  keybinds: Keybinds = cloneKeybinds();
   private readonly listeners = new Set<() => void>();
 
   constructor() {
@@ -147,10 +156,26 @@ export class PlaySettings {
     this.emit();
   }
 
+  setKeybind(action: KeyAction, key: string): void {
+    const next = assignKeybind(this.keybinds, action, key);
+    if (keybindsEqual(next, this.keybinds)) return;
+    this.keybinds = next;
+    this.save();
+    this.emit();
+  }
+
+  resetKeybinds(): void {
+    if (keybindsEqual(this.keybinds, KEY_DEFAULTS)) return;
+    this.keybinds = cloneKeybinds();
+    this.save();
+    this.emit();
+  }
+
   reset(): void {
     for (const spec of SETTING_SPECS) this.values[spec.key] = SETTING_DEFAULTS[spec.key];
     this.invertY = true;
     this.normalLook = false;
+    this.keybinds = cloneKeybinds();
     this.save();
     this.emit();
   }
@@ -175,6 +200,7 @@ export class PlaySettings {
       const record = parsed as Partial<Record<SettingKey, unknown>> & {
         invertY?: unknown;
         normalLook?: unknown;
+        keybinds?: unknown;
       };
       for (const spec of SETTING_SPECS) {
         const value = record[spec.key];
@@ -182,6 +208,7 @@ export class PlaySettings {
       }
       if (typeof record.invertY === "boolean") this.invertY = record.invertY;
       if (typeof record.normalLook === "boolean") this.normalLook = record.normalLook;
+      if (record.keybinds !== undefined) this.keybinds = parseKeybinds(record.keybinds);
     } catch {
       // Keep the defaults when storage is unavailable or unreadable.
     }
@@ -191,12 +218,24 @@ export class PlaySettings {
     try {
       localStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify({ ...this.values, invertY: this.invertY, normalLook: this.normalLook }),
+        JSON.stringify({
+          ...this.values,
+          invertY: this.invertY,
+          normalLook: this.normalLook,
+          keybinds: this.keybinds,
+        }),
       );
     } catch {
       // Private mode can reject storage writes. The live values still apply.
     }
   }
+}
+
+function keybindsEqual(a: Keybinds, b: Keybinds): boolean {
+  for (const key of Object.keys(KEY_DEFAULTS) as KeyAction[]) {
+    if (a[key] !== b[key]) return false;
+  }
+  return true;
 }
 
 export function pixelStep(): number {

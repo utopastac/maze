@@ -8,7 +8,7 @@
   &[data-celebrate] {
     & .bottom,
     & .debug,
-    & .controlsDock {
+    & .cornerActions {
       display: none;
     }
   }
@@ -245,12 +245,24 @@
   }
 }
 
-.controlsDock {
+.cornerActions {
   --controls-inset: 20px;
   position: absolute;
   right: calc(var(--safe-right) + var(--controls-inset));
   bottom: calc(var(--safe-bottom) + var(--controls-inset));
   z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.pauseBtn {
+  pointer-events: auto;
+}
+
+.controlsDock {
+  position: relative;
   pointer-events: none;
 
   @media (max-width: 720px), (pointer: coarse) {
@@ -320,19 +332,19 @@
   grid-template-columns: repeat(3, var(--key));
   gap: var(--key-gap);
 
-  & [data-key="arrowup"] {
+  & [data-action="tiltUp"] {
     grid-area: 1 / 2;
   }
 
-  & [data-key="arrowleft"] {
+  & [data-action="tiltLeft"] {
     grid-area: 2 / 1;
   }
 
-  & [data-key="arrowdown"] {
+  & [data-action="tiltDown"] {
     grid-area: 2 / 2;
   }
 
-  & [data-key="arrowright"] {
+  & [data-action="tiltRight"] {
     grid-area: 2 / 3;
   }
 }

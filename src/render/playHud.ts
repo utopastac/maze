@@ -45,9 +45,7 @@ const START_TITLE_FLOOR_GAP = 2;
 const START_COLLECT_GAP = 0.55;
 const HOME_TITLE_PX = 52;
 const HOME_BTN_PX = 38;
-const HOME_TITLE_BTN_GAP = 22;
 const HOME_BTN_GAP = 10;
-const HOME_DECOR_ICON = 16;
 /** Show individual coin meshes up to this many; beyond that, one coin + count. */
 const MAX_COIN_ICONS = 5;
 /** Open counters + tracking so labels stay readable on the low-res HUD buffer. */
@@ -57,6 +55,12 @@ const START_BTN_FONT = `700 ${START_BTN_PX_PAINT}px "Arial Bold", Arial, Helveti
 const PULSE_SECS = 0.35;
 /** Start-gate briefing pop-in after the enter-play camera lands. */
 const START_INTRO_SECS = 0.48;
+/** Title-screen: hero logo hold → shatter away → button stagger. */
+const HOME_INTRO_SECS = 1.55;
+const HOME_INTRO_HERO_SCALE = 2.55;
+const HOME_INTRO_HOLD = 0.26;
+const HOME_INTRO_BLAST = 0.4;
+const HOME_INTRO_BTNS = 0.48;
 const SHOUT_LIFE = 1.05;
 const SHOUT_POP = 0.18;
 const SHATTER_LIFE = 0.7;
@@ -126,6 +130,7 @@ export type PlayHudHomeAction =
   | "settings"
   | "towerNew"
   | "towerLoad"
+  | "towerPractice"
   | "towerBack";
 
 export type PlayHudHomeMenuMode = "main" | "tower";
@@ -149,6 +154,7 @@ const HOME_ACTIONS: readonly PlayHudHomeAction[] = [
 const TOWER_HOME_ACTIONS: readonly PlayHudHomeAction[] = [
   "towerNew",
   "towerLoad",
+  "towerPractice",
   "towerBack",
 ];
 
@@ -160,6 +166,7 @@ const HOME_LABELS: Record<PlayHudHomeAction, string> = {
   settings: "Settings",
   towerNew: "New game",
   towerLoad: "Load",
+  towerPractice: "Practice",
   towerBack: "Back",
 };
 
@@ -184,8 +191,6 @@ export class PlayHud {
   private readonly startBtnRow = new Group();
   private readonly homeLayer = new Group();
   private readonly homeBtnRows: Group[] = HOME_ACTIONS.map(() => new Group());
-  private readonly homeDecorHearts: Group[] = [];
-  private readonly homeDecorCoins: Mesh[] = [];
   private homeScrim: Mesh | null = null;
   private readonly heartGeo: BufferGeometry;
   private readonly coinGeo: BufferGeometry;
@@ -215,6 +220,10 @@ export class PlayHud {
   private suppressPlayChrome = false;
   /** 0..1 pop-in for the start briefing (1 = settled). */
   private startIntroT = 1;
+  /** 0..1 title-screen intro (1 = settled). */
+  private homeIntroT = 1;
+  /** Fired once when the hero logo bursts into shards. */
+  private homeIntroBurst = false;
   private homeMenuMode: PlayHudHomeMenuMode = "main";
   private startTitle = "";
   private startFloors = 1;
@@ -407,10 +416,18 @@ export class PlayHud {
       this.homeHits = [];
       this.homeHover = null;
       this.homeMenuMode = "main";
+      this.homeIntroT = 1;
+      this.homeIntroBurst = false;
+      this.resetHomeIntroScales();
+    } else {
+      const hero = this.homeMenuMode === "main";
+      this.homeIntroT = hero ? 0 : 1;
+      this.homeIntroBurst = !hero;
     }
     this.syncOverlayVisibility();
     this.layoutDirty = true;
     if (this.shown) this.paint(true);
+    if (open && this.shown && this.homeIntroT < 1) this.applyHomeIntro(0);
   }
 
   /** Main title list vs. in-world Tower New/Load submenu. */
@@ -418,6 +435,9 @@ export class PlayHud {
     if (this.homeMenuMode === mode) return;
     this.homeMenuMode = mode;
     this.homeHover = null;
+    // Tower submenu skips the Mazespire hero beat; returning to main stays settled.
+    this.homeIntroT = 1;
+    this.homeIntroBurst = true;
     this.layoutDirty = true;
     if (this.shown) this.paint(true);
   }
@@ -461,7 +481,9 @@ export class PlayHud {
 
   /** Hit-test a home menu CTA in CSS client coordinates. */
   hitTestHome(clientX: number, clientY: number): PlayHudHomeAction | null {
-    if (!this.homeMenu || !this.shown || this.homeHits.length === 0) return null;
+    if (!this.homeMenu || !this.shown || this.homeHits.length === 0 || this.homeIntroT < 1) {
+      return null;
+    }
     const rect = this.canvas.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return null;
     const x = ((clientX - rect.left) / rect.width) * this.bufferW;
@@ -579,17 +601,24 @@ export class PlayHud {
         : Math.min(1, this.startIntroT + dt / START_INTRO_SECS);
       this.applyStartIntro(this.startIntroT);
     }
+    if (this.homeMenu && this.homeIntroT < 1) {
+      const prevIntro = this.homeIntroT;
+      if (reduceMotion) {
+        this.homeIntroT = 1;
+        this.homeIntroBurst = true;
+      } else {
+        this.homeIntroT = Math.min(1, this.homeIntroT + dt / HOME_INTRO_SECS);
+        this.applyHomeIntro(this.homeIntroT);
+      }
+      if (prevIntro < 1 && this.homeIntroT >= 1) this.layoutDirty = true;
+    }
     if (!reduceMotion) {
-      const coins = this.startGate || this.homeMenu
-        ? (this.homeMenu ? this.homeDecorCoins : this.startCoinMeshes)
-        : this.coinMeshes;
+      const coins = this.startGate ? this.startCoinMeshes : this.coinMeshes;
       for (const mesh of coins) {
         if (!mesh.visible || mesh.material !== this.coinMat) continue;
         mesh.rotation.y += dt * 3.6;
       }
-      const hearts = this.startGate || this.homeMenu
-        ? (this.homeMenu ? this.homeDecorHearts : this.startHeartIcons)
-        : this.heartIcons;
+      const hearts = this.startGate ? this.startHeartIcons : this.heartIcons;
       for (const heart of hearts) {
         if (!heart.visible) continue;
         heart.rotation.y = 0.2 + Math.sin(performance.now() * 0.0024 + heart.id) * 0.35;
@@ -598,10 +627,10 @@ export class PlayHud {
         const bob = Math.sin(performance.now() * 0.0032) * this.designScale() * 1.2;
         this.startBtnRow.position.y = (this.startBtnRow.userData.baseY as number ?? 0) + bob;
       }
-      if (this.homeMenu) {
+      if (this.homeMenu && this.homeIntroT >= 1) {
         const u = this.designScale();
         const now = performance.now();
-        if (this.homeTitlePlate) {
+        if (this.homeTitlePlate?.root.visible) {
           this.homeTitlePlate.root.rotation.y = 0.04 + Math.sin(now * 0.0011) * 0.03;
           this.homeTitlePlate.root.rotation.x = -0.08 + Math.sin(now * 0.0009) * 0.02;
         }
@@ -623,22 +652,6 @@ export class PlayHud {
           const next = cur + (target - cur) * Math.min(1, dt * 14);
           row.userData.scale = next;
           row.scale.setScalar(next);
-        }
-        for (let i = 0; i < this.homeDecorHearts.length; i += 1) {
-          const heart = this.homeDecorHearts[i];
-          if (!heart?.visible) continue;
-          const base = heart.userData.base as { x: number; y: number; z: number };
-          if (!base) continue;
-          heart.position.x = base.x + Math.sin(now * 0.0014 + i * 1.7) * u * 3;
-          heart.position.y = base.y + Math.cos(now * 0.0018 + i * 1.3) * u * 4;
-        }
-        for (let i = 0; i < this.homeDecorCoins.length; i += 1) {
-          const coin = this.homeDecorCoins[i];
-          if (!coin?.visible) continue;
-          const base = coin.userData.base as { x: number; y: number; z: number };
-          if (!base) continue;
-          coin.position.x = base.x + Math.cos(now * 0.0016 + i * 1.9) * u * 3;
-          coin.position.y = base.y + Math.sin(now * 0.0021 + i * 1.1) * u * 4;
         }
       }
     }
@@ -1007,8 +1020,10 @@ export class PlayHud {
   private paint(force: boolean): void {
     if (!this.shown) return;
     if (this.layoutDirty || force) {
-      if (this.homeMenu) this.layoutHomeMenu();
-      else if (this.startGate) {
+      if (this.homeMenu) {
+        this.layoutHomeMenu();
+        if (this.homeIntroT < 1) this.applyHomeIntro(this.homeIntroT);
+      } else if (this.startGate) {
         this.layoutStartGate();
         if (this.startIntroT < 1) this.applyStartIntro(this.startIntroT);
       } else {
@@ -1079,6 +1094,95 @@ export class PlayHud {
       const a = easeOutBack(local);
       item.scale.setScalar(Math.max(0.001, a));
     }
+  }
+
+  private resetHomeIntroScales(): void {
+    if (this.homeTitlePlate) {
+      this.homeTitlePlate.root.scale.setScalar(1);
+      this.homeTitlePlate.root.visible = true;
+    }
+    for (const row of this.homeBtnRows) {
+      row.scale.setScalar(1);
+      row.userData.scale = 1;
+    }
+  }
+
+  /** Hero Mazespire hold → full shatter (gone); then buttons stagger in. */
+  private applyHomeIntro(t: number): void {
+    if (this.homeMenuMode !== "main") {
+      this.resetHomeIntroScales();
+      return;
+    }
+    const title = this.homeTitlePlate?.root;
+    const hero = title?.userData.hero as { x: number; y: number; z: number } | undefined;
+    if (title && hero) {
+      if (t < HOME_INTRO_BLAST) {
+        title.visible = true;
+        const wind = clamp01((t - HOME_INTRO_HOLD) / Math.max(1e-4, HOME_INTRO_BLAST - HOME_INTRO_HOLD));
+        const punch = t < HOME_INTRO_HOLD
+          ? 1
+          : 1 + Math.sin(Math.min(1, wind) * Math.PI) * 0.22;
+        title.position.set(hero.x, hero.y, hero.z);
+        title.scale.setScalar(HOME_INTRO_HERO_SCALE * punch);
+        title.rotation.x = -0.06;
+        title.rotation.y = 0.02;
+      } else {
+        if (!this.homeIntroBurst) {
+          this.burstHomeHeroLogo();
+          this.homeIntroBurst = true;
+        }
+        title.visible = false;
+        title.scale.setScalar(1);
+      }
+    }
+
+    const btnT = clamp01((t - HOME_INTRO_BTNS) / (1 - HOME_INTRO_BTNS));
+    for (let i = 0; i < this.homeBtnRows.length; i += 1) {
+      const row = this.homeBtnRows[i];
+      if (!row?.visible) continue;
+      const local = clamp01((btnT - i * 0.09) / 0.55);
+      const a = easeOutBack(local);
+      const s = Math.max(0.001, a);
+      row.scale.setScalar(s);
+      row.userData.scale = s;
+      const baseY = (row.userData.baseY as number) ?? row.position.y;
+      const finalX = (row.userData.finalX as number) ?? row.position.x;
+      row.position.x = finalX;
+      row.position.y = baseY - (1 - a) * this.designScale() * 18;
+    }
+
+    if (t < 1) this.homeHits = [];
+  }
+
+  private burstHomeHeroLogo(): void {
+    const title = this.homeTitlePlate;
+    if (!title || !this.shown || this.bufferW < 2) return;
+    const titleH = HOME_TITLE_PX * this.designScale() * HOME_INTRO_HERO_SCALE;
+    const width = Math.max(titleH, title.width * HOME_INTRO_HERO_SCALE);
+    title.root.updateWorldMatrix(true, false);
+    const origin = title.root.getWorldPosition(this.shatterScratch);
+    this.shatterLayer.worldToLocal(origin);
+    const cols = Math.max(10, Math.min(22, Math.round((width / titleH) * 2.6)));
+    const rows = 5;
+    const cell = Math.max(titleH * 0.22, width / cols);
+    const palette = [0xffffff, 0xffffff, 0xf0f0f0, 0xdddddd, 0x222222];
+    for (let r = 0; r < rows; r += 1) {
+      for (let c = 0; c < cols; c += 1) {
+        const ox = (c / Math.max(1, cols - 1) - 0.5) * width * 0.96;
+        const oy = (r / Math.max(1, rows - 1) - 0.5) * titleH * 0.9;
+        this.spawnShards(
+          origin.x + ox,
+          origin.y + oy,
+          origin.z,
+          cell,
+          2,
+          START_SHATTER_LIFE * 1.15,
+          true,
+          palette,
+        );
+      }
+    }
+    title.root.visible = false;
   }
 
   private layoutStartGate(): void {
@@ -1265,9 +1369,16 @@ export class PlayHud {
     if (towerMode) {
       // Title up top; New / Load / Back as a bottom bar so the summit stays clear.
       if (this.homeTitlePlate) {
+        this.homeTitlePlate.root.visible = true;
         this.homeTitlePlate.root.position.set(cx, viewH * 0.84, 3);
         this.homeTitlePlate.root.rotation.x = -0.08;
         this.homeTitlePlate.root.rotation.y = 0.04;
+        this.homeTitlePlate.root.scale.setScalar(1);
+        this.homeTitlePlate.root.userData.final = {
+          x: cx,
+          y: viewH * 0.84,
+          z: 3,
+        };
       }
       const gap = btnGap * 1.6;
       const widths: number[] = [];
@@ -1290,6 +1401,9 @@ export class PlayHud {
         const px = x + w * 0.5;
         row.visible = true;
         row.userData.baseY = barY;
+        row.userData.finalX = px;
+        row.scale.setScalar(1);
+        row.userData.scale = 1;
         row.position.set(px, barY, 4 + i * 0.05);
         row.rotation.x = -0.08;
         btn.root.rotation.x = -0.1;
@@ -1304,23 +1418,27 @@ export class PlayHud {
         x += w + gap;
       }
     } else {
+      // Title is hero-only: it shatters away and never reforms in the menu stack.
+      if (this.homeTitlePlate) {
+        const hero = { x: cx, y: viewH * 0.52, z: 6 };
+        this.homeTitlePlate.root.userData.hero = hero;
+        this.homeTitlePlate.root.position.set(hero.x, hero.y, hero.z);
+        this.homeTitlePlate.root.rotation.x = -0.06;
+        this.homeTitlePlate.root.rotation.y = 0.02;
+        if (this.homeIntroBurst || this.homeIntroT >= HOME_INTRO_BLAST) {
+          this.homeTitlePlate.root.visible = false;
+          this.homeTitlePlate.root.scale.setScalar(1);
+        } else {
+          this.homeTitlePlate.root.visible = true;
+          this.homeTitlePlate.root.scale.setScalar(HOME_INTRO_HERO_SCALE);
+        }
+      }
       const rows: { height: number; after: number; place: (y: number) => void }[] = [];
-      rows.push({
-        height: titleH,
-        after: HOME_TITLE_BTN_GAP * u,
-        place: (y) => {
-          if (!this.homeTitlePlate) return;
-          this.homeTitlePlate.root.position.set(cx, y, 3);
-          this.homeTitlePlate.root.rotation.x = -0.08;
-          this.homeTitlePlate.root.rotation.y = 0.04;
-        },
-      });
       for (let i = 0; i < actions.length; i += 1) {
         const action = actions[i];
         if (!action) continue;
         const btn = syncBtn(i, action);
         if (!btn) continue;
-        menuWidth = Math.max(menuWidth, btn.width);
         const index = i;
         const act = action;
         rows.push({
@@ -1332,6 +1450,9 @@ export class PlayHud {
             if (!current || !slot) return;
             slot.visible = true;
             slot.userData.baseY = y;
+            slot.userData.finalX = cx;
+            slot.scale.setScalar(1);
+            slot.userData.scale = 1;
             slot.position.set(cx, y, 4 + index * 0.05);
             slot.rotation.x = -0.08;
             current.root.rotation.x = -0.1;
@@ -1350,7 +1471,7 @@ export class PlayHud {
         const after = i < rows.length - 1 ? row.after : 0;
         return sum + row.height + after;
       }, 0);
-      let y = viewH * 0.58 + totalH * 0.5;
+      let y = viewH * 0.55 + totalH * 0.5;
       for (let i = 0; i < rows.length; i += 1) {
         const row = rows[i];
         if (!row) continue;
@@ -1360,121 +1481,13 @@ export class PlayHud {
       }
     }
 
-    this.homeHits = hits;
-    this.layoutHomeDecor(viewW, viewH, u, menuWidth, towerMode);
-  }
-
-  private layoutHomeDecor(
-    viewW: number,
-    viewH: number,
-    u: number,
-    menuWidth: number,
-    towerMode = false,
-  ): void {
-    if (towerMode) {
-      for (const heart of this.homeDecorHearts) heart.visible = false;
-      for (const coin of this.homeDecorCoins) coin.visible = false;
-      return;
-    }
-    const icon = HOME_DECOR_ICON * u;
-    const gutter = Math.max(icon * 1.4, (viewW - menuWidth) * 0.22);
-    const spots = [
-      { x: gutter, y: viewH * 0.72, heart: true },
-      { x: viewW - gutter, y: viewH * 0.68, heart: false },
-      { x: gutter * 0.85, y: viewH * 0.38, heart: false },
-      { x: viewW - gutter * 0.9, y: viewH * 0.42, heart: true },
-      { x: gutter * 1.15, y: viewH * 0.22, heart: true },
-      { x: viewW - gutter * 1.1, y: viewH * 0.2, heart: false },
-    ];
-    let heartAt = 0;
-    let coinAt = 0;
-    for (let i = 0; i < spots.length; i += 1) {
-      const spot = spots[i];
-      if (!spot) continue;
-      if (spot.heart) {
-        while (this.homeDecorHearts.length <= heartAt) {
-          const iconGroup = makeHeartIcon(
-            this.heartGeo,
-            this.heartOutlineMat,
-            this.heartBodyMat,
-            this.heartShadeMat,
-          );
-          this.homeDecorHearts.push(iconGroup);
-          this.homeLayer.add(iconGroup);
-        }
-        const heart = this.homeDecorHearts[heartAt];
-        if (!heart) continue;
-        heart.visible = true;
-        heart.scale.setScalar(icon);
-        heart.position.set(spot.x, spot.y, 1);
-        heart.rotation.x = -0.18;
-        heart.userData.base = { x: spot.x, y: spot.y, z: 1 };
-        heartAt += 1;
-      } else {
-        while (this.homeDecorCoins.length <= coinAt) {
-          const mesh = new Mesh(this.coinGeo, this.coinMat);
-          this.homeDecorCoins.push(mesh);
-          this.homeLayer.add(mesh);
-        }
-        const coin = this.homeDecorCoins[coinAt];
-        if (!coin) continue;
-        coin.visible = true;
-        coin.scale.setScalar(icon);
-        coin.position.set(spot.x, spot.y, 1);
-        coin.rotation.x = -0.2;
-        coin.userData.base = { x: spot.x, y: spot.y, z: 1 };
-        coinAt += 1;
-      }
-    }
-    for (let i = heartAt; i < this.homeDecorHearts.length; i += 1) {
-      const heart = this.homeDecorHearts[i];
-      if (heart) heart.visible = false;
-    }
-    for (let i = coinAt; i < this.homeDecorCoins.length; i += 1) {
-      const coin = this.homeDecorCoins[i];
-      if (coin) coin.visible = false;
-    }
+    this.homeHits = this.homeIntroT < 1 && !towerMode ? [] : hits;
   }
 
   private spawnHomeMenuShards(): void {
     const life = START_SHATTER_LIFE;
-    const bodyHex = this.heartBodyMat.color.getHex();
-    const shadeHex = this.heartShadeMat.color.getHex();
-    const outlineHex = this.heartOutlineMat.color.getHex();
-    const coinHex = this.coinMat.color.getHex();
-    const coinShine = tokenHex("--maze-coin-shine", "#ffe9a0");
-    for (const heart of this.homeDecorHearts) {
-      if (!heart.visible) continue;
-      heart.updateWorldMatrix(true, false);
-      const origin = heart.getWorldPosition(this.shatterScratch);
-      this.shatterLayer.worldToLocal(origin);
-      const size = Math.max(0.01, heart.scale.x);
-      this.spawnShards(
-        origin.x,
-        origin.y,
-        origin.z,
-        size,
-        10,
-        life,
-        true,
-        [bodyHex, bodyHex, shadeHex, outlineHex],
-      );
-    }
-    for (const mesh of this.homeDecorCoins) {
-      if (!mesh.visible) continue;
-      mesh.updateWorldMatrix(true, false);
-      const origin = mesh.getWorldPosition(this.shatterScratch);
-      this.shatterLayer.worldToLocal(origin);
-      const size = Math.max(0.01, mesh.scale.x);
-      this.spawnShards(origin.x, origin.y, origin.z, size, 10, life, true, [
-        coinHex,
-        coinHex,
-        coinShine,
-        0xffffff,
-      ], { coinPieces: 3 });
-    }
     const titleH = HOME_TITLE_PX * this.designScale();
-    if (this.homeTitlePlate) {
+    if (this.homeTitlePlate?.root.visible) {
       this.shatterPlate(
         this.homeTitlePlate.root,
         this.homeTitlePlate.width,

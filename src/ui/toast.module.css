@@ -1,0 +1,11 @@
+/* Visual chrome lives in kit.css (.kit-toast / .kit-toast-body). */
+.root {
+  &[hidden] {
+    display: none;
+  }
+}
+
+.body {
+  /* Hook for screen-specific tweaks. */
+  min-width: 0;
+}

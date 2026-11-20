@@ -2,6 +2,15 @@ import { listSavedLevels, loadSavedLevel, deleteSavedLevel, type SavedLevel } fr
 import { FLOOR_THEME_META, parseFloorTheme } from "../core/theme.ts";
 import type { Tower } from "../core/tower.ts";
 import { iconSvg } from "./icons.ts";
+import {
+  createButton,
+  createConfirmDialog,
+  createEmptyState,
+  createListRow,
+  createListRowCopy,
+  playEnter,
+  playExit,
+} from "./kit/index.ts";
 import { renderMazeBoardPreview } from "./mazeBoardPreview.ts";
 import styles from "./savedLevels.module.css";
 
@@ -14,10 +23,10 @@ export class SavedLevelsPanel {
   private readonly root: HTMLElement;
   private readonly callbacks: SavedLevelsCallbacks;
   private readonly list: HTMLElement;
-  private readonly confirmRoot: HTMLElement;
   private readonly confirmTitle: HTMLElement;
   private readonly confirmBody: HTMLElement;
   private readonly confirmOk: HTMLButtonElement;
+  private readonly confirm: ReturnType<typeof createConfirmDialog>;
   private pendingDeleteId: string | null = null;
   private open = false;
 
@@ -32,38 +41,37 @@ export class SavedLevelsPanel {
           <div>
             <h2 class="${styles.title}">Saved levels</h2>
           </div>
-          <button type="button" class="glass-btn ${styles.close}" data-close aria-label="Close saved levels">${iconSvg("close")}</button>
+          <span data-close-slot></span>
         </header>
         <div class="${styles.list}" data-list></div>
       </div>
-      <div class="${styles.confirm}" data-confirm hidden>
-        <div class="${styles.confirmScrim}" data-confirm-scrim></div>
-        <div
-          class="${styles.confirmCard}"
-          role="alertdialog"
-          aria-modal="true"
-          aria-labelledby="saved-confirm-title"
-          aria-describedby="saved-confirm-body"
-        >
-          <p class="${styles.confirmTitle}" id="saved-confirm-title" data-confirm-title></p>
-          <p class="${styles.confirmBody}" id="saved-confirm-body" data-confirm-body></p>
-          <div class="${styles.confirmActions}">
-            <button type="button" class="glass-pill ${styles.confirmCancel}" data-confirm-cancel>Cancel</button>
-            <button type="button" class="glass-pill metal-ring ${styles.confirmOk}" data-confirm-ok>Delete</button>
-          </div>
-        </div>
-      </div>
+      <div data-confirm-slot></div>
     `;
     this.list = this.require("[data-list]");
-    this.confirmRoot = this.require("[data-confirm]");
-    this.confirmTitle = this.require("[data-confirm-title]");
-    this.confirmBody = this.require("[data-confirm-body]");
+    this.confirm = createConfirmDialog({
+      titleId: "saved-confirm-title",
+      bodyId: "saved-confirm-body",
+      title: "",
+      confirmLabel: "Delete",
+      onCancel: () => this.hideDeleteConfirm(),
+      onConfirm: () => this.commitDeleteConfirm(),
+    });
+    this.confirm.title.dataset.confirmTitle = "";
+    this.confirm.body.dataset.confirmBody = "";
+    this.require("[data-confirm-slot]").replaceWith(this.confirm.root);
+    this.confirmTitle = this.confirm.title;
+    this.confirmBody = this.confirm.body;
     this.confirmOk = this.require("[data-confirm-ok]");
-    this.require("[data-close]").addEventListener("click", () => this.callbacks.onClose());
+    this.require("[data-close-slot]").replaceWith(
+      createButton({
+        icon: "close",
+        ariaLabel: "Close saved levels",
+        className: styles.close,
+        data: { close: "" },
+        onClick: () => this.callbacks.onClose(),
+      }),
+    );
     this.require("[data-scrim]").addEventListener("click", () => this.callbacks.onClose());
-    this.require("[data-confirm-scrim]").addEventListener("click", () => this.hideDeleteConfirm());
-    this.require("[data-confirm-cancel]").addEventListener("click", () => this.hideDeleteConfirm());
-    this.confirmOk.addEventListener("click", () => this.commitDeleteConfirm());
   }
 
   isOpen(): boolean {
@@ -74,29 +82,21 @@ export class SavedLevelsPanel {
     this.open = true;
     this.hideDeleteConfirm();
     this.renderList();
-    this.root.hidden = false;
-    this.root.dataset.phase = "out";
-    requestAnimationFrame(() => {
-      this.root.dataset.phase = "in";
-    });
+    playEnter(this.root);
   }
 
   hide(): void {
     this.open = false;
     this.hideDeleteConfirm();
     this.list.replaceChildren();
-    delete this.root.dataset.phase;
-    this.root.hidden = true;
+    playExit(this.root);
   }
 
   private renderList(): void {
     const entries = listSavedLevels();
     this.list.replaceChildren();
     if (entries.length === 0) {
-      const empty = document.createElement("p");
-      empty.className = styles.empty;
-      empty.textContent = "No saved levels yet.";
-      this.list.append(empty);
+      this.list.append(createEmptyState("No saved levels yet.", styles.empty));
       return;
     }
     for (const entry of entries) {
@@ -108,15 +108,6 @@ export class SavedLevelsPanel {
     const tower = loadSavedLevel(entry.id);
     const floor = tower?.floors[0];
     const theme = parseFloorTheme(floor?.theme ?? entry.theme);
-    const wrap = document.createElement("div");
-    wrap.className = styles.item;
-    wrap.setAttribute("role", "button");
-    wrap.tabIndex = 0;
-    wrap.setAttribute(
-      "aria-label",
-      `${entry.name}, ${entry.cols} by ${entry.rows}, ${FLOOR_THEME_META[theme].label}`,
-    );
-
     const thumb = document.createElement("div");
     thumb.className = styles.thumb;
     if (floor) {
@@ -126,14 +117,17 @@ export class SavedLevelsPanel {
       }));
     }
 
-    const label = document.createElement("div");
-    label.className = styles.label;
     const floors = entry.floors === 1 ? "1 floor" : `${entry.floors} floors`;
-    label.innerHTML = `
-      <span class="${styles.name}">${escapeHtml(entry.name)}</span>
-      <span class="${styles.detail}">${entry.cols}×${entry.rows} · ${floors} · ${FLOOR_THEME_META[theme].label}</span>
-      <span class="${styles.detail}">${formatSavedAt(entry.savedAt)}</span>
-    `;
+    const copy = createListRowCopy({
+      title: entry.name,
+      details: [
+        `${entry.cols}×${entry.rows} · ${floors} · ${FLOOR_THEME_META[theme].label}`,
+        formatSavedAt(entry.savedAt),
+      ],
+      className: styles.label,
+      titleClassName: styles.name,
+      detailClassName: styles.detail,
+    });
 
     const remove = document.createElement("button");
     remove.type = "button";
@@ -155,18 +149,17 @@ export class SavedLevelsPanel {
       this.callbacks.onPick(loaded);
     };
 
-    wrap.addEventListener("click", (event) => {
-      if ((event.target as Element | null)?.closest(`.${styles.delete}`)) return;
-      play();
-    });
-    wrap.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" && event.key !== " ") return;
-      event.preventDefault();
-      play();
-    });
+    const body = document.createDocumentFragment();
+    body.append(thumb, copy);
 
-    wrap.append(thumb, label, remove);
-    return wrap;
+    return createListRow({
+      label: `${entry.name}, ${entry.cols} by ${entry.rows}, ${FLOOR_THEME_META[theme].label}`,
+      className: styles.item,
+      body,
+      trailing: remove,
+      onActivate: play,
+      ignoreSelector: `.${styles.delete}`,
+    });
   }
 
   private openDeleteConfirm(entry: SavedLevel): void {
@@ -174,13 +167,13 @@ export class SavedLevelsPanel {
     this.confirmTitle.textContent = "Delete this level?";
     this.confirmBody.textContent = `“${entry.name}” will be removed from this device.`;
     this.confirmOk.textContent = "Delete";
-    this.confirmRoot.hidden = false;
+    this.confirm.show();
     this.confirmOk.focus();
   }
 
   private hideDeleteConfirm(): void {
     this.pendingDeleteId = null;
-    this.confirmRoot.hidden = true;
+    this.confirm.hide();
   }
 
   private commitDeleteConfirm(): void {
@@ -209,12 +202,4 @@ function formatSavedAt(stamp: number): string {
   } catch {
     return "";
   }
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
 }

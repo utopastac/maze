@@ -1,3 +1,4 @@
+import { actionHeld } from "./keybinds.ts";
 import { clamp } from "./math.ts";
 import type { PlaySettings } from "./playSettings.ts";
 
@@ -26,10 +27,11 @@ export class TiltController {
   applyKeys(dt: number, keys: ReadonlySet<string>): void {
     const rate = BASE_KEY_RATE * this.settings.values.sensitivity * (this.limit() / BASE_TILT);
     const pitch = rate * this.settings.pitchSign();
-    if (keys.has("arrowleft") || keys.has("a")) this.targetRoll += rate * dt;
-    if (keys.has("arrowright") || keys.has("d")) this.targetRoll -= rate * dt;
-    if (keys.has("arrowup") || keys.has("w")) this.targetPitch += pitch * dt;
-    if (keys.has("arrowdown") || keys.has("s")) this.targetPitch -= pitch * dt;
+    const binds = this.settings.keybinds;
+    if (actionHeld(binds, "tiltLeft", keys)) this.targetRoll += rate * dt;
+    if (actionHeld(binds, "tiltRight", keys)) this.targetRoll -= rate * dt;
+    if (actionHeld(binds, "tiltUp", keys)) this.targetPitch += pitch * dt;
+    if (actionHeld(binds, "tiltDown", keys)) this.targetPitch -= pitch * dt;
     this.clampTargets();
   }
 

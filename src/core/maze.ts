@@ -88,10 +88,6 @@ const DIRS = [
 
 const FULL = Wall.north | Wall.east | Wall.south | Wall.west;
 
-export function generateMaze(seed: number, cols = 7, rows = 7): Maze {
-  return carveFloor(seed, cols, rows, { c: 0, r: 0 });
-}
-
 export interface CarveOptions {
   braid?: number;
   holes?: number;

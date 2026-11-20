@@ -80,16 +80,6 @@ function packSaves(entries: CampaignProgress[]): CampaignProgress[] {
   return auto ? [auto, ...rest.slice(0, limit)] : rest.slice(0, limit);
 }
 
-/** @deprecated Prefer deleteCampaignProgress(id). Clears every tower save. */
-export function clearCampaignProgress(): void {
-  writeAll([]);
-  try {
-    localStorage.removeItem(STORAGE_KEY);
-  } catch {
-    // Private mode / blocked storage.
-  }
-}
-
 function readAll(): CampaignProgress[] {
   try {
     const v2 = localStorage.getItem(STORAGE_KEY_V2);

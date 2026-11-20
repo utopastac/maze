@@ -1,4 +1,10 @@
 import {
+  formatKey,
+  isBindableKey,
+  KEY_ACTIONS,
+  type KeyAction,
+} from "../core/keybinds.ts";
+import {
   SETTING_SPECS,
   pixelStep,
   type PlaySettings,
@@ -6,6 +12,19 @@ import {
   type SettingKey,
 } from "../core/playSettings.ts";
 import { iconSvg, type IconName } from "./icons.ts";
+import {
+  createButton,
+  createConfirmDialog,
+  createRangeField,
+  createScrim,
+  createTabList,
+  createToggle,
+  playEnter,
+  playExit,
+  type RangeFieldController,
+  type TabListController,
+  type ToggleController,
+} from "./kit/index.ts";
 import styles from "./settingsPanel.module.css";
 
 export interface SettingsPanelCallbacks {
@@ -26,15 +45,17 @@ export class SettingsPanel {
   private readonly root: HTMLElement;
   private readonly settings: PlaySettings;
   private readonly callbacks: SettingsPanelCallbacks;
-  private readonly inputs = new Map<SettingKey, HTMLInputElement>();
-  private readonly readouts = new Map<SettingKey, HTMLElement>();
-  private readonly fields = new Map<SettingKey, HTMLElement>();
+  private readonly ranges = new Map<SettingKey, RangeFieldController>();
   private readonly panels = new Map<SettingGroup, HTMLElement>();
-  private readonly tabs = new Map<SettingGroup, HTMLButtonElement>();
-  private invertInput: HTMLInputElement | null = null;
-  private normalInput: HTMLInputElement | null = null;
+  private tabList: TabListController<SettingGroup> | null = null;
+  private invertToggle: ToggleController | null = null;
+  private normalToggle: ToggleController | null = null;
   private confirmRoot: HTMLElement | null = null;
+  private confirm: ReturnType<typeof createConfirmDialog> | null = null;
   private confirmOk: HTMLButtonElement | null = null;
+  private keybindButtons = new Map<KeyAction, HTMLButtonElement>();
+  private keybindHint: HTMLElement | null = null;
+  private listening: KeyAction | null = null;
   private active: SettingGroup = "Controls";
   private open = false;
   private mounted = false;
@@ -49,23 +70,11 @@ export class SettingsPanel {
     if (this.mounted) return;
     this.mounted = true;
     this.root.className = styles.root;
-    const tabs = GROUPS.map((group, index) => `
-      <button
-        type="button"
-        class="${styles.tab}${group === this.active ? ` ${styles.tabActive}` : ""}"
-        role="tab"
-        id="settings-tab-${index}"
-        data-tab="${group}"
-        aria-controls="settings-panel-${index}"
-        aria-selected="${group === this.active ? "true" : "false"}"
-        title="${group}"
-      >${iconSvg(GROUP_ICONS[group])}<span>${group}</span></button>
-    `).join("");
     const panels = GROUPS.map((group, index) => `
       <section
         class="${styles.panel}"
         role="tabpanel"
-        id="settings-panel-${index}"
+        id="settings-tab-panel-${index}"
         data-panel="${group}"
         aria-labelledby="settings-tab-${index}"
         ${group === this.active ? "" : "hidden"}
@@ -74,26 +83,20 @@ export class SettingsPanel {
       </section>
     `).join("");
     this.root.innerHTML = `
-      <div class="${styles.scrim}" data-scrim></div>
+      <span data-slot="scrim"></span>
       <div class="${styles.card}">
         <header class="${styles.head}">
           <h2 class="${styles.title}">Settings</h2>
           <div class="${styles.headActions}">
-            <button type="button" class="glass-pill ${styles.defaults}" data-defaults>Reset to defaults</button>
-            <button type="button" class="glass-pill metal-ring ${styles.save}" data-save>Done</button>
-            <button type="button" class="glass-btn ${styles.close}" data-close aria-label="Close settings">${iconSvg("close")}</button>
+            <span data-slot="defaults"></span>
+            <span data-slot="save"></span>
+            <span data-slot="close"></span>
           </div>
         </header>
         <div class="${styles.main}">
           <aside class="${styles.side}">
             <h3 class="${styles.sideTitle}">Sections</h3>
-            <div
-              class="${styles.segments}"
-              role="tablist"
-              aria-label="Settings sections"
-              aria-orientation="vertical"
-              data-tabs
-            >${tabs}</div>
+            <span data-slot="tabs"></span>
           </aside>
           <div class="${styles.body}">
             <div class="${styles.controls}">
@@ -102,98 +105,68 @@ export class SettingsPanel {
           </div>
         </div>
       </div>
-      <div class="${styles.confirm}" data-confirm hidden>
-        <div class="${styles.confirmScrim}" data-confirm-scrim></div>
-        <div
-          class="${styles.confirmCard}"
-          role="alertdialog"
-          aria-modal="true"
-          aria-labelledby="settings-confirm-title"
-          aria-describedby="settings-confirm-body"
-        >
-          <p class="${styles.confirmTitle}" id="settings-confirm-title">Reset to defaults?</p>
-          <p class="${styles.confirmBody}" id="settings-confirm-body">This will replace your current settings with the factory defaults.</p>
-          <div class="${styles.confirmActions}">
-            <button type="button" class="glass-pill ${styles.confirmCancel}" data-confirm-cancel>Cancel</button>
-            <button type="button" class="glass-pill metal-ring ${styles.confirmOk}" data-confirm-ok>Reset</button>
-          </div>
-        </div>
-      </div>
+      <span data-slot="confirm"></span>
     `;
 
+    const tabList = createTabList<SettingGroup>({
+      items: GROUPS.map((group) => ({
+        id: group,
+        label: group,
+        title: group,
+        iconHtml: iconSvg(GROUP_ICONS[group]),
+      })),
+      active: this.active,
+      label: "Settings sections",
+      orientation: "vertical",
+      idPrefix: "settings-tab",
+      onChange: (group) => this.selectGroup(group),
+    });
+    this.tabList = tabList;
+    this.mountSlot("tabs", tabList.root);
+    tabList.root.addEventListener("keydown", tabList.onKeyDown);
+
     for (const group of GROUPS) {
-      const tab = this.root.querySelector<HTMLButtonElement>(`[data-tab="${group}"]`);
       const panel = this.root.querySelector<HTMLElement>(`[data-panel="${group}"]`);
-      if (tab) {
-        this.tabs.set(group, tab);
-        tab.addEventListener("click", () => this.selectGroup(group));
-      }
       if (panel) this.panels.set(group, panel);
     }
 
     for (const spec of SETTING_SPECS) {
       const slot = this.root.querySelector<HTMLElement>(`[data-group="${spec.group}"]`);
       if (!slot) continue;
-      const field = document.createElement("div");
-      field.className = "field";
-      field.innerHTML = `
-        <label><span>${spec.label}</span><span data-readout></span></label>
-        <input type="range" min="${spec.min}" max="${spec.max}" step="${spec.step}" aria-label="${spec.label}" />
-      `;
-      const input = field.querySelector("input");
-      const readout = field.querySelector<HTMLElement>("[data-readout]");
-      if (!input || !readout) continue;
-      if (spec.key === "pixels" || spec.key === "uiPixels") input.step = String(pixelStep());
-      input.addEventListener("input", () => {
-        this.settings.set(spec.key, Number(input.value));
-        readout.textContent = spec.format(this.settings.values[spec.key]);
+      const field = createRangeField({
+        label: spec.label,
+        min: spec.min,
+        max: spec.max,
+        step: isPixelKey(spec.key) ? pixelStep() : spec.step,
+        value: this.settings.values[spec.key],
+        format: spec.format,
+        onInput: (value) => this.settings.set(spec.key, value),
       });
-      this.inputs.set(spec.key, input);
-      this.readouts.set(spec.key, readout);
-      this.fields.set(spec.key, field);
-      slot.appendChild(field);
+      this.ranges.set(spec.key, field);
+      slot.appendChild(field.root);
     }
 
     const controls = this.root.querySelector<HTMLElement>('[data-group="Controls"]');
     if (controls) {
-      const field = document.createElement("label");
-      field.className = styles.toggle;
-      field.innerHTML = `
-        <span>Reverse Y</span>
-        <input type="checkbox" aria-label="Reverse Y" />
-        <span class="${styles.switch}" aria-hidden="true"></span>
-      `;
-      const input = field.querySelector("input");
-      if (input) {
-        input.addEventListener("change", () => {
-          this.settings.setInvertY(input.checked);
-        });
-        this.invertInput = input;
-        controls.appendChild(field);
-      }
+      const toggle = createToggle({
+        label: "Reverse Y",
+        onChange: (checked) => this.settings.setInvertY(checked),
+      });
+      this.invertToggle = toggle;
+      controls.appendChild(toggle.root);
+      this.mountKeybinds(controls);
     }
 
     const picture = this.root.querySelector<HTMLElement>('[data-group="Picture"]');
     if (picture) {
-      const field = document.createElement("label");
-      field.className = styles.toggle;
-      field.innerHTML = `
-        <span>Normal look</span>
-        <input type="checkbox" aria-label="Normal look" />
-        <span class="${styles.switch}" aria-hidden="true"></span>
-      `;
-      const input = field.querySelector("input");
-      if (input) {
-        input.addEventListener("change", () => {
-          this.settings.setNormalLook(input.checked);
-        });
-        this.normalInput = input;
-        picture.prepend(field);
-      }
+      const toggle = createToggle({
+        label: "Normal look",
+        onChange: (checked) => this.settings.setNormalLook(checked),
+      });
+      this.normalToggle = toggle;
+      picture.prepend(toggle.root);
     }
 
-    this.confirmRoot = this.root.querySelector("[data-confirm]");
-    this.confirmOk = this.root.querySelector("[data-confirm-ok]");
     const leave = (): void => {
       if (this.confirmOpen()) {
         this.hideResetConfirm();
@@ -201,16 +174,43 @@ export class SettingsPanel {
       }
       this.callbacks.onSave();
     };
-    this.root.querySelector("[data-save]")?.addEventListener("click", leave);
-    this.root.querySelector("[data-close]")?.addEventListener("click", leave);
-    this.root.querySelector("[data-scrim]")?.addEventListener("click", leave);
-    this.root.querySelector("[data-defaults]")?.addEventListener("click", () => this.openResetConfirm());
-    this.root.querySelector("[data-confirm-scrim]")?.addEventListener("click", () => this.hideResetConfirm());
-    this.root.querySelector("[data-confirm-cancel]")?.addEventListener("click", () => this.hideResetConfirm());
-    this.confirmOk?.addEventListener("click", () => this.commitResetConfirm());
-    this.root.querySelector("[data-tabs]")?.addEventListener("keydown", (event) => {
-      this.onTabKey(event as KeyboardEvent);
+    this.mountSlot("defaults", createButton({
+      label: "Reset to defaults",
+      className: styles.defaults,
+      data: { defaults: "" },
+      onClick: () => this.openResetConfirm(),
+    }));
+    this.mountSlot("save", createButton({
+      label: "Done",
+      tone: "accent",
+      className: styles.save,
+      data: { save: "" },
+      onClick: leave,
+    }));
+    this.mountSlot("close", createButton({
+      icon: "close",
+      ariaLabel: "Close settings",
+      className: styles.close,
+      data: { close: "" },
+      onClick: leave,
+    }));
+    const confirm = createConfirmDialog({
+      titleId: "settings-confirm-title",
+      bodyId: "settings-confirm-body",
+      title: "Reset to defaults?",
+      body: "This will replace your current settings with the factory defaults.",
+      confirmLabel: "Reset",
+      onCancel: () => this.hideResetConfirm(),
+      onConfirm: () => this.commitResetConfirm(),
     });
+    this.confirm = confirm;
+    this.mountSlot("confirm", confirm.root);
+    this.confirmRoot = confirm.root;
+    this.confirmOk = confirm.root.querySelector<HTMLButtonElement>("[data-confirm-ok]");
+    const scrim = createScrim({ className: styles.scrim, data: "scrim" });
+    scrim.addEventListener("click", leave);
+    this.mountSlot("scrim", scrim);
+    window.addEventListener("keydown", this.onListenKey, true);
     this.selectGroup(this.active);
     this.refresh();
   }
@@ -224,18 +224,18 @@ export class SettingsPanel {
     this.hideResetConfirm();
     this.selectGroup(this.active);
     this.refresh();
-    this.root.hidden = false;
-    this.root.dataset.phase = "out";
-    requestAnimationFrame(() => {
-      this.root.dataset.phase = "in";
-    });
+    playEnter(this.root);
   }
 
   hide(): void {
     this.open = false;
+    this.stopListening();
     this.hideResetConfirm();
-    delete this.root.dataset.phase;
-    this.root.hidden = true;
+    playExit(this.root);
+  }
+
+  private mountSlot(name: string, el: HTMLElement): void {
+    this.root.querySelector(`[data-slot="${name}"]`)?.replaceWith(el);
   }
 
   private confirmOpen(): boolean {
@@ -244,12 +244,12 @@ export class SettingsPanel {
 
   private openResetConfirm(): void {
     if (!this.confirmRoot) return;
-    this.confirmRoot.hidden = false;
+    this.confirm?.show();
     this.confirmOk?.focus();
   }
 
   private hideResetConfirm(): void {
-    if (this.confirmRoot) this.confirmRoot.hidden = true;
+    this.confirm?.hide();
   }
 
   private commitResetConfirm(): void {
@@ -261,53 +261,124 @@ export class SettingsPanel {
   refresh(): void {
     const normal = this.settings.normalLook;
     for (const spec of SETTING_SPECS) {
-      const input = this.inputs.get(spec.key);
-      const readout = this.readouts.get(spec.key);
-      const field = this.fields.get(spec.key);
-      const value = this.settings.values[spec.key];
-      const pictureSlider =
-        spec.key === "pixels" || spec.key === "uiPixels" || spec.key === "shade";
-      if (input) {
-        if (spec.key === "pixels" || spec.key === "uiPixels") input.step = String(pixelStep());
-        input.value = String(value);
-        input.disabled = pictureSlider && normal;
-      }
-      if (field) field.classList.toggle(styles.dimmed, Boolean(pictureSlider && normal));
-      if (readout) readout.textContent = spec.format(value);
+      const field = this.ranges.get(spec.key);
+      if (!field) continue;
+      const dim = (isPixelKey(spec.key) || spec.key === "shade") && normal;
+      if (isPixelKey(spec.key)) field.setStep(pixelStep());
+      field.setValue(this.settings.values[spec.key]);
+      field.setDisabled(dim);
+      field.setDimmed(dim);
     }
-    if (this.invertInput) this.invertInput.checked = this.settings.invertY;
-    if (this.normalInput) this.normalInput.checked = normal;
+    this.invertToggle?.setChecked(this.settings.invertY);
+    this.normalToggle?.setChecked(normal);
+    this.refreshKeybinds();
   }
+
+  private mountKeybinds(controls: HTMLElement): void {
+    const section = document.createElement("div");
+    section.className = styles.keys;
+    section.innerHTML = `
+      <div class="${styles.keysHead}">
+        <div>
+          <p class="${styles.keysTitle}">Keyboard</p>
+          <p class="${styles.keysHint}" data-keybind-hint>Click a key, then press a new one.</p>
+        </div>
+        <span data-slot="resetKeys"></span>
+      </div>
+      <div class="${styles.keysList}" data-keybind-list></div>
+    `;
+    const list = section.querySelector<HTMLElement>("[data-keybind-list]");
+    this.keybindHint = section.querySelector("[data-keybind-hint]");
+    section.querySelector('[data-slot="resetKeys"]')?.replaceWith(createButton({
+      label: "Reset keys",
+      className: styles.keysReset,
+      data: { resetKeys: "" },
+      onClick: () => {
+        this.stopListening();
+        this.settings.resetKeybinds();
+        this.refreshKeybinds();
+      },
+    }));
+    if (list) {
+      let cluster = "";
+      for (const action of KEY_ACTIONS) {
+        if (action.cluster !== cluster) {
+          cluster = action.cluster;
+          const heading = document.createElement("p");
+          heading.className = styles.keysCluster;
+          heading.textContent = cluster;
+          list.appendChild(heading);
+        }
+        const row = document.createElement("div");
+        row.className = styles.keyRow;
+        row.innerHTML = `
+          <span class="${styles.keyLabel}">${action.label}</span>
+          <button type="button" class="${styles.keyBind}" data-keybind="${action.id}" aria-label="Remap ${action.label}"></button>
+        `;
+        const button = row.querySelector<HTMLButtonElement>("[data-keybind]");
+        if (button) {
+          button.addEventListener("click", () => this.startListening(action.id));
+          this.keybindButtons.set(action.id, button);
+        }
+        list.appendChild(row);
+      }
+    }
+    controls.appendChild(section);
+  }
+
+  private refreshKeybinds(): void {
+    for (const action of KEY_ACTIONS) {
+      const button = this.keybindButtons.get(action.id);
+      if (!button) continue;
+      const listening = this.listening === action.id;
+      button.classList.toggle(styles.keyListening, listening);
+      button.textContent = listening ? "Press key…" : formatKey(this.settings.keybinds[action.id]);
+      button.setAttribute("aria-pressed", listening ? "true" : "false");
+    }
+    if (this.keybindHint) {
+      this.keybindHint.textContent = this.listening
+        ? "Press a key, or Esc to cancel."
+        : "Click a key, then press a new one.";
+    }
+  }
+
+  private startListening(action: KeyAction): void {
+    this.listening = this.listening === action ? null : action;
+    this.refreshKeybinds();
+    if (this.listening) this.keybindButtons.get(action)?.focus();
+  }
+
+  private stopListening(): void {
+    if (!this.listening) return;
+    this.listening = null;
+    this.refreshKeybinds();
+  }
+
+  private onListenKey = (event: KeyboardEvent): void => {
+    if (!this.open || !this.listening) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === "Escape") {
+      this.stopListening();
+      return;
+    }
+    if (event.repeat || !isBindableKey(event.key)) return;
+    const action = this.listening;
+    this.listening = null;
+    this.settings.setKeybind(action, event.key);
+    this.refreshKeybinds();
+  };
 
   private selectGroup(group: SettingGroup): void {
     this.active = group;
+    this.tabList?.setActive(group);
     for (const name of GROUPS) {
-      const tab = this.tabs.get(name);
       const panel = this.panels.get(name);
-      const on = name === group;
-      if (tab) {
-        tab.classList.toggle(styles.tabActive, on);
-        tab.setAttribute("aria-selected", on ? "true" : "false");
-        tab.tabIndex = on ? 0 : -1;
-      }
-      if (panel) panel.hidden = !on;
+      if (panel) panel.hidden = name !== group;
     }
   }
+}
 
-  private onTabKey = (event: KeyboardEvent): void => {
-    const index = GROUPS.indexOf(this.active);
-    if (index < 0) return;
-    let next = index;
-    if (event.key === "ArrowRight" || event.key === "ArrowDown") next = (index + 1) % GROUPS.length;
-    else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
-      next = (index - 1 + GROUPS.length) % GROUPS.length;
-    } else if (event.key === "Home") next = 0;
-    else if (event.key === "End") next = GROUPS.length - 1;
-    else return;
-    event.preventDefault();
-    const group = GROUPS[next];
-    if (!group) return;
-    this.selectGroup(group);
-    this.tabs.get(group)?.focus();
-  };
+function isPixelKey(key: SettingKey): boolean {
+  return key === "pixels" || key === "uiPixels";
 }
