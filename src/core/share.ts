@@ -34,7 +34,7 @@ import {
   type Tower,
 } from "./tower.ts";
 
-const VERSION = 7;
+const VERSION = 8;
 const LEGACY_VERSION = 1;
 const THEME_VERSION = 3;
 const NAMED_VERSION = 3;
@@ -42,6 +42,7 @@ const COLLECTIBLE_VERSION = 4;
 const PHYSICS_VERSION = 5;
 const STAR_VERSION = 6;
 const WINGS_VERSION = 7;
+const GHOST_VERSION = 8;
 const PHYSICS_BITS: Record<PhysicsSettingKey, number> = {
   gravity: 7,
   grip: 6,
@@ -271,6 +272,8 @@ function writeFloor(writer: BitWriter, maze: Maze): void {
   writeCollectibles(writer, maze.coins, maze);
   writeCollectibles(writer, maze.stars, maze);
   writeCollectibles(writer, maze.wings, maze);
+  writeCollectibles(writer, maze.ghosts, maze);
+  writeOneWays(writer, maze);
 }
 
 function writeFeature(writer: BitWriter, feature: Feature): void {
@@ -447,6 +450,8 @@ function readFloor(reader: BitReader, version: number): Maze | null {
     coins: [],
     stars: [],
     wings: [],
+    ghosts: [],
+    oneWays: [],
     start: { c: startC, r: startR },
     goal: { c: goalC, r: goalR },
     hatch,
@@ -485,8 +490,52 @@ function readFloor(reader: BitReader, version: number): Maze | null {
     if (version >= WINGS_VERSION) {
       if (!readCollectibles(reader, maze, maze.wings, taken)) return null;
     }
+    if (version >= GHOST_VERSION) {
+      if (!readCollectibles(reader, maze, maze.ghosts, taken)) return null;
+      if (!readOneWays(reader, maze)) return null;
+    }
   }
   return maze;
+}
+
+function writeOneWays(writer: BitWriter, maze: Maze): void {
+  if (maze.oneWays.length >= 2 ** COUNT_BITS) throw new Error("oneways");
+  writer.write(maze.oneWays.length, COUNT_BITS);
+  for (const gate of maze.oneWays) {
+    const dir = DIRS.indexOf(gate.dir);
+    if (dir < 0 || !wallOnBoard(maze, gate.axis, gate.c, gate.r)) throw new Error("oneway");
+    writer.write(gate.axis === "v" ? 0 : 1, 1);
+    writer.write(gate.c, COORD_BITS);
+    writer.write(gate.r, COORD_BITS);
+    writer.write(dir, 2);
+  }
+}
+
+function readOneWays(reader: BitReader, maze: Maze): boolean {
+  const count = reader.read(COUNT_BITS);
+  if (count === null || count > maze.cols * maze.rows * 2) return false;
+  const seen = new Set<string>();
+  for (let i = 0; i < count; i += 1) {
+    const axisBit = reader.read(1);
+    const c = reader.read(COORD_BITS);
+    const r = reader.read(COORD_BITS);
+    const dirBits = reader.read(2);
+    if (axisBit === null || c === null || r === null || dirBits === null) return false;
+    const axis: WallAxis = axisBit === 0 ? "v" : "h";
+    const dir = DIRS[dirBits];
+    if (!dir || !wallOnBoard(maze, axis, c, r)) return false;
+    const allowed = axis === "v" ? dir === "e" || dir === "w" : dir === "n" || dir === "s";
+    const id = `${axis}:${c},${r}`;
+    if (!allowed || seen.has(id) || !interiorClosed(maze, axis, c, r)) return false;
+    seen.add(id);
+    maze.oneWays.push({ axis, c, r, dir });
+  }
+  return true;
+}
+
+function wallOnBoard(maze: Maze, axis: WallAxis, c: number, r: number): boolean {
+  if (c < 0 || r < 0) return false;
+  return axis === "v" ? c < maze.cols - 1 && r < maze.rows : c < maze.cols && r < maze.rows - 1;
 }
 
 function writeCollectibles(

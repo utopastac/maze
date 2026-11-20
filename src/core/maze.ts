@@ -32,6 +32,10 @@ export interface WallRef {
   r: number;
 }
 
+export interface OneWay extends WallRef {
+  dir: Direction;
+}
+
 export type FloorTile =
   | { kind: "boost"; c: number; r: number; dir: Direction }
   | { kind: "warp"; c: number; r: number; pair: number }
@@ -54,6 +58,8 @@ export interface Maze {
   coins: GridPoint[];
   stars: GridPoint[];
   wings: GridPoint[];
+  ghosts: GridPoint[];
+  oneWays: OneWay[];
   start: GridPoint;
   goal: GridPoint;
   hatch: GridPoint | null;
@@ -141,6 +147,8 @@ export function carveFloor(
     coins: [],
     stars: [],
     wings: [],
+    ghosts: [],
+    oneWays: [],
     start: originCell,
     goal,
     hatch: null,
@@ -148,74 +156,97 @@ export function carveFloor(
   };
 }
 
+/** Fill fields added after older saves / mid-HMR maze objects. */
+export function ensureMaze(maze: Maze): Maze {
+  if (!maze.holes) maze.holes = [];
+  if (!maze.tiles) maze.tiles = [];
+  if (!maze.hearts) maze.hearts = [];
+  if (!maze.coins) maze.coins = [];
+  if (!maze.stars) maze.stars = [];
+  if (!maze.wings) maze.wings = [];
+  if (!maze.ghosts) maze.ghosts = [];
+  if (!maze.oneWays) maze.oneWays = [];
+  return maze;
+}
+
 export function cloneMaze(maze: Maze): Maze {
+  const src = ensureMaze(maze);
   const next: Maze = {
-    cols: maze.cols,
-    rows: maze.rows,
-    walls: maze.walls.map((row) => row.slice()),
-    holes: maze.holes.map((hole) => ({ c: hole.c, r: hole.r })),
-    tiles: maze.tiles.map((tile) => cloneTile(tile)),
-    hearts: maze.hearts.map((heart) => ({ c: heart.c, r: heart.r })),
-    coins: maze.coins.map((coin) => ({ c: coin.c, r: coin.r })),
-    stars: maze.stars.map((star) => ({ c: star.c, r: star.r })),
-    wings: maze.wings.map((wing) => ({ c: wing.c, r: wing.r })),
-    start: { ...maze.start },
-    goal: { ...maze.goal },
-    hatch: maze.hatch ? { ...maze.hatch } : null,
-    theme: parseFloorTheme(maze.theme),
+    cols: src.cols,
+    rows: src.rows,
+    walls: src.walls.map((row) => row.slice()),
+    holes: src.holes.map((hole) => ({ c: hole.c, r: hole.r })),
+    tiles: src.tiles.map((tile) => cloneTile(tile)),
+    hearts: src.hearts.map((heart) => ({ c: heart.c, r: heart.r })),
+    coins: src.coins.map((coin) => ({ c: coin.c, r: coin.r })),
+    stars: src.stars.map((star) => ({ c: star.c, r: star.r })),
+    wings: src.wings.map((wing) => ({ c: wing.c, r: wing.r })),
+    ghosts: src.ghosts.map((ghost) => ({ c: ghost.c, r: ghost.r })),
+    oneWays: src.oneWays.map((gate) => ({ ...gate })),
+    start: { ...src.start },
+    goal: { ...src.goal },
+    hatch: src.hatch ? { ...src.hatch } : null,
+    theme: parseFloorTheme(src.theme),
   };
-  const physics = cloneFloorPhysics(maze.physics);
+  const physics = cloneFloorPhysics(src.physics);
   if (physics) next.physics = physics;
   return next;
 }
 
 export function resizeMaze(maze: Maze, cols: number, rows: number): Maze {
+  const src = ensureMaze(maze);
   const nextCols = clampSize(cols);
   const nextRows = clampSize(rows);
   const next: Maze = {
     cols: nextCols,
     rows: nextRows,
     walls: Array.from({ length: nextRows }, (_, r) =>
-      Array.from({ length: nextCols }, (_, c) => maze.walls[r]?.[c] ?? 0),
+      Array.from({ length: nextCols }, (_, c) => src.walls[r]?.[c] ?? 0),
     ),
-    holes: maze.holes
+    holes: src.holes
       .filter((hole) => hole.c < nextCols && hole.r < nextRows)
       .map((hole) => ({ c: hole.c, r: hole.r })),
-    tiles: maze.tiles
+    tiles: src.tiles
       .filter((tile) => tile.c < nextCols && tile.r < nextRows)
       .map((tile) => cloneTile(tile)),
-    hearts: maze.hearts
+    hearts: src.hearts
       .filter((heart) => heart.c < nextCols && heart.r < nextRows)
       .map((heart) => ({ c: heart.c, r: heart.r })),
-    coins: maze.coins
+    coins: src.coins
       .filter((coin) => coin.c < nextCols && coin.r < nextRows)
       .map((coin) => ({ c: coin.c, r: coin.r })),
-    stars: maze.stars
+    stars: src.stars
       .filter((star) => star.c < nextCols && star.r < nextRows)
       .map((star) => ({ c: star.c, r: star.r })),
-    wings: maze.wings
+    wings: src.wings
       .filter((wing) => wing.c < nextCols && wing.r < nextRows)
       .map((wing) => ({ c: wing.c, r: wing.r })),
-    start: clampCell(maze.start, nextCols, nextRows),
-    goal: clampCell(maze.goal, nextCols, nextRows),
-    hatch: maze.hatch ? clampCell(maze.hatch, nextCols, nextRows) : null,
-    theme: parseFloorTheme(maze.theme),
+    ghosts: src.ghosts
+      .filter((ghost) => ghost.c < nextCols && ghost.r < nextRows)
+      .map((ghost) => ({ c: ghost.c, r: ghost.r })),
+    oneWays: src.oneWays
+      .filter((gate) => gate.c < nextCols && gate.r < nextRows)
+      .map((gate) => ({ ...gate })),
+    start: clampCell(src.start, nextCols, nextRows),
+    goal: clampCell(src.goal, nextCols, nextRows),
+    hatch: src.hatch ? clampCell(src.hatch, nextCols, nextRows) : null,
+    theme: parseFloorTheme(src.theme),
   };
-  const physics = cloneFloorPhysics(maze.physics);
+  const physics = cloneFloorPhysics(src.physics);
   if (physics) next.physics = physics;
 
   for (let r = 0; r < nextRows; r += 1) {
     for (let c = 0; c < nextCols - 1; c += 1) {
-      const both = r < maze.rows && c + 1 < maze.cols;
-      const closed = both && ((maze.walls[r]?.[c] ?? 0) & Wall.east) !== 0;
+      const both = r < src.rows && c + 1 < src.cols;
+      const closed = both && ((src.walls[r]?.[c] ?? 0) & Wall.east) !== 0;
       setInteriorWall(next, "v", c, r, closed);
     }
   }
 
   for (let r = 0; r < nextRows - 1; r += 1) {
     for (let c = 0; c < nextCols; c += 1) {
-      const both = r + 1 < maze.rows && c < maze.cols;
-      const closed = both && ((maze.walls[r]?.[c] ?? 0) & Wall.south) !== 0;
+      const both = r + 1 < src.rows && c < src.cols;
+      const closed = both && ((src.walls[r]?.[c] ?? 0) & Wall.south) !== 0;
       setInteriorWall(next, "h", c, r, closed);
     }
   }
@@ -231,6 +262,7 @@ export function resizeMaze(maze: Maze, cols: number, rows: number): Maze {
   );
   scrubCollectibles(next);
   scrubSwitchWalls(next);
+  scrubOneWays(next);
   return next;
 }
 
@@ -254,9 +286,12 @@ export function insertColumn(maze: Maze, at: number): Maze {
   next.coins = next.coins.map((coin) => shiftPointCol(coin, index, 1));
   next.stars = next.stars.map((star) => shiftPointCol(star, index, 1));
   next.wings = next.wings.map((wing) => shiftPointCol(wing, index, 1));
+  next.ghosts = next.ghosts.map((ghost) => shiftPointCol(ghost, index, 1));
+  next.oneWays = shiftOneWaysCol(next.oneWays, index, 1);
   openInsertSeamCol(next, index);
   sealBorder(next);
   scrubSwitchWalls(next);
+  scrubOneWays(next);
   return next;
 }
 
@@ -276,9 +311,12 @@ export function insertRow(maze: Maze, at: number): Maze {
   next.coins = next.coins.map((coin) => shiftPointRow(coin, index, 1));
   next.stars = next.stars.map((star) => shiftPointRow(star, index, 1));
   next.wings = next.wings.map((wing) => shiftPointRow(wing, index, 1));
+  next.ghosts = next.ghosts.map((ghost) => shiftPointRow(ghost, index, 1));
+  next.oneWays = shiftOneWaysRow(next.oneWays, index, 1);
   openInsertSeamRow(next, index);
   sealBorder(next);
   scrubSwitchWalls(next);
+  scrubOneWays(next);
   return next;
 }
 
@@ -311,6 +349,10 @@ export function deleteColumn(maze: Maze, index: number): Maze {
   next.wings = next.wings
     .filter((wing) => wing.c !== index)
     .map((wing) => shiftPointCol(wing, index, -1));
+  next.ghosts = next.ghosts
+    .filter((ghost) => ghost.c !== index)
+    .map((ghost) => shiftPointCol(ghost, index, -1));
+  next.oneWays = shiftOneWaysCol(next.oneWays, index, -1);
   if (lostStart) next.start = spareAfterDelete(next, [next.goal, next.hatch]);
   if (lostGoal) next.goal = spareAfterDelete(next, [next.start, next.hatch]);
   next.start = clampCell(next.start, next.cols, next.rows);
@@ -319,6 +361,7 @@ export function deleteColumn(maze: Maze, index: number): Maze {
   sealBorder(next);
   separateEnds(next);
   scrubSwitchWalls(next);
+  scrubOneWays(next);
   return next;
 }
 
@@ -351,6 +394,10 @@ export function deleteRow(maze: Maze, index: number): Maze {
   next.wings = next.wings
     .filter((wing) => wing.r !== index)
     .map((wing) => shiftPointRow(wing, index, -1));
+  next.ghosts = next.ghosts
+    .filter((ghost) => ghost.r !== index)
+    .map((ghost) => shiftPointRow(ghost, index, -1));
+  next.oneWays = shiftOneWaysRow(next.oneWays, index, -1);
   if (lostStart) next.start = spareAfterDelete(next, [next.goal, next.hatch]);
   if (lostGoal) next.goal = spareAfterDelete(next, [next.start, next.hatch]);
   next.start = clampCell(next.start, next.cols, next.rows);
@@ -359,6 +406,7 @@ export function deleteRow(maze: Maze, index: number): Maze {
   sealBorder(next);
   separateEnds(next);
   scrubSwitchWalls(next);
+  scrubOneWays(next);
   return next;
 }
 
@@ -401,8 +449,11 @@ export function moveColumn(maze: Maze, from: number, to: number): Maze {
   next.coins = maze.coins.map((coin) => ({ c: mapC(coin.c), r: coin.r }));
   next.stars = maze.stars.map((star) => ({ c: mapC(star.c), r: star.r }));
   next.wings = maze.wings.map((wing) => ({ c: mapC(wing.c), r: wing.r }));
+  next.ghosts = maze.ghosts.map((ghost) => ({ c: mapC(ghost.c), r: ghost.r }));
+  next.oneWays = remapOneWaysCol(maze.oneWays, mapC);
   sealBorder(next);
   scrubSwitchWalls(next);
+  scrubOneWays(next);
   return next;
 }
 
@@ -445,8 +496,11 @@ export function moveRow(maze: Maze, from: number, to: number): Maze {
   next.coins = maze.coins.map((coin) => ({ c: coin.c, r: mapR(coin.r) }));
   next.stars = maze.stars.map((star) => ({ c: star.c, r: mapR(star.r) }));
   next.wings = maze.wings.map((wing) => ({ c: wing.c, r: mapR(wing.r) }));
+  next.ghosts = maze.ghosts.map((ghost) => ({ c: ghost.c, r: mapR(ghost.r) }));
+  next.oneWays = remapOneWaysRow(maze.oneWays, mapR);
   sealBorder(next);
   scrubSwitchWalls(next);
+  scrubOneWays(next);
   return next;
 }
 
@@ -459,6 +513,8 @@ export function clearInterior(maze: Maze): void {
   maze.coins = [];
   maze.stars = [];
   maze.wings = [];
+  maze.ghosts = [];
+  maze.oneWays = [];
 }
 
 export function interiorClosed(maze: Maze, axis: WallAxis, c: number, r: number): boolean {
@@ -476,7 +532,10 @@ export function setInteriorWall(maze: Maze, axis: WallAxis, c: number, r: number
     writeBit(maze, c, r, Wall.south, closed);
     writeBit(maze, c, r + 1, Wall.north, closed);
   }
-  if (!closed) releaseSwitch(maze, { axis, c, r });
+  if (!closed) {
+    releaseSwitch(maze, { axis, c, r });
+    releaseOneWay(maze, { axis, c, r });
+  }
 }
 
 export function placeStart(maze: Maze, cell: GridPoint): boolean {
@@ -528,11 +587,20 @@ export function hasWings(maze: Maze, cell: GridPoint): boolean {
   return maze.wings.some((wing) => same(wing, cell));
 }
 
-function clearOtherCollectibles(maze: Maze, cell: GridPoint, keep: "heart" | "coin" | "star" | "wings"): void {
+export function hasGhost(maze: Maze, cell: GridPoint): boolean {
+  return maze.ghosts.some((ghost) => same(ghost, cell));
+}
+
+function clearOtherCollectibles(
+  maze: Maze,
+  cell: GridPoint,
+  keep: "heart" | "coin" | "star" | "wings" | "ghost",
+): void {
   if (keep !== "heart") maze.hearts = maze.hearts.filter((heart) => !same(heart, cell));
   if (keep !== "coin") maze.coins = maze.coins.filter((coin) => !same(coin, cell));
   if (keep !== "star") maze.stars = maze.stars.filter((star) => !same(star, cell));
   if (keep !== "wings") maze.wings = maze.wings.filter((wing) => !same(wing, cell));
+  if (keep !== "ghost") maze.ghosts = maze.ghosts.filter((ghost) => !same(ghost, cell));
 }
 
 /** Toggle or set a heart overlay on a walkable cell. */
@@ -579,6 +647,17 @@ export function setWings(maze: Maze, cell: GridPoint, on = true): void {
   if (!hasWings(maze, cell)) maze.wings.push({ c: cell.c, r: cell.r });
 }
 
+/** Toggle or set a ghost power-up overlay on a walkable cell. */
+export function setGhost(maze: Maze, cell: GridPoint, on = true): void {
+  if (!collectibleOk(maze, cell)) return;
+  clearOtherCollectibles(maze, cell, "ghost");
+  if (!on) {
+    maze.ghosts = maze.ghosts.filter((ghost) => !same(ghost, cell));
+    return;
+  }
+  if (!hasGhost(maze, cell)) maze.ghosts.push({ c: cell.c, r: cell.r });
+}
+
 export function toggleHeart(maze: Maze, cell: GridPoint): void {
   if (hasHeart(maze, cell)) setHeart(maze, cell, false);
   else setHeart(maze, cell, true);
@@ -597,6 +676,40 @@ export function toggleStar(maze: Maze, cell: GridPoint): void {
 export function toggleWings(maze: Maze, cell: GridPoint): void {
   if (hasWings(maze, cell)) setWings(maze, cell, false);
   else setWings(maze, cell, true);
+}
+
+export function toggleGhost(maze: Maze, cell: GridPoint): void {
+  if (hasGhost(maze, cell)) setGhost(maze, cell, false);
+  else setGhost(maze, cell, true);
+}
+
+export function oneWayAt(maze: Maze, wall: WallRef): OneWay | undefined {
+  return maze.oneWays.find((gate) => sameWall(gate, wall));
+}
+
+export function defaultOneWayDir(axis: WallAxis): Direction {
+  return axis === "v" ? "e" : "s";
+}
+
+export function oneWayDirs(axis: WallAxis): [Direction, Direction] {
+  return axis === "v" ? ["e", "w"] : ["s", "n"];
+}
+
+/** Add a one-way gate to an interior wall, closing it if needed; painting again flips the direction. */
+export function paintOneWay(maze: Maze, wall: WallRef): void {
+  if (!interiorInside(maze, wall)) return;
+  const existing = oneWayAt(maze, wall);
+  const [first, second] = oneWayDirs(wall.axis);
+  if (existing) {
+    existing.dir = existing.dir === first ? second : first;
+    return;
+  }
+  setInteriorWall(maze, wall.axis, wall.c, wall.r, true);
+  maze.oneWays.push({ axis: wall.axis, c: wall.c, r: wall.r, dir: defaultOneWayDir(wall.axis) });
+}
+
+export function clearOneWay(maze: Maze, wall: WallRef): void {
+  releaseOneWay(maze, wall);
 }
 
 export function setBoost(maze: Maze, cell: GridPoint, dir: Direction): void {
@@ -701,7 +814,8 @@ export type LiftedTile =
   | { kind: "heart" }
   | { kind: "coin" }
   | { kind: "star" }
-  | { kind: "wings" };
+  | { kind: "wings" }
+  | { kind: "ghost" };
 
 export function liftAt(
   maze: Maze,
@@ -719,6 +833,7 @@ export function liftAt(
   if (hasCoin(maze, cell)) return { kind: "coin" };
   if (hasStar(maze, cell)) return { kind: "star" };
   if (hasWings(maze, cell)) return { kind: "wings" };
+  if (hasGhost(maze, cell)) return { kind: "ghost" };
   if (!tile) return null;
   if (tile.kind === "boost") return { kind: "boost", dir: tile.dir };
   if (tile.kind === "warp") return { kind: "warp", pair: tile.pair };
@@ -734,7 +849,8 @@ export function canDropLifted(maze: Maze, from: GridPoint, to: GridPoint, lift: 
   if (same(from, to)) return true;
   if (lift.kind === "start") return !same(to, maze.goal) && !(maze.hatch && same(to, maze.hatch));
   if (lift.kind === "goal") return !same(to, maze.start) && !(maze.hatch && same(to, maze.hatch));
-  if (lift.kind === "heart" || lift.kind === "coin" || lift.kind === "star" || lift.kind === "wings") {
+  if (lift.kind === "heart" || lift.kind === "coin" || lift.kind === "star"
+    || lift.kind === "wings" || lift.kind === "ghost") {
     return collectibleOk(maze, to);
   }
   return !same(to, maze.start) && !same(to, maze.goal) && !(maze.hatch && same(to, maze.hatch));
@@ -770,6 +886,11 @@ export function moveLifted(maze: Maze, from: GridPoint, to: GridPoint, lift: Lif
     setWings(maze, to, true);
     return true;
   }
+  if (lift.kind === "ghost") {
+    clearCollectibles(maze, from);
+    setGhost(maze, to, true);
+    return true;
+  }
 
   stripCell(maze, from);
   stripCell(maze, to);
@@ -792,6 +913,7 @@ function liftStillAt(maze: Maze, cell: GridPoint, lift: LiftedTile): boolean {
   if (lift.kind === "coin") return hasCoin(maze, cell);
   if (lift.kind === "star") return hasStar(maze, cell);
   if (lift.kind === "wings") return hasWings(maze, cell);
+  if (lift.kind === "ghost") return hasGhost(maze, cell);
   const tile = tileAt(maze, cell.c, cell.r);
   if (!tile || tile.kind !== lift.kind) return false;
   if (lift.kind === "boost") return tile.kind === "boost" && tile.dir === lift.dir;
@@ -825,6 +947,79 @@ function releaseSwitch(maze: Maze, wall: WallRef): void {
   }
 }
 
+function releaseOneWay(maze: Maze, wall: WallRef): void {
+  maze.oneWays = maze.oneWays.filter((gate) => !sameWall(gate, wall));
+}
+
+function interiorInside(maze: Maze, wall: WallRef): boolean {
+  return wall.axis === "v"
+    ? wall.c >= 0 && wall.r >= 0 && wall.c < maze.cols - 1 && wall.r < maze.rows
+    : wall.c >= 0 && wall.r >= 0 && wall.c < maze.cols && wall.r < maze.rows - 1;
+}
+
+function validOneWayDir(gate: OneWay): boolean {
+  return oneWayDirs(gate.axis).includes(gate.dir);
+}
+
+function scrubOneWays(maze: Maze): void {
+  const seen = new Set<string>();
+  maze.oneWays = maze.oneWays.filter((gate) => {
+    const id = wallKey(gate);
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return validOneWayDir(gate)
+      && interiorInside(maze, gate)
+      && interiorClosed(maze, gate.axis, gate.c, gate.r);
+  });
+}
+
+function flipDir(dir: Direction): Direction {
+  if (dir === "e") return "w";
+  if (dir === "w") return "e";
+  if (dir === "n") return "s";
+  return "n";
+}
+
+function shiftOneWaysCol(gates: OneWay[], at: number, dir: 1 | -1): OneWay[] {
+  const next: OneWay[] = [];
+  for (const gate of gates) {
+    const wall = shiftWallCol(gate, at, dir);
+    if (wall) next.push({ ...wall, dir: gate.dir });
+  }
+  return next;
+}
+
+function shiftOneWaysRow(gates: OneWay[], at: number, dir: 1 | -1): OneWay[] {
+  const next: OneWay[] = [];
+  for (const gate of gates) {
+    const wall = shiftWallRow(gate, at, dir);
+    if (wall) next.push({ ...wall, dir: gate.dir });
+  }
+  return next;
+}
+
+function remapOneWaysCol(gates: OneWay[], mapC: (c: number) => number): OneWay[] {
+  const next: OneWay[] = [];
+  for (const gate of gates) {
+    const wall = remapWallCol(gate, mapC);
+    if (!wall) continue;
+    const flipped = gate.axis === "v" && mapC(gate.c) > mapC(gate.c + 1);
+    next.push({ ...wall, dir: flipped ? flipDir(gate.dir) : gate.dir });
+  }
+  return next;
+}
+
+function remapOneWaysRow(gates: OneWay[], mapR: (r: number) => number): OneWay[] {
+  const next: OneWay[] = [];
+  for (const gate of gates) {
+    const wall = remapWallRow(gate, mapR);
+    if (!wall) continue;
+    const flipped = gate.axis === "h" && mapR(gate.r) > mapR(gate.r + 1);
+    next.push({ ...wall, dir: flipped ? flipDir(gate.dir) : gate.dir });
+  }
+  return next;
+}
+
 function sameWall(a: WallRef, b: WallRef): boolean {
   return a.axis === b.axis && a.c === b.c && a.r === b.r;
 }
@@ -852,6 +1047,7 @@ function clearCollectibles(maze: Maze, cell: GridPoint): void {
   maze.coins = maze.coins.filter((coin) => !same(coin, cell));
   maze.stars = maze.stars.filter((star) => !same(star, cell));
   maze.wings = maze.wings.filter((wing) => !same(wing, cell));
+  maze.ghosts = maze.ghosts.filter((ghost) => !same(ghost, cell));
 }
 
 function collectibleOk(maze: Maze, cell: GridPoint): boolean {
@@ -875,6 +1071,14 @@ function scrubCollectibles(maze: Maze): void {
       && !hasHeart(maze, wing)
       && !hasCoin(maze, wing)
       && !hasStar(maze, wing),
+  );
+  maze.ghosts = maze.ghosts.filter(
+    (ghost) =>
+      collectibleOk(maze, ghost)
+      && !hasHeart(maze, ghost)
+      && !hasCoin(maze, ghost)
+      && !hasStar(maze, ghost)
+      && !hasWings(maze, ghost),
   );
 }
 

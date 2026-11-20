@@ -9,6 +9,7 @@ import {
   clearFloor,
   clearInterior,
   hasCoin,
+  hasGhost,
   hasHeart,
   hasStar,
   hasWings,
@@ -16,6 +17,8 @@ import {
   liftAt,
   loneWarpPair,
   moveLifted,
+  oneWayAt,
+  paintOneWay,
   paintSwitch,
   paintWarp,
   pendingSwitch,
@@ -28,6 +31,7 @@ import {
   setPit,
   tileAt,
   toggleCoin,
+  toggleGhost,
   toggleHeart,
   toggleStar,
   toggleWings,
@@ -95,13 +99,14 @@ export interface EditorCallbacks {
   onShare: (tower: Tower) => Promise<boolean | null>;
 }
 
-type PaletteKind = "pit" | "boost" | "warp" | "ice" | "crumble" | "block" | "switch" | "heart" | "coin" | "star" | "wings";
-type EditorTool = "move" | "erase" | "wall" | PaletteKind;
+type PaletteKind = "pit" | "boost" | "warp" | "ice" | "crumble" | "block" | "switch" | "heart" | "coin" | "star" | "wings" | "ghost";
+type EditorTool = "move" | "erase" | "wall" | "gate" | PaletteKind;
 
 const HINT_TITLE: Record<EditorTool | "warp-pair" | "switch-pair", string> = {
   move: "Move",
   erase: "Erase",
   wall: "Wall",
+  gate: "Gate",
   pit: "Pit",
   boost: "Boost",
   warp: "Warp",
@@ -113,11 +118,12 @@ const HINT_TITLE: Record<EditorTool | "warp-pair" | "switch-pair", string> = {
   coin: "Coin",
   star: "Star",
   wings: "Wings",
+  ghost: "Ghost",
   "warp-pair": "Warp",
   "switch-pair": "Switch",
 };
 type Stroke = "open" | "close";
-type CellKind = "start" | "goal" | "pit" | "floor" | "boost" | "warp" | "ice" | "crumble" | "block" | "switch" | "hatch" | "heart" | "coin" | "star" | "wings";
+type CellKind = "start" | "goal" | "pit" | "floor" | "boost" | "warp" | "ice" | "crumble" | "block" | "switch" | "hatch" | "heart" | "coin" | "star" | "wings" | "ghost";
 type WallDrag = {
   axis: WallAxis;
   anchor: number;
@@ -140,14 +146,14 @@ type LineDrag = {
   pointerId: number;
 };
 
-type BoardConfirm = "clear" | "random" | "remove-floor";
-
 type HistoryEntry = {
   tower: Tower;
   floorIndex: number;
 };
 
 const HISTORY_LIMIT = 100;
+
+const PICKUP_KINDS: readonly CellKind[] = ["heart", "coin", "star", "wings", "ghost"];
 
 const PALETTE: readonly { id: PaletteKind; label: string; icon: IconName }[] = [
   { id: "pit", label: "Pit", icon: "pit" },
@@ -161,17 +167,20 @@ const PALETTE: readonly { id: PaletteKind; label: string; icon: IconName }[] = [
   { id: "coin", label: "Coin", icon: "coin" },
   { id: "star", label: "Star", icon: "star" },
   { id: "wings", label: "Wings", icon: "wings" },
+  { id: "ghost", label: "Ghost", icon: "ghost" },
 ];
 
 const TOOLS: readonly { id: EditorTool; label: string; icon: IconName }[] = [
   { id: "move", label: "Move", icon: "move" },
   { id: "erase", label: "Erase", icon: "erase" },
   { id: "wall", label: "Wall", icon: "wall" },
+  { id: "gate", label: "Gate", icon: "gate" },
   ...PALETTE,
 ];
 
 const isBuildTool = (id: EditorTool): boolean =>
   id === "wall"
+  || id === "gate"
   || id === "pit"
   || id === "block"
   || id === "boost"
@@ -181,7 +190,7 @@ const isBuildTool = (id: EditorTool): boolean =>
   || id === "switch";
 
 const isPowerUpTool = (id: EditorTool): boolean =>
-  id === "heart" || id === "coin" || id === "star" || id === "wings";
+  id === "heart" || id === "coin" || id === "star" || id === "wings" || id === "ghost";
 
 const MAIN_TOOLS = TOOLS.filter((tool) => !isBuildTool(tool.id) && !isPowerUpTool(tool.id));
 const BUILD_TOOLS = TOOLS.filter((tool) => isBuildTool(tool.id));
@@ -191,6 +200,7 @@ const HINT_BRUSH: Record<EditorTool, string> = {
   move: "Click a cell for tile options. Drag tiles or row/column handles to edit.",
   erase: "Click tiles or walls to clear them.",
   wall: "Click or drag along edges to draw or clear walls.",
+  gate: "Click a wall to make it a one-way gate. Click again to flip it. Erase to remove.",
   pit: "Paint pits the ball can fall through.",
   boost: "Paint boost lanes. Click a boost to rotate, or pick a direction beside it.",
   warp: "Click two cells to link a warp. Click a warp to remove that end.",
@@ -202,6 +212,7 @@ const HINT_BRUSH: Record<EditorTool, string> = {
   coin: "Place coins to collect while playing.",
   star: "Place a star that grows the ball and smashes walls for a while.",
   wings: "Place wings that let the ball hover over pits for a while.",
+  ghost: "Place a ghost — pass through interior walls for a while (not pits).",
 };
 
 const DIR_WORD: Record<Direction, string> = {
@@ -267,6 +278,8 @@ export class LevelEditor {
           coins: [],
           stars: [],
           wings: [],
+          ghosts: [],
+          oneWays: [],
           start: { c: 0, r: 0 },
           goal: { c: 0, r: 0 },
           hatch: null,
@@ -294,6 +307,7 @@ export class LevelEditor {
   private readonly nameInput: HTMLInputElement;
   private stroke: Stroke | null = null;
   private wallDrag: WallDrag | null = null;
+  private readonly gateStroke = new Set<string>();
   private tileDrag: TileDrag | null = null;
   private brushHover: { c: number; r: number } | null = null;
   private toolPeek: PaletteKind | null = null;
@@ -301,14 +315,8 @@ export class LevelEditor {
   private boostGesture: "rotate" | "paint" | null = null;
   private pointerId: number | null = null;
   private noticeTimer = 0;
-  private readonly confirmRoot: HTMLElement;
-  private readonly confirmTitle: HTMLElement;
-  private readonly confirmBody: HTMLElement;
-  private readonly confirmOk: HTMLButtonElement;
   private readonly undoBtn: HTMLButtonElement;
   private readonly redoBtn: HTMLButtonElement;
-  private boardConfirm: BoardConfirm | null = null;
-  private pendingRemoveFloor = 0;
   private past: HistoryEntry[] = [];
   private future: HistoryEntry[] = [];
   private historyOpen = false;
@@ -457,23 +465,6 @@ export class LevelEditor {
           </div>
         </div>
       </div>
-      <div class="${styles.confirm}" data-confirm hidden>
-        <div class="${styles.confirmScrim}" data-confirm-scrim></div>
-        <div
-          class="${styles.confirmCard}"
-          role="alertdialog"
-          aria-modal="true"
-          aria-labelledby="editor-confirm-title"
-          aria-describedby="editor-confirm-body"
-        >
-          <p class="${styles.confirmTitle}" id="editor-confirm-title" data-confirm-title></p>
-          <p class="${styles.confirmBody}" id="editor-confirm-body" data-confirm-body></p>
-          <div class="${styles.confirmActions}">
-            <button type="button" class="glass-pill ${styles.confirmCancel}" data-confirm-cancel>Cancel</button>
-            <button type="button" class="glass-pill metal-ring ${styles.confirmOk}" data-confirm-ok>Confirm</button>
-          </div>
-        </div>
-      </div>
     `;
 
     this.board = this.require("[data-board]");
@@ -503,10 +494,6 @@ export class LevelEditor {
     this.deleteBtn = this.require("[data-delete-line]");
     this.selectBox = this.require("[data-select-box]");
     this.tileMenu = this.require("[data-tile-menu]");
-    this.confirmRoot = this.require("[data-confirm]");
-    this.confirmTitle = this.require("[data-confirm-title]");
-    this.confirmBody = this.require("[data-confirm-body]");
-    this.confirmOk = this.require("[data-confirm-ok]");
     this.undoBtn = this.require("[data-undo]");
     this.redoBtn = this.require("[data-redo]");
     this.mountPalette();
@@ -516,25 +503,16 @@ export class LevelEditor {
     this.require("[data-scrim]").addEventListener("click", this.requestClose);
     this.require("[data-close]").addEventListener("click", this.requestClose);
     this.require("[data-clear]").addEventListener("click", () => {
-      this.openBoardConfirm("clear");
+      this.clearBoard();
     });
     this.require("[data-random]").addEventListener("click", () => {
-      this.openBoardConfirm("random");
+      this.randomizeBoard();
     });
     this.undoBtn.addEventListener("click", () => {
       this.undo();
     });
     this.redoBtn.addEventListener("click", () => {
       this.redo();
-    });
-    this.require("[data-confirm-scrim]").addEventListener("click", () => {
-      this.hideBoardConfirm();
-    });
-    this.require("[data-confirm-cancel]").addEventListener("click", () => {
-      this.hideBoardConfirm();
-    });
-    this.confirmOk.addEventListener("click", () => {
-      this.commitBoardConfirm();
     });
     this.require("[data-copy]").addEventListener("click", () => {
       void this.copyModel();
@@ -576,7 +554,7 @@ export class LevelEditor {
         return;
       }
       if (index === "remove") {
-        this.openBoardConfirm("remove-floor", Number(button.dataset.index));
+        this.removeFloorAt(Number(button.dataset.index));
         return;
       }
       this.selectFloor(Number(index));
@@ -705,7 +683,6 @@ export class LevelEditor {
     this.railHover = { col: null, row: null };
     this.hideTileMenu();
     this.hideSettingsPanel();
-    this.hideBoardConfirm();
     this.hideGap();
     this.hideToast();
     delete this.chrome.dataset.dragging;
@@ -715,52 +692,9 @@ export class LevelEditor {
 
   private requestClose = (): void => {
     if (!this.isOpen()) return;
-    if (this.boardConfirm) {
-      this.hideBoardConfirm();
-      return;
-    }
     this.hide();
     this.callbacks.onClose();
   };
-
-  private openBoardConfirm(kind: BoardConfirm, removeIndex?: number): void {
-    if (this.pairing()) return;
-    if (kind === "remove-floor") {
-      if (this.mode === "campaign") return;
-      const index = removeIndex ?? this.floorIndex;
-      if (!Number.isInteger(index) || this.tower.floors.length <= FLOOR_MIN) return;
-      if (index < 0 || index >= this.tower.floors.length) return;
-      this.pendingRemoveFloor = index;
-      this.confirmTitle.textContent = "Remove this floor?";
-      this.confirmBody.textContent = `This will delete ${floorName(index)} from the tower.`;
-      this.confirmOk.textContent = "Remove";
-    } else if (kind === "clear") {
-      this.confirmTitle.textContent = "Clear the board?";
-      this.confirmBody.textContent = "This will clear all changes to the board.";
-      this.confirmOk.textContent = "Clear";
-    } else {
-      this.confirmTitle.textContent = "Randomize the board?";
-      this.confirmBody.textContent = "This will replace the board with a new maze.";
-      this.confirmOk.textContent = "Random";
-    }
-    this.boardConfirm = kind;
-    this.confirmRoot.hidden = false;
-    this.confirmOk.focus();
-  }
-
-  private hideBoardConfirm(): void {
-    this.boardConfirm = null;
-    this.confirmRoot.hidden = true;
-  }
-
-  private commitBoardConfirm(): void {
-    const kind = this.boardConfirm;
-    const removeIndex = this.pendingRemoveFloor;
-    this.hideBoardConfirm();
-    if (kind === "clear") this.clearBoard();
-    else if (kind === "random") this.randomizeBoard();
-    else if (kind === "remove-floor") this.removeFloorAt(removeIndex);
-  }
 
   private resetHistory(): void {
     this.past = [];
@@ -795,7 +729,7 @@ export class LevelEditor {
   }
 
   private undo(): void {
-    if (!this.isOpen() || this.boardConfirm || this.past.length === 0) return;
+    if (!this.isOpen() || this.past.length === 0) return;
     this.endEdit();
     this.future.push({ tower: cloneTower(this.tower), floorIndex: this.floorIndex });
     const entry = this.past.pop()!;
@@ -803,7 +737,7 @@ export class LevelEditor {
   }
 
   private redo(): void {
-    if (!this.isOpen() || this.boardConfirm || this.future.length === 0) return;
+    if (!this.isOpen() || this.future.length === 0) return;
     this.endEdit();
     this.past.push({ tower: cloneTower(this.tower), floorIndex: this.floorIndex });
     const entry = this.future.pop()!;
@@ -817,7 +751,6 @@ export class LevelEditor {
     this.wallDrag = null;
     this.clearTileDrag();
     this.hideTileMenu();
-    this.hideBoardConfirm();
     this.hideSettingsPanel();
     this.clearLineSelect();
     this.hideGap();
@@ -2008,14 +1941,17 @@ export class LevelEditor {
       else delete cell.dataset.pair;
       if (paint.open) cell.dataset.open = "true";
       else delete cell.dataset.open;
+      const spot = { c, r };
       const showHeart = paint.kind === "heart"
-        || (hasHeart(this.draft, { c, r }) && paint.kind !== "coin" && paint.kind !== "star" && paint.kind !== "wings");
+        || (hasHeart(this.draft, spot) && !PICKUP_KINDS.some((kind) => kind !== "heart" && paint.kind === kind));
       const showCoin = paint.kind === "coin"
-        || (hasCoin(this.draft, { c, r }) && paint.kind !== "heart" && paint.kind !== "star" && paint.kind !== "wings");
+        || (hasCoin(this.draft, spot) && !PICKUP_KINDS.some((kind) => kind !== "coin" && paint.kind === kind));
       const showStar = paint.kind === "star"
-        || (hasStar(this.draft, { c, r }) && paint.kind !== "heart" && paint.kind !== "coin" && paint.kind !== "wings");
+        || (hasStar(this.draft, spot) && !PICKUP_KINDS.some((kind) => kind !== "star" && paint.kind === kind));
       const showWings = paint.kind === "wings"
-        || (hasWings(this.draft, { c, r }) && paint.kind !== "heart" && paint.kind !== "coin" && paint.kind !== "star");
+        || (hasWings(this.draft, spot) && !PICKUP_KINDS.some((kind) => kind !== "wings" && paint.kind === kind));
+      const showGhost = paint.kind === "ghost"
+        || (hasGhost(this.draft, spot) && !PICKUP_KINDS.some((kind) => kind !== "ghost" && paint.kind === kind));
       if (isOver && drag.lift.kind === "heart") {
         if (this.canDropAt(drag.over, drag.lift)) cell.dataset.heart = "true";
         else delete cell.dataset.heart;
@@ -2036,6 +1972,11 @@ export class LevelEditor {
         else delete cell.dataset.wings;
       } else if (showWings) cell.dataset.wings = "true";
       else delete cell.dataset.wings;
+      if (isOver && drag.lift.kind === "ghost") {
+        if (this.canDropAt(drag.over, drag.lift)) cell.dataset.ghost = "true";
+        else delete cell.dataset.ghost;
+      } else if (showGhost) cell.dataset.ghost = "true";
+      else delete cell.dataset.ghost;
       const pickupKind: CellMarkIcon | null = cell.dataset.heart
         ? "heart"
         : cell.dataset.coin
@@ -2044,16 +1985,25 @@ export class LevelEditor {
             ? "star"
             : cell.dataset.wings
               ? "wings"
-              : paint.kind === "boost" && paint.dir
+              : cell.dataset.ghost
+                ? "ghost"
+                : paint.kind === "boost" && paint.dir
                 ? ({ n: "north", e: "east", s: "south", w: "west" } as const)[paint.dir]
                 : null;
       const pickup = cell.firstElementChild as HTMLElement | null;
       if (pickup) setPickupIcon(pickup, pickupKind);
       if (isSource || isPairSource) cell.dataset.dragging = "true";
       else delete cell.dataset.dragging;
-      if (isOver) cell.dataset.drop = this.canDropAt(drag.over, drag.lift) ? "ok" : "no";
-      else if (ghost) cell.dataset.drop = ghost.ok ? "ok" : "no";
-      else delete cell.dataset.drop;
+      if (isOver) {
+        cell.dataset.drop = this.canDropAt(drag.over, drag.lift) ? "ok" : "no";
+        delete cell.dataset.preview;
+      } else if (ghost) {
+        cell.dataset.preview = ghost.ok ? "ok" : "no";
+        delete cell.dataset.drop;
+      } else {
+        delete cell.dataset.drop;
+        delete cell.dataset.preview;
+      }
       const menuOn = !!this.tileMenuAt && this.tileMenuAt.c === c && this.tileMenuAt.r === r;
       if (menuOn) cell.dataset.menu = "true";
       else delete cell.dataset.menu;
@@ -2112,9 +2062,13 @@ export class LevelEditor {
       delete wall.dataset.joinN;
       delete wall.dataset.joinS;
     }
+    const gate = open ? undefined : oneWayAt(this.draft, { axis, c, r });
+    if (gate) wall.dataset.oneWay = gate.dir;
+    else delete wall.dataset.oneWay;
     const direction = axis === "v" ? "Vertical" : "Horizontal";
     const linked = tone === null ? "" : ", linked to a switch";
-    wall.setAttribute("aria-label", `${direction} wall, ${open ? "open" : "closed"}${linked}`);
+    const passage = gate ? `, one-way ${DIR_WORD[gate.dir]}` : "";
+    wall.setAttribute("aria-label", `${direction} wall, ${open ? "open" : "closed"}${linked}${passage}`);
   }
 
   private onPointerDown = (event: PointerEvent): void => {
@@ -2123,6 +2077,7 @@ export class LevelEditor {
     this.pointerId = event.pointerId;
     this.stroke = null;
     this.wallDrag = null;
+    this.gateStroke.clear();
     this.boostMenuAt = null;
     this.boostGesture = null;
     this.clearTileDrag();
@@ -2197,7 +2152,7 @@ export class LevelEditor {
   private hoverBrush(): PaletteKind | null {
     if (this.pairing() === "switch") return null;
     if (this.pairing() === "warp") return "warp";
-    if (this.brush === "move" || this.brush === "erase" || this.brush === "wall") return null;
+    if (this.brush === "move" || this.brush === "erase" || this.brush === "wall" || this.brush === "gate") return null;
     return this.brush;
   }
 
@@ -2217,6 +2172,7 @@ export class LevelEditor {
     if (hasCoin(this.draft, point)) return "coin";
     if (hasStar(this.draft, point)) return "star";
     if (hasWings(this.draft, point)) return "wings";
+    if (hasGhost(this.draft, point)) return "ghost";
     if (this.draft.holes.some((hole) => hole.c === c && hole.r === r)) return "pit";
     const tile = tileAt(this.draft, c, r);
     if (
@@ -2305,6 +2261,12 @@ export class LevelEditor {
         ok: this.canBrushAt(point, { kind: "wings" }),
       };
     }
+    if (brush === "ghost") {
+      return {
+        paint: { kind: "ghost", label: `Place ghost, ${where}` },
+        ok: this.canBrushAt(point, { kind: "ghost" }),
+      };
+    }
     if (brush === "warp") {
       const pair = loneWarpPair(this.draft) ?? previewWarpPair(this.draft);
       const color = pair % WARP_COLOR_COUNT;
@@ -2346,6 +2308,7 @@ export class LevelEditor {
     this.pointerId = null;
     this.stroke = null;
     this.wallDrag = null;
+    this.gateStroke.clear();
     this.boostMenuAt = null;
     this.boostGesture = null;
     if (drag && drag.moved) {
@@ -2408,6 +2371,10 @@ export class LevelEditor {
     }
 
     const brush = this.brush;
+    if (brush === "gate") {
+      this.paintGate(x, y);
+      return;
+    }
     if (brush === "move" || brush === "wall") return;
     if ((brush === "warp" || brush === "switch") && this.stroke !== null) return;
     if (this.pairing() === "warp" && brush !== "warp") return;
@@ -2467,6 +2434,9 @@ export class LevelEditor {
       this.stroke = "close";
     } else if (brush === "wings") {
       if (this.stroke === null) toggleWings(this.draft, point);
+      this.stroke = "close";
+    } else if (brush === "ghost") {
+      if (this.stroke === null) toggleGhost(this.draft, point);
       this.stroke = "close";
     } else if (brush === "switch") {
       paintSwitch(this.draft, point);
@@ -2551,6 +2521,23 @@ export class LevelEditor {
     bindSwitchWall(this.draft, { axis, c, r });
   }
 
+  private paintGate(x: number, y: number): void {
+    const wall = elementAt(x, y, "data-wall");
+    if (!wall) return;
+    const axis: WallAxis = wall.dataset.axis === "h" ? "h" : "v";
+    const c = Number(wall.dataset.c);
+    const r = Number(wall.dataset.r);
+    if (!Number.isInteger(c) || !Number.isInteger(r)) return;
+    const id = `${axis}:${c},${r}`;
+    if (this.gateStroke.has(id)) return;
+    this.gateStroke.add(id);
+    this.beginEdit();
+    this.stroke = "close";
+    paintOneWay(this.draft, { axis, c, r });
+    this.syncCells();
+    this.syncWalls();
+  }
+
   private beginWallDrag(x: number, y: number): void {
     const wall = elementAt(x, y, "data-wall");
     if (!wall) return;
@@ -2620,10 +2607,6 @@ export class LevelEditor {
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
-      if (this.boardConfirm) {
-        this.hideBoardConfirm();
-        return;
-      }
       if (this.cancelPairing()) return;
       if (this.tileMenuAt) {
         this.hideTileMenu();
@@ -2758,6 +2741,7 @@ function describeCell(
   if (hasCoin(maze, { c, r })) return { kind: "coin", label: `Coin, ${where}` };
   if (hasStar(maze, { c, r })) return { kind: "star", label: `Star, ${where}` };
   if (hasWings(maze, { c, r })) return { kind: "wings", label: `Wings, ${where}` };
+  if (hasGhost(maze, { c, r })) return { kind: "ghost", label: `Ghost, ${where}` };
   return { kind: "floor", label: `Floor, ${where}` };
 }
 
@@ -2771,6 +2755,7 @@ function describeLift(lift: LiftedTile, c: number, r: number, landing: boolean):
   if (lift.kind === "coin") return { kind: "coin", label: `Coin, ${where}` };
   if (lift.kind === "star") return { kind: "star", label: `Star, ${where}` };
   if (lift.kind === "wings") return { kind: "wings", label: `Wings, ${where}` };
+  if (lift.kind === "ghost") return { kind: "ghost", label: `Ghost, ${where}` };
   if (lift.kind === "boost") return { kind: "boost", dir: lift.dir, label: `Boost ${DIR_WORD[lift.dir]}, ${where}` };
   if (lift.kind === "ice") return { kind: "ice", label: `Ice, ${where}` };
   if (lift.kind === "crumble") return { kind: "crumble", label: `Crumble, ${where}` };

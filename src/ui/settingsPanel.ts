@@ -33,6 +33,8 @@ export class SettingsPanel {
   private readonly tabs = new Map<SettingGroup, HTMLButtonElement>();
   private invertInput: HTMLInputElement | null = null;
   private normalInput: HTMLInputElement | null = null;
+  private confirmRoot: HTMLElement | null = null;
+  private confirmOk: HTMLButtonElement | null = null;
   private active: SettingGroup = "Controls";
   private open = false;
   private mounted = false;
@@ -97,6 +99,23 @@ export class SettingsPanel {
             <div class="${styles.controls}">
               ${panels}
             </div>
+          </div>
+        </div>
+      </div>
+      <div class="${styles.confirm}" data-confirm hidden>
+        <div class="${styles.confirmScrim}" data-confirm-scrim></div>
+        <div
+          class="${styles.confirmCard}"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="settings-confirm-title"
+          aria-describedby="settings-confirm-body"
+        >
+          <p class="${styles.confirmTitle}" id="settings-confirm-title">Reset to defaults?</p>
+          <p class="${styles.confirmBody}" id="settings-confirm-body">This will replace your current settings with the factory defaults.</p>
+          <div class="${styles.confirmActions}">
+            <button type="button" class="glass-pill ${styles.confirmCancel}" data-confirm-cancel>Cancel</button>
+            <button type="button" class="glass-pill metal-ring ${styles.confirmOk}" data-confirm-ok>Reset</button>
           </div>
         </div>
       </div>
@@ -173,14 +192,22 @@ export class SettingsPanel {
       }
     }
 
-    const leave = (): void => this.callbacks.onSave();
+    this.confirmRoot = this.root.querySelector("[data-confirm]");
+    this.confirmOk = this.root.querySelector("[data-confirm-ok]");
+    const leave = (): void => {
+      if (this.confirmOpen()) {
+        this.hideResetConfirm();
+        return;
+      }
+      this.callbacks.onSave();
+    };
     this.root.querySelector("[data-save]")?.addEventListener("click", leave);
     this.root.querySelector("[data-close]")?.addEventListener("click", leave);
     this.root.querySelector("[data-scrim]")?.addEventListener("click", leave);
-    this.root.querySelector("[data-defaults]")?.addEventListener("click", () => {
-      this.settings.reset();
-      this.refresh();
-    });
+    this.root.querySelector("[data-defaults]")?.addEventListener("click", () => this.openResetConfirm());
+    this.root.querySelector("[data-confirm-scrim]")?.addEventListener("click", () => this.hideResetConfirm());
+    this.root.querySelector("[data-confirm-cancel]")?.addEventListener("click", () => this.hideResetConfirm());
+    this.confirmOk?.addEventListener("click", () => this.commitResetConfirm());
     this.root.querySelector("[data-tabs]")?.addEventListener("keydown", (event) => {
       this.onTabKey(event as KeyboardEvent);
     });
@@ -194,6 +221,7 @@ export class SettingsPanel {
 
   show(): void {
     this.open = true;
+    this.hideResetConfirm();
     this.selectGroup(this.active);
     this.refresh();
     this.root.hidden = false;
@@ -205,8 +233,29 @@ export class SettingsPanel {
 
   hide(): void {
     this.open = false;
+    this.hideResetConfirm();
     delete this.root.dataset.phase;
     this.root.hidden = true;
+  }
+
+  private confirmOpen(): boolean {
+    return !!this.confirmRoot && !this.confirmRoot.hidden;
+  }
+
+  private openResetConfirm(): void {
+    if (!this.confirmRoot) return;
+    this.confirmRoot.hidden = false;
+    this.confirmOk?.focus();
+  }
+
+  private hideResetConfirm(): void {
+    if (this.confirmRoot) this.confirmRoot.hidden = true;
+  }
+
+  private commitResetConfirm(): void {
+    this.hideResetConfirm();
+    this.settings.reset();
+    this.refresh();
   }
 
   refresh(): void {

@@ -38,19 +38,22 @@ const TITLE_PX = 26;
 const FLOOR_PX = 26;
 const START_TITLE_PX = 36;
 const START_FLOOR_PX = 22;
-const START_BTN_PX = 36;
+const START_BTN_PX = 40;
 const START_ICON = 18;
 const START_GAP = 10;
 const START_TITLE_FLOOR_GAP = 2;
 const START_COLLECT_GAP = 0.55;
 const HOME_TITLE_PX = 52;
-const HOME_BTN_PX = 34;
+const HOME_BTN_PX = 38;
 const HOME_TITLE_BTN_GAP = 22;
-const HOME_BTN_GAP = 8;
+const HOME_BTN_GAP = 10;
 const HOME_DECOR_ICON = 16;
 /** Show individual coin meshes up to this many; beyond that, one coin + count. */
 const MAX_COIN_ICONS = 5;
-const START_BTN_FONT = `700 72px "Arial Black", "Arial Bold", Impact, sans-serif`;
+/** Open counters + tracking so labels stay readable on the low-res HUD buffer. */
+const START_BTN_PX_PAINT = 96;
+const START_BTN_TRACK = 0.06;
+const START_BTN_FONT = `700 ${START_BTN_PX_PAINT}px "Arial Bold", Arial, Helvetica, sans-serif`;
 const PULSE_SECS = 0.35;
 const SHOUT_LIFE = 1.05;
 const SHOUT_POP = 0.18;
@@ -1968,7 +1971,7 @@ class StartLabel {
   }
 }
 
-/** Rounded CTA pill — painted once, shaded for depth. */
+/** Chunky CTA plate — hard bevel + thick outline, shaded for depth. */
 class StartButton {
   readonly root = new Group();
   private readonly faceMat: MeshBasicMaterial;
@@ -1993,6 +1996,7 @@ class StartButton {
     this.ctx = ctx;
     this.texture = new CanvasTexture(this.paintCanvas);
     this.texture.colorSpace = SRGBColorSpace;
+    // Linear keeps open counters readable after the HUD buffer downsamples.
     this.texture.magFilter = LinearFilter;
     this.texture.minFilter = LinearFilter;
     this.texture.generateMipmaps = false;
@@ -2007,7 +2011,7 @@ class StartButton {
       map: this.texture,
       color: "#000000",
       transparent: true,
-      opacity: 0.62,
+      opacity: 0.72,
       depthWrite: false,
       toneMapped: false,
     });
@@ -2042,11 +2046,14 @@ class StartButton {
     this.ink = ink;
     this.height = height;
 
-    const px = 72;
-    const padX = 48;
-    const padY = 26;
+    const px = START_BTN_PX_PAINT;
+    const padX = 64;
+    const padY = 34;
+    const tracking = px * START_BTN_TRACK;
+    const letters = [...text];
     this.ctx.font = START_BTN_FONT;
-    const textW = this.ctx.measureText(text).width;
+    const widths = letters.map((ch) => Math.max(1, this.ctx.measureText(ch).width));
+    const textW = widths.reduce((sum, glyphW, i) => sum + glyphW + (i > 0 ? tracking : 0), 0);
     const w = Math.max(8, Math.ceil(textW + padX * 2));
     const h = Math.max(8, Math.ceil(px + padY * 2));
     const resized = this.canvasW !== w || this.canvasH !== h;
@@ -2057,45 +2064,57 @@ class StartButton {
     // Resizing invalidates the GPU texture — rebind or prior labels ghost through.
     if (resized) this.rebindTexture();
     this.ctx.clearRect(0, 0, w, h);
+    this.ctx.font = START_BTN_FONT;
 
-    const radius = h * 0.5;
+    // Blocky plate (matches square HUD chrome), not a soft capsule.
+    const radius = Math.max(2, Math.round(h * 0.1));
+    const rim = Math.max(6, Math.round(h * 0.07));
+    const bevel = Math.max(5, Math.round(h * 0.055));
+
     roundRect(this.ctx, 0, 0, w, h, radius);
+    this.ctx.fillStyle = "#000000";
+    this.ctx.fill();
+
+    const innerX = rim;
+    const innerY = rim;
+    const innerW = w - rim * 2;
+    const innerH = h - rim * 2;
+    const innerR = Math.max(1, radius - rim * 0.35);
+    roundRect(this.ctx, innerX, innerY, innerW, innerH, innerR);
     this.ctx.fillStyle = faceFill;
     this.ctx.fill();
 
-    // Soft top sheen so the pill reads as raised, not flat.
-    const sheen = this.ctx.createLinearGradient(0, 0, 0, h);
-    sheen.addColorStop(0, "rgba(255,255,255,0.4)");
-    sheen.addColorStop(0.42, "rgba(255,255,255,0.1)");
-    sheen.addColorStop(1, "rgba(0,0,0,0.14)");
-    roundRect(this.ctx, 0, 0, w, h, radius);
-    this.ctx.fillStyle = sheen;
-    this.ctx.fill();
+    // Hard arcade bevel — light top/left, heavy bottom/right.
+    this.ctx.save();
+    roundRect(this.ctx, innerX, innerY, innerW, innerH, innerR);
+    this.ctx.clip();
+    this.ctx.fillStyle = "rgba(255,255,255,0.55)";
+    this.ctx.fillRect(innerX, innerY, innerW, bevel);
+    this.ctx.fillRect(innerX, innerY, bevel, innerH);
+    this.ctx.fillStyle = "rgba(0,0,0,0.38)";
+    this.ctx.fillRect(innerX, innerY + innerH - bevel, innerW, bevel);
+    this.ctx.fillRect(innerX + innerW - bevel, innerY, bevel, innerH);
+    this.ctx.restore();
 
-    // Inner rim for a cleaner edge against the maze.
-    this.ctx.lineWidth = Math.max(3, Math.round(h * 0.045));
-    this.ctx.strokeStyle = "rgba(0,0,0,0.28)";
-    roundRect(
-      this.ctx,
-      this.ctx.lineWidth * 0.5,
-      this.ctx.lineWidth * 0.5,
-      w - this.ctx.lineWidth,
-      h - this.ctx.lineWidth,
-      Math.max(1, radius - this.ctx.lineWidth * 0.5),
-    );
-    this.ctx.stroke();
-
-    this.ctx.font = START_BTN_FONT;
-    this.ctx.textAlign = "center";
+    // Flat tracked fill — stroke/emboss closes counters once the HUD buffer downsamples.
+    this.ctx.textAlign = "left";
     this.ctx.textBaseline = "middle";
     this.ctx.fillStyle = ink;
-    this.ctx.fillText(text, w * 0.5, h * 0.52);
+    let x = (w - textW) * 0.5;
+    const ty = h * 0.52;
+    for (let i = 0; i < letters.length; i += 1) {
+      const ch = letters[i];
+      const glyphW = widths[i] ?? 1;
+      if (!ch) continue;
+      this.ctx.fillText(ch, x, ty);
+      x += glyphW + tracking;
+    }
     this.texture.needsUpdate = true;
 
     this.width = height * (w / h);
     this.face.scale.set(this.width, height, 1);
     this.shade.scale.set(this.width, height, 1);
-    this.shade.position.set(height * 0.05, -height * 0.07, -height * 0.1);
+    this.shade.position.set(height * 0.08, -height * 0.1, -height * 0.14);
   }
 }
 

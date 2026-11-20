@@ -1,10 +1,12 @@
 import {
   WARP_COLOR_COUNT,
   hasCoin,
+  hasGhost,
   hasHeart,
   hasStar,
   hasWings,
   interiorClosed,
+  oneWayAt,
   tileAt,
   type Direction,
   type Maze,
@@ -31,7 +33,8 @@ type CellKind =
   | "heart"
   | "coin"
   | "star"
-  | "wings";
+  | "wings"
+  | "ghost";
 
 type CellPaint = {
   kind: CellKind;
@@ -110,18 +113,19 @@ export function renderMazeBoardPreview(maze: Maze, opts: { showGoal?: boolean; l
     if (paint.pair !== undefined) cell.dataset.pair = String(paint.pair);
     if (paint.open) cell.dataset.open = "true";
 
-    const showHeart = paint.kind === "heart"
-      || (hasHeart(maze, { c, r }) && paint.kind !== "coin" && paint.kind !== "star" && paint.kind !== "wings");
-    const showCoin = paint.kind === "coin"
-      || (hasCoin(maze, { c, r }) && paint.kind !== "heart" && paint.kind !== "star" && paint.kind !== "wings");
-    const showStar = paint.kind === "star"
-      || (hasStar(maze, { c, r }) && paint.kind !== "heart" && paint.kind !== "coin" && paint.kind !== "wings");
-    const showWings = paint.kind === "wings"
-      || (hasWings(maze, { c, r }) && paint.kind !== "heart" && paint.kind !== "coin" && paint.kind !== "star");
+    const spot = { c, r };
+    const otherPickup = (kind: CellKind) =>
+      (["heart", "coin", "star", "wings", "ghost"] as const).some((other) => other !== kind && paint.kind === other);
+    const showHeart = paint.kind === "heart" || (hasHeart(maze, spot) && !otherPickup("heart"));
+    const showCoin = paint.kind === "coin" || (hasCoin(maze, spot) && !otherPickup("coin"));
+    const showStar = paint.kind === "star" || (hasStar(maze, spot) && !otherPickup("star"));
+    const showWings = paint.kind === "wings" || (hasWings(maze, spot) && !otherPickup("wings"));
+    const showGhost = paint.kind === "ghost" || (hasGhost(maze, spot) && !otherPickup("ghost"));
     if (showHeart) cell.dataset.heart = "true";
     if (showCoin) cell.dataset.coin = "true";
     if (showStar) cell.dataset.star = "true";
     if (showWings) cell.dataset.wings = "true";
+    if (showGhost) cell.dataset.ghost = "true";
     const pickupKind: CellMarkIcon | null = showHeart
       ? "heart"
       : showCoin
@@ -130,9 +134,11 @@ export function renderMazeBoardPreview(maze: Maze, opts: { showGoal?: boolean; l
           ? "star"
           : showWings
             ? "wings"
-            : paint.kind === "boost" && paint.dir
-              ? ({ n: "north", e: "east", s: "south", w: "west" } as const)[paint.dir]
-              : null;
+            : showGhost
+              ? "ghost"
+              : paint.kind === "boost" && paint.dir
+                ? ({ n: "north", e: "east", s: "south", w: "west" } as const)[paint.dir]
+                : null;
     const pickup = cell.firstElementChild as HTMLElement | null;
     if (pickup) setPickupIcon(pickup, pickupKind);
   }
@@ -155,6 +161,8 @@ function makeWall(maze: Maze, axis: WallAxis, c: number, r: number): HTMLElement
   wall.dataset.open = String(open);
   const tone = switchTone(maze, axis, c, r);
   if (tone !== null) wall.dataset.pair = String(tone);
+  const gate = open ? undefined : oneWayAt(maze, { axis, c, r });
+  if (gate) wall.dataset.oneWay = gate.dir;
   if (axis === "v") {
     const joinN = !open && r > 0
       && (interiorClosed(maze, "h", c, r - 1) || interiorClosed(maze, "h", c + 1, r - 1));
@@ -227,5 +235,6 @@ function describeCell(
   if (hasCoin(maze, { c, r })) return { kind: "coin" };
   if (hasStar(maze, { c, r })) return { kind: "star" };
   if (hasWings(maze, { c, r })) return { kind: "wings" };
+  if (hasGhost(maze, { c, r })) return { kind: "ghost" };
   return { kind: "floor" };
 }

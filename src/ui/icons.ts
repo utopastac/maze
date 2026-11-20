@@ -1,6 +1,7 @@
 import {
   ArrowDown,
   ArrowLeft,
+  ArrowRightLeft,
   Bookmark,
   Box,
   CircleArrowDown,
@@ -22,6 +23,7 @@ import {
   FastForward,
   Feather,
   Flag,
+  Ghost,
   Heart,
   Home,
   Hourglass,
@@ -65,6 +67,7 @@ export type IconName =
   | "coin"
   | "star"
   | "wings"
+  | "ghost"
   | "motion"
   | "settings"
   | "edit"
@@ -72,6 +75,7 @@ export type IconName =
   | "move"
   | "erase"
   | "wall"
+  | "gate"
   | "pit"
   | "start"
   | "goal"
@@ -118,6 +122,7 @@ const NODES: Record<IconName, IconNode> = {
   coin: Coins,
   star: Star,
   wings: Feather,
+  ghost: Ghost,
   motion: Smartphone,
   settings: SlidersHorizontal,
   camera: Camera,
@@ -128,6 +133,7 @@ const NODES: Record<IconName, IconNode> = {
   move: MousePointer2,
   erase: Eraser,
   wall: BrickWall,
+  gate: ArrowRightLeft,
   pit: Circle,
   start: MapPin,
   goal: Flag,
@@ -170,7 +176,7 @@ export function iconSvg(name: IconName, size = ICON_SIZE): string {
   return el.outerHTML;
 }
 
-export type CellMarkIcon = "heart" | "coin" | "star" | "wings" | "north" | "east" | "south" | "west";
+export type CellMarkIcon = "heart" | "coin" | "star" | "wings" | "ghost" | "north" | "east" | "south" | "west";
 
 /** Swap the centered glyph in an editor/preview cell mark slot when the kind changes. */
 export function setPickupIcon(pickup: HTMLElement, kind: CellMarkIcon | null): void {

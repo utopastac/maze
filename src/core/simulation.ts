@@ -13,7 +13,7 @@ import {
   type PieceKind,
   type TowerLayout,
 } from "./layout.ts";
-import { DIRECTION_VECTOR } from "./maze.ts";
+import { DIRECTION_VECTOR, type Direction } from "./maze.ts";
 import { conjugate, quatFromTilt, rotateVec, type Quat, type Vec3 } from "./math.ts";
 import { resolveFloorPhysics, type PlaySettings } from "./playSettings.ts";
 
@@ -33,6 +33,7 @@ const STAR_TIME = 7;
 const STAR_SCALE = 1.75;
 const HOVER_TIME = 8;
 const HOVER_GAP = 0.12;
+const GHOST_TIME = 8;
 
 type WarpExit = { key: string; x: number; z: number };
 
@@ -43,6 +44,7 @@ type Surface = {
   cell?: string;
   gate?: string;
   wall?: string;
+  oneWay?: Direction;
 };
 
 export interface CrumbleView {
@@ -58,6 +60,7 @@ export interface Pose {
   ballScale: number;
   starPower: number;
   hoverPower: number;
+  ghostPower: number;
   fallingThrough: boolean;
   crumbles: CrumbleView[];
   gates: string[];
@@ -119,14 +122,18 @@ export class Simulation {
   private readonly coins = new Set<string>();
   private readonly stars = new Set<string>();
   private readonly wings = new Set<string>();
+  private readonly ghosts = new Set<string>();
   private readonly pickedHearts: string[] = [];
   private readonly pickedCoins: string[] = [];
   private readonly pickedStars: string[] = [];
   private readonly pickedWings: string[] = [];
+  private readonly pickedGhosts: string[] = [];
+  private readonly ghostHold = new Set<Surface>();
   private readonly hoverPlates: RAPIER.Collider[] = [];
   private ballR = BALL_R;
   private starLeft = 0;
   private hoverLeft = 0;
+  private ghostLeft = 0;
   private damping = 0.55;
   private settings!: PlaySettings;
   private onIce = false;
@@ -221,6 +228,8 @@ export class Simulation {
       this.world.step();
       this.tickStar();
       this.tickHover();
+      this.tickGhost();
+      this.tickOneWays();
       this.tickCrumble();
       if (this.dropping) {
         this.advanceDrop();
@@ -275,6 +284,7 @@ export class Simulation {
       ballScale: this.ballR / BALL_R,
       starPower: this.starLeft > 0 ? this.starLeft / STAR_TIME : 0,
       hoverPower: this.hoverLeft > 0 ? this.hoverLeft / HOVER_TIME : 0,
+      ghostPower: this.ghostLeft > 0 ? this.ghostLeft / GHOST_TIME : 0,
       fallingThrough: this.fallingThrough || this.escaping,
       crumbles: [...this.crumbles].map((cell) => {
         const gone = this.crumbleGone.has(cell);
@@ -318,6 +328,13 @@ export class Simulation {
     return got;
   }
 
+  takeGhosts(): string[] {
+    if (this.pickedGhosts.length === 0) return [];
+    const got = this.pickedGhosts.slice();
+    this.pickedGhosts.length = 0;
+    return got;
+  }
+
   hold(): void {
     this.ball.setGravityScale(0, true);
     this.ball.setLinvel({ x: 0, y: 0, z: 0 }, true);
@@ -346,19 +363,23 @@ export class Simulation {
     this.fallShield = 0;
     this.endStar();
     this.endHover();
+    this.endGhost(true);
     this.restorePowerUps();
     this.restoreTiles(repairCrumble);
     this.clearDrop();
   }
 
-  /** Put stars/wings back on the active floor after a retry. */
+  /** Put stars/wings/ghosts back on the active floor after a retry. */
   private restorePowerUps(): void {
     this.stars.clear();
     for (const star of this.layout.stars) this.stars.add(`${star.c},${star.r}`);
     this.wings.clear();
     for (const wing of this.layout.wings) this.wings.add(`${wing.c},${wing.r}`);
+    this.ghosts.clear();
+    for (const ghost of this.layout.ghosts) this.ghosts.add(`${ghost.c},${ghost.r}`);
     this.pickedStars.length = 0;
     this.pickedWings.length = 0;
+    this.pickedGhosts.length = 0;
   }
 
   dropTop(): void {
@@ -379,6 +400,7 @@ export class Simulation {
       this.smashed.clear();
       this.endStar();
       this.endHover();
+      this.endGhost(true);
       this.onIce = false;
       this.apply();
     }
@@ -427,6 +449,8 @@ export class Simulation {
 
   private openMeadow(clearAll = false): void {
     const gone = this.active;
+    this.ghostLeft = 0;
+    this.ghostHold.clear();
     for (let i = this.surfaces.length - 1; i >= 0; i -= 1) {
       const surface = this.surfaces[i];
       if (!surface) continue;
@@ -512,6 +536,8 @@ export class Simulation {
     for (const star of layout.stars) this.stars.add(`${star.c},${star.r}`);
     this.wings.clear();
     for (const wing of layout.wings) this.wings.add(`${wing.c},${wing.r}`);
+    this.ghosts.clear();
+    for (const ghost of layout.ghosts) this.ghosts.add(`${ghost.c},${ghost.r}`);
   }
 
   private useLayout(layout: MazeLayout): void {
@@ -542,6 +568,7 @@ export class Simulation {
         cell: piece.cell,
         gate: piece.gate,
         wall: piece.wall,
+        oneWay: piece.oneWay,
       });
     }
   }
@@ -577,6 +604,7 @@ export class Simulation {
     this.applyCoin(id, local);
     this.applyStar(id, local);
     this.applyWings(id, local);
+    this.applyGhost(id, local);
   }
 
   private stick(): void {
@@ -689,6 +717,14 @@ export class Simulation {
     this.beginHover();
   }
 
+  private applyGhost(id: string, local: Vec3): void {
+    const tileY = this.ballR + 0.26;
+    if (!this.ghosts.has(id) || local.y >= tileY || local.y <= FALL_Y) return;
+    this.ghosts.delete(id);
+    this.pickedGhosts.push(id);
+    this.beginGhost();
+  }
+
   private applySwitch(id: string, local: Vec3): void {
     const tileY = this.ballR + 0.26;
     if (local.y >= tileY || local.y <= FALL_Y) return;
@@ -714,6 +750,97 @@ export class Simulation {
     if (this.hoverLeft <= 0) return;
     this.hoverLeft = Math.max(0, this.hoverLeft - STEP);
     if (this.hoverLeft <= 0) this.endHover();
+  }
+
+  private tickGhost(): void {
+    if (this.ghostLeft > 0) {
+      this.ghostLeft = Math.max(0, this.ghostLeft - STEP);
+      // Re-assert every step — smash/switch/one-way paths can touch sensors.
+      this.syncWalls();
+      if (this.ghostLeft <= 0) this.endGhost();
+      return;
+    }
+    if (this.ghostHold.size > 0) this.releaseGhostHold();
+  }
+
+  private tickOneWays(): void {
+    if (this.layout.oneWays.length === 0) return;
+    for (const surface of this.surfaces) {
+      if (surface.oneWay && surface.floor === this.active) this.syncWall(surface);
+    }
+  }
+
+  private beginGhost(): void {
+    this.ghostLeft = GHOST_TIME;
+    this.ghostHold.clear();
+    this.syncWalls();
+    this.ball.wakeUp();
+  }
+
+  private endGhost(force = false): void {
+    this.ghostLeft = 0;
+    if (force) {
+      this.ghostHold.clear();
+      this.syncWalls();
+      return;
+    }
+    const local = this.localBall();
+    for (const surface of this.surfaces) {
+      if (surface.floor !== this.active || surface.kind !== "wall") continue;
+      if (this.overlapsBall(surface, local)) this.ghostHold.add(surface);
+    }
+    this.syncWalls();
+  }
+
+  /** Keep walls passable while the ball is still inside them after the ghost effect ends. */
+  private releaseGhostHold(): void {
+    const local = this.localBall();
+    for (const surface of this.ghostHold) {
+      if (this.overlapsBall(surface, local)) continue;
+      this.ghostHold.delete(surface);
+      this.syncWall(surface);
+    }
+  }
+
+  private overlapsBall(surface: Surface, local: Vec3): boolean {
+    const at = surface.collider.translationWrtParent();
+    const half = surface.collider.halfExtents();
+    if (!at || !half) return false;
+    const dx = Math.max(0, Math.abs(local.x - at.x) - half.x);
+    const dy = Math.max(0, Math.abs(local.y - at.y) - half.y);
+    const dz = Math.max(0, Math.abs(local.z - at.z) - half.z);
+    const reach = this.ballR + 0.02;
+    return dx * dx + dy * dy + dz * dz <= reach * reach;
+  }
+
+  private syncWalls(): void {
+    for (const surface of this.surfaces) {
+      if (surface.floor === this.active && surface.kind === "wall") this.syncWall(surface);
+    }
+  }
+
+  private syncWall(surface: Surface): void {
+    const open = this.wallOpen(surface);
+    if (surface.collider.isSensor() !== open) surface.collider.setSensor(open);
+  }
+
+  private wallOpen(surface: Surface): boolean {
+    if (surface.wall && (this.smashed.has(surface.wall) || this.openGates.has(surface.wall))) return true;
+    if (surface.gate && this.openGates.has(surface.gate)) return true;
+    if (this.ghostLeft > 0 || this.ghostHold.has(surface)) return true;
+    return surface.oneWay ? this.oneWayEntry(surface) : false;
+  }
+
+  /** A one-way wall is passable until the ball has cleared its exit face. */
+  private oneWayEntry(surface: Surface): boolean {
+    const at = surface.collider.translationWrtParent();
+    const half = surface.collider.halfExtents();
+    if (!at || !half || !surface.oneWay) return false;
+    const local = this.localBall();
+    if (surface.oneWay === "e") return local.x < at.x + half.x;
+    if (surface.oneWay === "w") return local.x > at.x - half.x;
+    if (surface.oneWay === "s") return local.z < at.z + half.z;
+    return local.z > at.z - half.z;
   }
 
   private beginStar(): void {
@@ -828,6 +955,7 @@ export class Simulation {
     }
     this.openGates.clear();
     this.smashed.clear();
+    this.syncWalls();
     this.onIce = false;
     this.ball.setLinearDamping(this.damping);
     this.ball.setAngularDamping(this.damping * 0.51);

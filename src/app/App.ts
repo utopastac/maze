@@ -37,7 +37,7 @@ import {
 import { initPhysics, Simulation } from "../core/simulation.ts";
 import { TiltController } from "../core/tilt.ts";
 import { applyRendererLook, createRenderer } from "../render/createRenderer.ts";
-import { MazeWorld } from "../render/MazeWorld.ts";
+import { MazeWorld, type EnterPlayKind } from "../render/MazeWorld.ts";
 import { PlayHud, type PlayHudHomeAction } from "../render/playHud.ts";
 import { cloneMaze, resizeMaze } from "../core/maze.ts";
 import { DEFAULT_FLOOR_THEME } from "../core/theme.ts";
@@ -112,6 +112,12 @@ export class App {
   private drops = 0;
   private running = false;
   private awaitingStart = false;
+  /** Home → play camera handoff (summit door or free-play hut door → curtains). */
+  private enteringPlay: {
+    kind: EnterPlayKind;
+    floor?: number;
+    save?: CampaignProgress;
+  } | null = null;
   private last = 0;
   private fallTimer = 0;
   private dragPointer: number | null = null;
@@ -354,12 +360,28 @@ export class App {
       return;
     }
 
-    this.leaveMenuScreens();
+    const leavingHome = this.home.isOpen();
+    if (route.kind === "play" && this.view?.isHomeBackdrop()) {
+      this.seed = Math.floor(Math.random() * 0x7fffffff);
+      if (this.view.beginEnterPlay("free")) {
+        this.enteringPlay = { kind: "free" };
+      }
+    }
+
+    this.leaveMenuScreens(leavingHome && route.kind === "play");
 
     if (route.kind === "play") {
       this.closeAllMenus(false);
       this.playReturn = null;
-      this.seed = Math.floor(Math.random() * 0x7fffffff);
+      if (this.enteringPlay?.kind === "free") {
+        this.setShellScreen("play");
+        this.resize();
+        return;
+      }
+      if (!leavingHome || !this.view?.isHomeBackdrop()) {
+        this.seed = Math.floor(Math.random() * 0x7fffffff);
+      }
+      this.view?.leaveHomeBackdrop();
       this.mount(this.seed);
       this.resize();
       return;
@@ -415,6 +437,7 @@ export class App {
     this.hud.setHeld(this.keys);
     this.running = false;
     this.awaitingStart = false;
+    this.enteringPlay = null;
     this.browsingWins = false;
     this.playHud.setStartGate(null);
     this.hud.hideHint();
@@ -460,7 +483,11 @@ export class App {
     this.home.hide();
     this.playHud.setHomeHover(null);
     this.playHudCanvas.style.cursor = "";
-    if (this.route.kind !== "home" && this.route.kind !== "tower") {
+    if (
+      this.route.kind !== "home"
+      && this.route.kind !== "tower"
+      && !this.enteringPlay
+    ) {
       this.view?.leaveHomeBackdrop();
     }
   }
@@ -481,7 +508,6 @@ export class App {
         this.goHome();
         break;
       case "play":
-        this.closeHome(true);
         this.setRoute({ kind: "play" });
         break;
       case "create":
@@ -560,7 +586,7 @@ export class App {
     }
     this.coinsMax = this.tower ? coinTotal(this.tower) : layout.floors.reduce((n, f) => n + f.coins.length, 0);
     this.sim = new Simulation(layout, this.settings);
-    view.setTower(layout);
+    view.setTower(layout, { fromEnterPlay: Boolean(this.enteringPlay) });
     this.phase = "play";
     this.seconds = 0;
     this.drops = 0;
@@ -581,7 +607,8 @@ export class App {
     this.syncCollectHud();
     this.playHud.setVisible(true);
     this.syncPlayHud();
-    this.syncStartGate();
+    if (this.enteringPlay) this.playHud.setStartGate(null);
+    else this.syncStartGate();
     view.update(0, this.sim.pose());
   }
 
@@ -600,7 +627,7 @@ export class App {
   }
 
   private pressStart(): void {
-    if (!this.awaitingStart || this.phase !== "play") return;
+    if (!this.awaitingStart || this.phase !== "play" || this.enteringPlay) return;
     this.awaitingStart = false;
     this.playHud.shatterStartGate();
     this.running = true;
@@ -608,6 +635,26 @@ export class App {
     this.canvas.style.cursor = "";
     this.hud.hideHint();
     this.syncPlayHud();
+  }
+
+  private swapEnterPlay(): void {
+    const view = this.view;
+    const enter = this.enteringPlay;
+    if (!view || !enter || !view.enterPlayNeedsSwap()) return;
+    if (enter.kind === "tower") {
+      if (!this.campaign) return;
+      const saved = enter.save;
+      this.mountCampaign(saved?.floor ?? enter.floor ?? 1);
+      if (saved) {
+        this.seconds = saved.seconds;
+        this.drops = saved.drops;
+        this.hud.setStats(this.seconds, this.drops);
+        this.syncPlayHud();
+      }
+    } else {
+      this.mount(this.seed);
+    }
+    view.notifyEnterPlaySwapped();
   }
 
   private startCampaign(): void {
@@ -663,13 +710,19 @@ export class App {
   private beginCampaignNew(): void {
     this.closeTowerLoadModal();
     this.closeHome(true);
-    this.view?.leaveHomeBackdrop();
     this.playReturn = null;
     this.campaignSaveId = null;
     this.lives = CAMPAIGN_LIVES;
     this.seconds = 0;
     this.drops = 0;
     this.campaign = generateCampaign(Math.floor(Math.random() * 0x7fffffff));
+    if (this.view?.isHomeBackdrop() && this.view.beginEnterPlay("tower")) {
+      this.enteringPlay = { kind: "tower", floor: 1 };
+      this.markPlaying();
+      this.resize();
+      return;
+    }
+    this.view?.leaveHomeBackdrop();
     this.mountCampaign(1);
     this.markPlaying();
     this.resize();
@@ -678,8 +731,18 @@ export class App {
   private beginCampaignLoad(save: CampaignProgress): void {
     this.closeTowerLoadModal();
     this.closeHome(true);
-    this.view?.leaveHomeBackdrop();
     const fresh = loadCampaignProgress(save.id) ?? save;
+    if (this.view?.isHomeBackdrop() && this.view.beginEnterPlay("tower")) {
+      this.enteringPlay = { kind: "tower", floor: fresh.floor, save: fresh };
+      this.playReturn = null;
+      this.campaignSaveId = fresh.id;
+      this.lives = Math.max(1, fresh.lives);
+      this.campaign = generateCampaign(fresh.seed);
+      this.markPlaying();
+      this.resize();
+      return;
+    }
+    this.view?.leaveHomeBackdrop();
     this.resumeCampaign(fresh);
   }
 
@@ -915,6 +978,26 @@ export class App {
     const view = this.view;
     const renderer = this.renderer;
 
+    if (this.enteringPlay && view && renderer) {
+      if (view.enterPlayNeedsSwap() && !this.sim) this.swapEnterPlay();
+      const done = view.tickEnterPlay(dt, now / 1000);
+      if (this.sim) {
+        this.tilt.level();
+        this.tilt.smooth(dt);
+        this.sim.hold();
+        view.update(now / 1000, this.sim.pose());
+      }
+      view.renderEnterPortal(renderer);
+      renderer.render(view.scene, view.camera);
+      this.playHud.update(dt, this.reduceMotion);
+      if (done) {
+        this.enteringPlay = null;
+        if (this.awaitingStart) this.syncStartGate();
+      }
+      requestAnimationFrame(this.frame);
+      return;
+    }
+
     if (this.home.isOpen()) {
       if (view?.isHomeBackdrop() && renderer) {
         view.updateHome(now / 1000);
@@ -993,10 +1076,12 @@ export class App {
     const pickedCoins = sim.takeCoins();
     const pickedStars = sim.takeStars();
     const pickedWings = sim.takeWings();
+    const pickedGhosts = sim.takeGhosts();
     if (this.phase === "play" && pickedHearts.length > 0) this.pickHearts(pickedHearts);
     if (this.phase === "play" && pickedCoins.length > 0) this.pickCoins(pickedCoins);
     if (this.phase === "play" && pickedStars.length > 0) this.pickStars(pickedStars);
     if (this.phase === "play" && pickedWings.length > 0) this.pickWings(pickedWings);
+    if (this.phase === "play" && pickedGhosts.length > 0) this.pickGhosts(pickedGhosts);
     if (this.phase === "play" && event === "fell") this.drop();
     else if (this.phase === "play" && event === "escape") this.beginEscape();
     else if ((this.phase === "play" || this.phase === "escaping") && event === "goal") this.win();
@@ -1124,6 +1209,11 @@ export class App {
   private pickWings(cells: string[]): void {
     for (const cell of cells) this.view?.collectWings(cell);
     for (let i = 0; i < cells.length; i += 1) this.playHud.shout("WINGS!", "#5ec8ff");
+  }
+
+  private pickGhosts(cells: string[]): void {
+    for (const cell of cells) this.view?.collectGhosts(cell);
+    for (let i = 0; i < cells.length; i += 1) this.playHud.shout("GHOST!", "#b9a3ff");
   }
 
   private syncCollectHud(pulseCoins = false): void {
@@ -1885,6 +1975,8 @@ function blankAuthorTower(): Tower {
           coins: [],
           stars: [],
           wings: [],
+          ghosts: [],
+          oneWays: [],
           start: { c: 0, r: 0 },
           goal: { c: 0, r: 0 },
           hatch: null,

@@ -3,6 +3,7 @@ import {
   cloneMaze,
   deleteColumn,
   deleteRow,
+  ensureMaze,
   insertColumn,
   insertRow,
   moveColumn,
@@ -148,6 +149,7 @@ export function addFloor(tower: Tower): Tower {
   above.coins = above.coins.filter((coin) => !same(coin, landing));
   above.stars = above.stars.filter((star) => !same(star, landing));
   above.wings = above.wings.filter((wing) => !same(wing, landing));
+  above.ghosts = above.ghosts.filter((ghost) => !same(ghost, landing));
   const seed = Math.floor(Math.random() * 0x7fffffff);
   next.floors.push(carveFloor(seed, above.cols, above.rows, landing));
   repairTower(next);
@@ -176,6 +178,7 @@ export function setHatch(tower: Tower, floorIndex: number, cell: GridPoint): voi
   floor.coins = floor.coins.filter((coin) => !same(coin, cell));
   floor.stars = floor.stars.filter((star) => !same(star, cell));
   floor.wings = floor.wings.filter((wing) => !same(wing, cell));
+  floor.ghosts = floor.ghosts.filter((ghost) => !same(ghost, cell));
   repairTower(tower);
 }
 
@@ -184,6 +187,7 @@ export function repairTower(tower: Tower): void {
   for (let i = 0; i < tower.floors.length; i += 1) {
     const floor = tower.floors[i];
     if (!floor) continue;
+    ensureMaze(floor);
     if (i > 0) {
       const above = tower.floors[i - 1];
       if (above?.hatch) floor.start = cellUnder(above, above.hatch, floor);
@@ -234,6 +238,16 @@ export function repairTower(tower: Tower): void {
         && !floor.hearts.some((heart) => same(heart, wing))
         && !floor.coins.some((coin) => same(coin, wing))
         && !floor.stars.some((star) => same(star, wing)),
+    );
+    floor.ghosts = floor.ghosts.filter(
+      (ghost) => !same(ghost, floor.start) && !same(ghost, floor.goal)
+        && !(floor.hatch && same(ghost, floor.hatch))
+        && !floor.holes.some((hole) => same(hole, ghost))
+        && floor.tiles.every((tile) => tile.kind !== "block" || !same(tile, ghost))
+        && !floor.hearts.some((heart) => same(heart, ghost))
+        && !floor.coins.some((coin) => same(coin, ghost))
+        && !floor.stars.some((star) => same(star, ghost))
+        && !floor.wings.some((wing) => same(wing, ghost)),
     );
   }
   setMaxHearts(tower, tower.maxHearts ?? 0);

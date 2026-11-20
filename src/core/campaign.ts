@@ -3,6 +3,7 @@ import {
   Wall,
   carveFloor,
   cloneMaze,
+  ensureMaze,
   mulberry32,
   setBoost,
   setCrumble,
@@ -57,6 +58,7 @@ export function generateCampaign(seed: number): Campaign {
     maze.coins = [];
     maze.stars = [];
     maze.wings = [];
+    maze.ghosts = [];
     floors.push({ maze });
     landing = { ...(maze.hatch ?? maze.start) };
   }
@@ -81,6 +83,7 @@ function chainCampaignFloors(floors: CampaignFloor[]): void {
   for (let index = 0; index < floors.length; index += 1) {
     const maze = floors[index]?.maze;
     if (!maze) continue;
+    ensureMaze(maze);
     const last = index === floors.length - 1;
     if (last) maze.hatch = null;
     else {
@@ -128,6 +131,16 @@ function chainCampaignFloors(floors: CampaignFloor[]): void {
         && !maze.hearts.some((heart) => same(heart, wing))
         && !maze.coins.some((coin) => same(coin, wing))
         && !maze.stars.some((star) => same(star, wing)),
+    );
+    maze.ghosts = maze.ghosts.filter(
+      (ghost) => !same(ghost, maze.start) && !same(ghost, maze.goal)
+        && !(maze.hatch && same(ghost, maze.hatch))
+        && !maze.holes.some((hole) => same(hole, ghost))
+        && maze.tiles.every((tile) => tile.kind !== "block" || !same(tile, ghost))
+        && !maze.hearts.some((heart) => same(heart, ghost))
+        && !maze.coins.some((coin) => same(coin, ghost))
+        && !maze.stars.some((star) => same(star, ghost))
+        && !maze.wings.some((wing) => same(wing, ghost)),
     );
   }
 }

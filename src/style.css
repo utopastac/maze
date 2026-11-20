@@ -300,6 +300,11 @@
   --maze-fox-tip: #f4f1ea;
   --maze-hare: #d5dde6;
   --maze-camel: #c9a56b;
+  --maze-giraffe: #e8b86d;
+  --maze-giraffe-spot: #8a5a32;
+  --maze-elephant: #8a9aa8;
+  --maze-elephant-ear: #6a7582;
+  --maze-elephant-tusk: #f4f1ea;
   --maze-lizard: #5a8f52;
   --maze-snake: #a67c43;
   --maze-scorpion: #2a2118;
@@ -397,6 +402,8 @@
   --maze-power: #ffe14a;
   --maze-hover: #5ad4ff;
   --maze-hover: #5ec8ff;
+  --maze-ghost: #b9a3ff;
+  --maze-gate: var(--maze-goal);
   --maze-win-neon: #ffbc61;
   --maze-fail-neon: #6a8098;
   --maze-fail-ground: #3a4048;

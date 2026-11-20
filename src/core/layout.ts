@@ -1,11 +1,14 @@
 import {
   Wall,
+  ensureMaze,
+  interiorClosed,
   tileAt,
   wallKey,
   type Direction,
   type FloorTile,
   type GridPoint,
   type Maze,
+  type WallAxis,
 } from "./maze.ts";
 import { cloneFloorPhysics, type FloorPhysics } from "./playSettings.ts";
 import { parseFloorTheme, type FloorThemeId } from "./theme.ts";
@@ -115,6 +118,23 @@ export interface WingMark {
   z: number;
 }
 
+export interface GhostMark {
+  c: number;
+  r: number;
+  x: number;
+  z: number;
+}
+
+export interface OneWayMark {
+  axis: WallAxis;
+  c: number;
+  r: number;
+  x: number;
+  y: number;
+  z: number;
+  dir: Direction;
+}
+
 export interface Piece {
   kind: PieceKind;
   x: number;
@@ -126,6 +146,8 @@ export interface Piece {
   gate?: string;
   /** Interior wall id used for smash / switch opening. */
   wall?: string;
+  /** Allowed travel direction when this wall is a one-way gate. */
+  oneWay?: Direction;
   cell?: string;
   tone?: number;
 }
@@ -142,6 +164,8 @@ export interface MazeLayout {
   coins: CoinMark[];
   stars: StarMark[];
   wings: WingMark[];
+  ghosts: GhostMark[];
+  oneWays: OneWayMark[];
   start: { x: number; z: number };
   goal: { x: number; z: number };
   hatch: { x: number; z: number } | null;
@@ -210,6 +234,7 @@ export function layoutMaze(
   showGoal = true,
   capped = false,
 ): MazeLayout {
+  ensureMaze(maze);
   const width = maze.cols * CELL;
   const depth = maze.rows * CELL;
   const originX = -width / 2;
@@ -224,6 +249,9 @@ export function layoutMaze(
   const coinMarks: CoinMark[] = [];
   const starMarks: StarMark[] = [];
   const wingMarks: WingMark[] = [];
+  const ghostMarks: GhostMark[] = [];
+  const oneWayMarks: OneWayMark[] = [];
+  const oneWays = new Map<string, Direction>();
   const switchWalls = new Map<string, number>();
   const holes = new Set(maze.holes.map((hole) => `${hole.c},${hole.r}`));
   const warpCount = new Map<number, number>();
@@ -234,6 +262,7 @@ export function layoutMaze(
   for (const tile of maze.tiles) {
     if (tile.kind === "switch" && tile.wall) switchWalls.set(wallKey(tile.wall), tile.tone);
   }
+  for (const gate of maze.oneWays) oneWays.set(wallKey(gate), gate.dir);
 
   for (let vz = 0; vz <= maze.rows; vz += 1) {
     for (let vx = 0; vx <= maze.cols; vx += 1) {
@@ -265,6 +294,7 @@ export function layoutMaze(
         switchWalls.has(wall) ? wall : undefined,
         switchWalls.get(wall),
         wall || undefined,
+        oneWays.get(wall),
       ));
     }
   }
@@ -282,8 +312,16 @@ export function layoutMaze(
         switchWalls.has(wall) ? wall : undefined,
         switchWalls.get(wall),
         wall || undefined,
+        oneWays.get(wall),
       ));
     }
+  }
+
+  for (const gate of maze.oneWays) {
+    if (!interiorClosed(maze, gate.axis, gate.c, gate.r)) continue;
+    const x = gate.axis === "v" ? originX + (gate.c + 1) * CELL : originX + (gate.c + 0.5) * CELL;
+    const z = gate.axis === "v" ? originZ + (gate.r + 0.5) * CELL : originZ + (gate.r + 1) * CELL;
+    oneWayMarks.push({ axis: gate.axis, c: gate.c, r: gate.r, x, y: WALL_H - 0.04, z, dir: gate.dir });
   }
 
   for (let r = 0; r < maze.rows; r += 1) {
@@ -361,6 +399,11 @@ export function layoutMaze(
     const at = center(originX, originZ, wing);
     wingMarks.push({ c: wing.c, r: wing.r, x: at.x, z: at.z });
   }
+  for (const ghost of maze.ghosts) {
+    if (ghost.c < 0 || ghost.r < 0 || ghost.c >= maze.cols || ghost.r >= maze.rows) continue;
+    const at = center(originX, originZ, ghost);
+    ghostMarks.push({ c: ghost.c, r: ghost.r, x: at.x, z: at.z });
+  }
 
   const layout: MazeLayout = {
     pieces,
@@ -374,6 +417,8 @@ export function layoutMaze(
     coins: coinMarks,
     stars: starMarks,
     wings: wingMarks,
+    ghosts: ghostMarks,
+    oneWays: oneWayMarks,
     start: center(originX, originZ, maze.start),
     goal: center(originX, originZ, maze.goal),
     hatch: maze.hatch ? center(originX, originZ, maze.hatch) : null,
@@ -439,9 +484,10 @@ function segment(
   gate?: string,
   tone?: number,
   wall?: string,
+  oneWay?: Direction,
 ): Piece {
   const { y, hy } = extents(frame);
-  return { kind: frame ? "frame" : "wall", x, y, z, hx, hy, hz, gate, tone, wall };
+  return { kind: frame ? "frame" : "wall", x, y, z, hx, hy, hz, gate, tone, wall, oneWay };
 }
 
 function addGrout(

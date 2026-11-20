@@ -23,6 +23,7 @@ import {
   NearestFilter,
   Object3D,
   OrthographicCamera,
+  Path,
   PerspectiveCamera,
   PlaneGeometry,
   PointLight,
@@ -40,6 +41,7 @@ import {
   type Material,
   type Quaternion,
   type Texture,
+  type WebGLRenderer,
 } from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import {
@@ -88,6 +90,15 @@ const HOME_TOWER_LAYERS = 100;
 const HOME_LAYER_H = 0.145;
 const HOME_TOWER_H = HOME_TOWER_LAYERS * HOME_LAYER_H;
 const HOME_BACKDROP_SPAN = CELL * 7;
+/** Zoom door to fill frame → curtain reveal of play world (tower summit or free-play hut). */
+const ENTER_PLAY_SECS = 3.05;
+/** Door fills the screen — mount play + start curtain slide. */
+const ENTER_PLAY_SWAP = 0.55;
+const ENTER_CURTAIN_W = 2.6;
+const ENTER_CURTAIN_H = 2.6;
+const ENTER_CURTAIN_Z = -0.32;
+
+export type EnterPlayKind = "tower" | "free";
 
 export class MazeWorld {
   readonly scene = new Scene();
@@ -131,12 +142,16 @@ export class MazeWorld {
   private readonly switchMats: MeshToonMaterial[];
   private readonly gateMeshes: Mesh[] = [];
   private readonly smashWalls: Mesh[] = [];
+  /** Interior wall meshes (cloned mats) — pulsed translucent while ghost is active. */
+  private readonly ghostWalls: Mesh[] = [];
+  private ghostWallsLit = false;
   private readonly crumbleMeshes: Mesh[] = [];
   private readonly arrowGeometry: BufferGeometry;
   private readonly heartGeometry: BufferGeometry;
   private readonly coinGeometry: BufferGeometry;
   private readonly starGeometry: BufferGeometry;
   private readonly wingGeometry: BufferGeometry;
+  private readonly ghostGeometry: BufferGeometry;
   private readonly sparkGeometry: BufferGeometry;
   private readonly warpGateGeometry: BufferGeometry;
   private readonly exitGateGeometry: BufferGeometry;
@@ -145,10 +160,13 @@ export class MazeWorld {
   private readonly coinMat: MeshStandardMaterial;
   private readonly starMat: MeshToonMaterial;
   private readonly wingMat: MeshToonMaterial;
+  private readonly ghostMat: MeshToonMaterial;
+  private readonly gateMarkMat: MeshToonMaterial;
   private readonly coinSparkColors: string[];
   private readonly heartSparkColors: string[];
   private readonly starSparkColors: string[];
   private readonly wingSparkColors: string[];
+  private readonly ghostSparkColors: string[];
   private readonly starFlashColors: string[];
   private readonly fireworkColors: string[];
   private readonly ballBaseColor: string;
@@ -156,10 +174,13 @@ export class MazeWorld {
   private starFlashing = false;
   private readonly ballAura: Mesh;
   private readonly ballAuraMat: MeshBasicMaterial;
+  private readonly hoverAuraColor: string;
+  private readonly ghostAuraColor: string;
   private readonly hearts: PickupBit[] = [];
   private readonly coins: PickupBit[] = [];
   private readonly stars: PickupBit[] = [];
   private readonly wings: PickupBit[] = [];
+  private readonly ghosts: PickupBit[] = [];
   private readonly warpSpins: Group[] = [];
   private readonly debris: Debris[] = [];
   private readonly sparks: Spark[] = [];
@@ -194,6 +215,38 @@ export class MazeWorld {
   private readonly homeViewFromLook = new Vector3();
   private readonly homeViewEye = new Vector3();
   private readonly homeViewLook = new Vector3();
+  private homeTowerRoot: Group | null = null;
+  private homeDoorRoot: Group | null = null;
+  private homeDoorLeft: Mesh | null = null;
+  private homeDoorRight: Mesh | null = null;
+  private homeDoorPortal: Mesh | null = null;
+  /** Ground-floor free-play hut door (same curtain enter as the summit shrine). */
+  private homeFreeDoorRoot: Group | null = null;
+  private enterCurtainRoot: Group | null = null;
+  private enterCurtainLeft: Mesh | null = null;
+  private enterCurtainRight: Mesh | null = null;
+  private enterPlay: {
+    kind: EnterPlayKind;
+    t: number;
+    swapped: boolean;
+    crossed: boolean;
+    fromFov: number;
+    toFov: number;
+    /** Play sky active once curtains cover the cut. */
+    playSky: boolean;
+  } | null = null;
+  private readonly enterPlayFromEye = new Vector3();
+  private readonly enterPlayFromLook = new Vector3();
+  private readonly enterPlayToEye = new Vector3();
+  private readonly enterPlayToLook = new Vector3();
+  private readonly enterPlayEye = new Vector3();
+  private readonly enterPlayLook = new Vector3();
+  private readonly enterPlayDoorEye = new Vector3();
+  private readonly enterPlayDoorLook = new Vector3();
+  private readonly enterPlayPushEye = new Vector3();
+  private readonly enterPlayPushLook = new Vector3();
+  private readonly enterPlayDoorPos = new Vector3();
+  private readonly enterPlayDoorOut = new Vector3();
   private lightningCooldown = 1.2;
   private lightningFlash = 0;
   private lightningLight: PointLight | null = null;
@@ -399,6 +452,11 @@ export class MazeWorld {
       foxTip: toon(token("--maze-fox-tip")),
       hare: toon(token("--maze-hare")),
       camel: toon(token("--maze-camel")),
+      giraffe: toon(token("--maze-giraffe")),
+      giraffeSpot: toon(token("--maze-giraffe-spot")),
+      elephant: toon(token("--maze-elephant")),
+      elephantEar: toon(token("--maze-elephant-ear")),
+      elephantTusk: toon(token("--maze-elephant-tusk")),
       lizard: toon(token("--maze-lizard")),
       snake: toon(token("--maze-snake")),
       scorpion: toon(token("--maze-scorpion")),
@@ -459,6 +517,7 @@ export class MazeWorld {
     this.coinGeometry = makeCoinGeo();
     this.starGeometry = starGeometry();
     this.wingGeometry = wingGeometry();
+    this.ghostGeometry = ghostGeometry();
     this.sparkGeometry = facet(new BoxGeometry(0.05, 0.14, 0.05));
     this.rainGeometry = facet(new BoxGeometry(0.028, 0.42, 0.028));
     this.warpGateGeometry = facet(new CylinderGeometry(WARP_GATE_R, WARP_GATE_R, WARP_GATE_H, 8, 1, true));
@@ -474,6 +533,10 @@ export class MazeWorld {
     this.starMat.emissiveIntensity = 0.95;
     this.wingMat = glow(token("--maze-hover"));
     this.wingMat.emissiveIntensity = 0.85;
+    this.ghostMat = glow(token("--maze-ghost"));
+    this.ghostMat.emissiveIntensity = 0.8;
+    this.gateMarkMat = glow(token("--maze-gate"));
+    this.gateMarkMat.emissiveIntensity = 0.7;
     this.coinSparkColors = [token("--maze-coin"), token("--maze-coin-shine"), "#ffffff"];
     this.heartSparkColors = [token("--maze-heart"), "#ff8a9a", "#ffffff"];
     this.starSparkColors = [
@@ -485,6 +548,7 @@ export class MazeWorld {
       "#ffffff",
     ];
     this.wingSparkColors = [token("--maze-hover"), token("--sky-ocean-1"), "#ffffff"];
+    this.ghostSparkColors = [token("--maze-ghost"), "#e4d9ff", "#ffffff"];
     this.starFlashColors = [
       token("--sky-rainbow-0"),
       token("--sky-rainbow-1"),
@@ -497,6 +561,8 @@ export class MazeWorld {
     ];
     this.ballBaseColor = token("--maze-ball");
     this.bandBaseColor = token("--maze-mark");
+    this.hoverAuraColor = token("--maze-hover");
+    this.ghostAuraColor = token("--maze-ghost");
     this.ballAuraMat = new MeshBasicMaterial({
       color: token("--maze-hover"),
       transparent: true,
@@ -567,27 +633,31 @@ export class MazeWorld {
     this.scene.add(this.ball);
   }
 
-  setTower(layout: TowerLayout): void {
+  setTower(layout: TowerLayout, opts?: { fromEnterPlay?: boolean }): void {
+    const fromEnter = Boolean(opts?.fromEnterPlay && this.enterPlay);
     this.tower = layout;
     this.story = layout.story;
     this.raised = 0;
     this.escaped = false;
     this.failed = false;
+    this.clearDebris();
+    this.clearSparks();
     this.homeBackdrop = false;
+    this.homeTowerRoot = null;
     this.clearLightning();
     this.restoreHomeLighting();
     this.meadowCamLive = false;
     this.meadowCamT = 0;
-    this.ball.visible = true;
-    this.scene.background = this.voidSky.texture;
-    this.clearDebris();
-    this.clearSparks();
     this.clearMeadow();
     this.clearGenerated();
+    this.key.shadow.camera.far = 40;
+    this.camera.far = 140;
+    this.scene.background = this.voidSky.texture;
     this.exitBreached = false;
     this.floorGroups.length = 0;
     this.frames.length = 0;
     this.focusY = 0;
+    this.board.position.set(0, 0, 0);
     layout.floors.forEach((floor, index) => {
       const group = this.makeFloor(floor, -index * layout.story);
       this.frames[index] = this.addPieces(group, floor.pieces, floor.theme);
@@ -598,6 +668,12 @@ export class MazeWorld {
       this.floorGroups.push(group);
     });
     this.setGoalLightsVisible(true);
+    if (fromEnter && this.enterPlay) {
+      this.ball.visible = true;
+      this.syncShell(0, true);
+      return;
+    }
+    this.ball.visible = true;
     this.fit();
     this.syncShell(0, true);
   }
@@ -686,6 +762,7 @@ export class MazeWorld {
 
   /** Ominous 100-floor tower meadow for the title screen. */
   enterHomeBackdrop(): void {
+    this.clearEnterPlay(false);
     this.clearDebris();
     this.clearSparks();
     this.clearMeadow();
@@ -704,6 +781,7 @@ export class MazeWorld {
     this.homeOrbit = 0.55; // start on a corner so the pyramid taper reads clearly
     this.lightningCooldown = 0.6 + Math.random() * 1.4;
     this.ball.visible = false;
+    this.board.position.set(0, 0, 0);
     this.board.quaternion.identity();
     this.tower = {
       floors: [],
@@ -728,10 +806,12 @@ export class MazeWorld {
   }
 
   leaveHomeBackdrop(): void {
-    if (!this.homeBackdrop) return;
+    if (!this.homeBackdrop && !this.enterPlay) return;
+    this.clearEnterPlay(false);
     this.homeBackdrop = false;
     this.homeView = "menu";
     this.homeViewBlend = 1;
+    this.homeTowerRoot = null;
     this.escaped = false;
     this.failed = false;
     this.meadowCamLive = false;
@@ -747,6 +827,7 @@ export class MazeWorld {
     this.floorGroups.length = 0;
     this.frames.length = 0;
     this.tower = null;
+    this.board.position.set(0, 0, 0);
     this.ball.visible = false;
     this.scene.background = this.voidSky.texture;
     this.syncVoidSky(this.lastTime);
@@ -767,6 +848,85 @@ export class MazeWorld {
     return this.homeView;
   }
 
+  /**
+   * Start a camera handoff from the home storm scene into play.
+   * Returns false when there is no home backdrop (caller should mount immediately).
+   */
+  beginEnterPlay(kind: EnterPlayKind): boolean {
+    if (!this.homeBackdrop || this.reduceMotion) {
+      this.clearEnterPlay(false);
+      return false;
+    }
+    this.enterPlayFromEye.copy(this.camera.position);
+    this.enterPlayFromLook.copy(this.meadowCamLook);
+    this.enterPlay = {
+      kind,
+      t: 0,
+      swapped: false,
+      crossed: false,
+      fromFov: this.camera.fov,
+      toFov: this.settings?.values.field ?? 40,
+      playSky: false,
+    };
+    this.restCamera();
+    this.glanceReturn = false;
+    this.syncHomeDoorFacing();
+    return true;
+  }
+
+  isEnterPlay(): boolean {
+    return this.enterPlay !== null;
+  }
+
+  enterPlayNeedsSwap(): boolean {
+    const ep = this.enterPlay;
+    if (!ep || ep.swapped) return false;
+    return ep.t >= ENTER_PLAY_SWAP;
+  }
+
+  /** Call after mounting the play tower mid-transition. */
+  notifyEnterPlaySwapped(): void {
+    const ep = this.enterPlay;
+    if (!ep || ep.swapped) return;
+    ep.swapped = true;
+    ep.toFov = this.settings?.values.field ?? 40;
+    this.beginEnterCurtainReveal();
+  }
+
+  /**
+   * Advance the home → play camera beat. Returns true when finished.
+   * Call every frame while `isEnterPlay()`; mount the play tower when `enterPlayNeedsSwap()`.
+   */
+  tickEnterPlay(dt: number, time: number): boolean {
+    const ep = this.enterPlay;
+    if (!ep) return true;
+    ep.t = Math.min(1, ep.t + dt / ENTER_PLAY_SECS);
+    this.syncHomeDoorFacing();
+    if (ep.crossed) {
+      const open = (ep.t - ENTER_PLAY_SWAP) / Math.max(1e-4, 1 - ENTER_PLAY_SWAP);
+      this.syncEnterCurtains(clamp(open, 0, 1));
+    }
+    if (this.homeBackdrop && !ep.playSky) {
+      this.tickLightning(dt);
+      this.tickRain(dt);
+      this.syncVoidSky(time);
+    } else {
+      if (this.homeBackdrop && ep.playSky) {
+        this.lightningFlash = 0;
+        if (this.lightningLight) this.lightningLight.intensity = 0;
+        if (this.lightningBolt) this.lightningBolt.visible = false;
+      }
+      this.syncVoidSky(time);
+    }
+    this.placeCamera();
+    if (ep.t < 1) return false;
+    this.finishEnterPlay();
+    return true;
+  }
+
+  /** Kept for App frame compatibility — tower enter no longer needs an offscreen portal pass. */
+  renderEnterPortal(_renderer: WebGLRenderer): void {}
+
   /** Tick rain, lightning, and orbit camera while the title backdrop is up. */
   updateHome(time: number): void {
     if (!this.homeBackdrop) return;
@@ -783,11 +943,162 @@ export class MazeWorld {
     this.tickLightning(dt);
     this.tickRain(dt);
     this.syncVoidSky(time);
+    this.syncHomeDoorFacing();
     this.placeCamera();
   }
 
   isHomeBackdrop(): boolean {
     return this.homeBackdrop;
+  }
+
+  private finishEnterPlay(): void {
+    if (!this.enterPlay) return;
+    if (!this.enterPlay.crossed) this.beginEnterCurtainReveal();
+    this.board.position.set(0, 0, 0);
+    this.ball.visible = true;
+    for (const group of this.floorGroups) if (group) group.visible = true;
+    for (const frame of this.frames) if (frame) frame.visible = true;
+    this.camera.fov = this.enterPlay.toFov;
+    this.camera.updateProjectionMatrix();
+    this.enterPlay = null;
+    this.meadowCamLive = false;
+    this.meadowCamT = 0;
+    this.restoreHomeLighting();
+    this.disposeEnterCurtains();
+    this.placeCamera();
+  }
+
+  private clearEnterPlay(restoreBoard: boolean): void {
+    if (!this.enterPlay && this.board.position.y === 0) return;
+    this.enterPlay = null;
+    this.disposeEnterCurtains();
+    if (restoreBoard) {
+      this.board.position.set(0, 0, 0);
+      this.ball.visible = true;
+    }
+  }
+
+  /**
+   * Door has filled the frame — drop the storm, snap to the play camera,
+   * and cover the view with sliding curtains that reveal the maze + sky.
+   */
+  private beginEnterCurtainReveal(): void {
+    const ep = this.enterPlay;
+    if (!ep || ep.crossed) return;
+    ep.crossed = true;
+    ep.playSky = true;
+    this.homeBackdrop = false;
+    this.clearLightning();
+    this.restoreHomeLighting();
+    this.key.shadow.camera.far = 40;
+    this.camera.far = 140;
+    this.board.position.set(0, 0, 0);
+    for (const group of this.floorGroups) if (group) group.visible = true;
+    for (const frame of this.frames) if (frame) frame.visible = true;
+    this.ball.visible = true;
+    this.computePlayCamera(this.enterPlayToEye, this.enterPlayToLook);
+    this.enterPlayEye.copy(this.enterPlayToEye);
+    this.enterPlayLook.copy(this.enterPlayToLook);
+    this.camera.position.copy(this.enterPlayEye);
+    this.camera.lookAt(this.enterPlayLook);
+    this.applyEnterPlayLens(ep.toFov);
+    const themeId = skyThemeAt(this.settings?.values.skyTheme ?? 0).id;
+    this.voidSky.configure(this.settings?.values.skyPixels ?? 4, this.settings?.values.skyShade ?? 6, themeId);
+    this.voidSky.paint(this.lastTime, true);
+    this.scene.background = this.voidSky.texture;
+    this.ensureEnterCurtains();
+    this.syncEnterCurtains(0);
+  }
+
+  /** Full-frame wood panels parented to the camera — slide apart like curtains. */
+  private ensureEnterCurtains(): void {
+    if (this.enterCurtainRoot) {
+      this.enterCurtainRoot.visible = true;
+      this.syncEnterCurtains(0);
+      return;
+    }
+    if (!this.camera.parent) this.scene.add(this.camera);
+    const root = new Group();
+    root.renderOrder = 1000;
+    const mkMat = (hex: string): MeshBasicMaterial => {
+      const mat = new MeshBasicMaterial({
+        color: hex,
+        toneMapped: false,
+        depthTest: false,
+        depthWrite: false,
+      });
+      return mat;
+    };
+    const left = new Mesh(
+      new PlaneGeometry(ENTER_CURTAIN_W, ENTER_CURTAIN_H),
+      mkMat(token("--maze-wreck")),
+    );
+    const right = new Mesh(
+      new PlaneGeometry(ENTER_CURTAIN_W, ENTER_CURTAIN_H),
+      mkMat(token("--maze-wreck-dark")),
+    );
+    left.position.set(-ENTER_CURTAIN_W * 0.5, 0, ENTER_CURTAIN_Z);
+    right.position.set(ENTER_CURTAIN_W * 0.5, 0, ENTER_CURTAIN_Z);
+    left.renderOrder = 1001;
+    right.renderOrder = 1001;
+    left.frustumCulled = false;
+    right.frustumCulled = false;
+    left.userData.owned = true;
+    right.userData.owned = true;
+    root.add(left, right);
+    this.camera.add(root);
+    this.enterCurtainRoot = root;
+    this.enterCurtainLeft = left;
+    this.enterCurtainRight = right;
+  }
+
+  private syncEnterCurtains(open: number): void {
+    const root = this.enterCurtainRoot;
+    const left = this.enterCurtainLeft;
+    const right = this.enterCurtainRight;
+    if (!root || !left || !right) return;
+    const a = easeInOutCubic(clamp(open, 0, 1));
+    const slide = a * (ENTER_CURTAIN_W + 0.2);
+    left.position.set(-ENTER_CURTAIN_W * 0.5 - slide, 0, ENTER_CURTAIN_Z);
+    right.position.set(ENTER_CURTAIN_W * 0.5 + slide, 0, ENTER_CURTAIN_Z);
+    root.visible = a < 0.995;
+  }
+
+  private disposeEnterCurtains(): void {
+    const root = this.enterCurtainRoot;
+    if (root) {
+      this.camera.remove(root);
+      root.traverse((child) => {
+        if (!(child instanceof Mesh)) return;
+        child.geometry.dispose();
+        if (child.userData.owned && child.material instanceof MeshBasicMaterial) {
+          child.material.dispose();
+        }
+      });
+    }
+    this.enterCurtainRoot = null;
+    this.enterCurtainLeft = null;
+    this.enterCurtainRight = null;
+  }
+
+  private syncHomeDoorFacing(): void {
+    const orbit = this.homeOrbit;
+    const summit = this.homeDoorRoot;
+    if (summit) {
+      const out = 0.2;
+      summit.rotation.y = orbit;
+      summit.position.set(
+        Math.sin(orbit) * out,
+        HOME_TOWER_H + 0.18,
+        Math.cos(orbit) * out,
+      );
+    }
+    const free = this.homeFreeDoorRoot;
+    if (free) {
+      const out = Number(free.userData.doorOut ?? 1.4);
+      free.rotation.y = orbit;
+      free.position.set(Math.sin(orbit) * out, 0, Math.cos(orbit) * out);
+    }
   }
 
   winGalleryScenes(): readonly string[] {
@@ -865,7 +1176,11 @@ export class MazeWorld {
     this.collectPickup(this.wings, cell);
   }
 
-  /** Respawn stars/wings on the active floor after a ball reset / retry. */
+  collectGhosts(cell: string): void {
+    this.collectPickup(this.ghosts, cell);
+  }
+
+  /** Respawn stars/wings/ghosts on the active floor after a ball reset / retry. */
   restorePowerUps(): void {
     const tower = this.tower;
     if (!tower) return;
@@ -980,7 +1295,7 @@ export class MazeWorld {
   private syncVoidSky(time: number): void {
     const chunk = this.settings?.values.skyPixels ?? 4;
     const steps = this.settings?.values.skyShade ?? 6;
-    const themeId = this.homeBackdrop || this.failed
+    const themeId = (this.homeBackdrop && !this.enterPlay?.playSky) || this.failed
       ? "sad"
       : this.escaped
         ? "rainbow"
@@ -1067,11 +1382,13 @@ export class MazeWorld {
     this.placeCamera();
     this.syncVoidStars(time);
     this.syncTiles(pose, time);
+    this.syncGhostWalls(pose, time);
     if (pose.fallingThrough) this.shatterExit();
     this.tickPickups(this.hearts, time, dt, 1.7, 2.4);
     this.tickPickups(this.coins, time, dt, 3.6, 2.8);
     this.tickPickups(this.stars, time, dt, 2.8, 3.2);
     this.tickPickups(this.wings, time, dt, 2.2, 2.6);
+    this.tickPickups(this.ghosts, time, dt, 2.4, 2.4);
     this.syncVoidSky(time);
     if (this.reduceMotion) return;
     if (this.goalRings.length || this.goalGates.length) {
@@ -1546,10 +1863,29 @@ export class MazeWorld {
         kind: "wings",
       });
     }
+    for (const ghost of layout.ghosts) {
+      const mesh = new Mesh(this.ghostGeometry, this.ghostMat);
+      mesh.position.set(ghost.x, 0.4, ghost.z);
+      // Tip toward the camera so the eye cutouts read from the usual overhead angle.
+      mesh.rotation.x = -0.42;
+      mesh.castShadow = true;
+      mesh.renderOrder = 2;
+      parent.add(mesh);
+      this.ghosts.push({
+        root: mesh,
+        visual: mesh,
+        cell: `${ghost.c},${ghost.r}`,
+        group: parent,
+        taken: false,
+        age: 0,
+        baseY: 0.4,
+        kind: "ghost",
+      });
+    }
   }
 
   private clearPowerUpsOn(group: Group): void {
-    for (const list of [this.stars, this.wings]) {
+    for (const list of [this.stars, this.wings, this.ghosts]) {
       for (let i = list.length - 1; i >= 0; i -= 1) {
         const bit = list[i];
         if (!bit || bit.group !== group) continue;
@@ -1574,6 +1910,7 @@ export class MazeWorld {
       if (bit.kind === "coin") this.spawnPickupSparks(bit, this.coinSparkColors);
       else if (bit.kind === "star") this.spawnPickupSparks(bit, this.starSparkColors);
       else if (bit.kind === "wings") this.spawnPickupSparks(bit, this.wingSparkColors);
+      else if (bit.kind === "ghost") this.spawnPickupSparks(bit, this.ghostSparkColors);
       if (bit.kind === "heart" || bit.kind === "wings") {
         for (const child of bit.root.children) {
           if (!(child instanceof Mesh)) continue;
@@ -2014,7 +2351,9 @@ export class MazeWorld {
       if (geos.length > 1) {
         for (const geo of geos) geo.dispose();
       }
-      const mesh = new Mesh(merged, this.surfaceMaterial(kind, surfaces));
+      const shared = this.surfaceMaterial(kind, surfaces);
+      const material = kind === "wall" ? shared.clone() : shared;
+      const mesh = new Mesh(merged, material);
       mesh.userData.pieceKind = kind;
       mesh.castShadow = kind === "wall" || kind === "frame" || kind === "block" || kind === "roof";
       mesh.receiveShadow =
@@ -2035,6 +2374,10 @@ export class MazeWorld {
       if (kind === "frame") {
         frame = mesh;
         mesh.userData.theme = theme;
+      }
+      if (kind === "wall") {
+        mesh.userData.owned = true;
+        this.trackGhostWall(mesh);
       }
       parent.add(mesh);
     }
@@ -2502,6 +2845,7 @@ export class MazeWorld {
     // Tower footprint still keyed to the playable tower span, not the expanded ground.
     const towerSpan = Math.max(tower.width, tower.depth) * 2.8;
     this.addOminousTower(group, towerSpan);
+    this.addFreePlayDoorway(group, towerSpan * 0.36);
     this.addHomeShacks(group, span, towerSpan * 0.36);
 
     const light = new PointLight("#eef4ff", 0, span * 3.2, 1.6);
@@ -2520,6 +2864,87 @@ export class MazeWorld {
     this.board.add(group);
     this.meadow = group;
     for (let i = 0; i < 64; i += 1) this.spawnRaindrop(group);
+  }
+
+  /**
+   * Small ground hut with twin doors — free-play zooms into this the same way
+   * tower mode zooms into the summit shrine.
+   */
+  private addFreePlayDoorway(parent: Group, towerBase: number): void {
+    const wood = this.groundMats.wreck;
+    const woodDark = this.groundMats.wreckDark;
+    const stone = this.groundMats.moonRock;
+    const shade = this.groundMats.failCrack;
+    const openingW = 0.56;
+    const openingH = 0.82;
+    const thick = 0.07;
+    const root = new Group();
+    this.homeFreeDoorRoot = root;
+    root.userData.doorOut = Math.max(1.35, towerBase * 0.82);
+    root.userData.doorCenterY = openingH * 0.5;
+
+    // Hut shell behind the doorway.
+    const body = new Mesh(new BoxGeometry(0.95, 0.72, 0.7), wood);
+    body.position.set(0, 0.36, -0.22);
+    body.castShadow = organicProps;
+    body.receiveShadow = organicProps;
+    const roofL = new Mesh(new BoxGeometry(1.05, 0.06, 0.42), woodDark);
+    roofL.position.set(0, 0.82, -0.34);
+    roofL.rotation.x = 0.35;
+    roofL.castShadow = organicProps;
+    const roofR = new Mesh(new BoxGeometry(1.05, 0.06, 0.42), wood);
+    roofR.position.set(0, 0.82, -0.08);
+    roofR.rotation.x = -0.28;
+    roofR.castShadow = organicProps;
+    const chimney = new Mesh(new BoxGeometry(0.12, 0.28, 0.12), stone);
+    chimney.position.set(0.28, 1.02, -0.28);
+    chimney.castShadow = organicProps;
+    root.add(body, roofL, roofR, chimney);
+
+    const postL = new Mesh(new BoxGeometry(thick, openingH + thick * 0.5, thick * 1.1), stone);
+    postL.position.set(-openingW * 0.5 - thick * 0.35, openingH * 0.5, 0.08);
+    postL.castShadow = organicProps;
+    const postR = postL.clone();
+    postR.position.x = openingW * 0.5 + thick * 0.35;
+    const lintel = new Mesh(new BoxGeometry(openingW + thick * 1.5, thick * 0.65, thick * 1.15), shade);
+    lintel.position.set(0, openingH + thick * 0.12, 0.08);
+    lintel.castShadow = organicProps;
+    const sill = new Mesh(
+      new BoxGeometry(openingW + thick * 0.7, thick * 0.3, thick * 1.3),
+      stone,
+    );
+    sill.position.set(0, thick * 0.12, 0.14);
+    root.add(postL, postR, lintel, sill);
+
+    const mkDoor = (side: -1 | 1): void => {
+      const pivot = new Mesh(new BoxGeometry(0.01, 0.01, 0.01), woodDark);
+      pivot.position.set(side * openingW * 0.5, openingH * 0.5, 0.08);
+      const leaf = new Mesh(
+        new BoxGeometry(openingW * 0.48, openingH * 0.9, thick * 0.22),
+        side < 0 ? wood : woodDark,
+      );
+      leaf.position.set(-side * openingW * 0.24, 0, thick * 0.04);
+      leaf.castShadow = organicProps;
+      const band = new Mesh(new BoxGeometry(openingW * 0.4, thick * 0.12, thick * 0.28), shade);
+      band.position.set(-side * openingW * 0.24, openingH * 0.1, thick * 0.12);
+      const knob = new Mesh(new BoxGeometry(thick * 0.18, thick * 0.18, thick * 0.2), stone);
+      knob.position.set(-side * openingW * 0.08, 0, thick * 0.18);
+      pivot.add(leaf, band, knob);
+      root.add(pivot);
+    };
+    mkDoor(-1);
+    mkDoor(1);
+
+    // Dark void behind the closed leaves — reads as a threshold when we zoom in.
+    const voidPlane = new Mesh(
+      new PlaneGeometry(openingW * 0.92, openingH * 0.9),
+      this.groundMats.failGroundDark,
+    );
+    voidPlane.position.set(0, openingH * 0.5, 0.02);
+    root.add(voidPlane);
+
+    parent.add(root);
+    this.syncHomeDoorFacing();
   }
 
   /** A few slumped hovels clinging to the barren ring around the tower. */
@@ -2610,6 +3035,8 @@ export class MazeWorld {
   }
 
   private addOminousTower(parent: Group, span: number): void {
+    const root = new Group();
+    this.homeTowerRoot = root;
     const baseSize = span * 0.36;
     const floorT = 0.045;
     const wallH = 0.088;
@@ -2688,7 +3115,7 @@ export class MazeWorld {
       mesh.userData.owned = true;
       mesh.castShadow = organicProps;
       mesh.receiveShadow = organicProps;
-      parent.add(mesh);
+      root.add(mesh);
     }
     const wallMesh = merge(wallGeos);
     if (wallMesh) {
@@ -2702,24 +3129,25 @@ export class MazeWorld {
       mesh.userData.owned = true;
       mesh.castShadow = organicProps;
       mesh.receiveShadow = organicProps;
-      parent.add(mesh);
+      root.add(mesh);
     }
     const shadeMesh = merge(shadeGeos);
     if (shadeMesh) {
       const mesh = new Mesh(shadeMesh, this.groundMats.failCrack);
       mesh.frustumCulled = false;
       mesh.castShadow = organicProps;
-      parent.add(mesh);
+      root.add(mesh);
     }
     const accentMesh = merge(accentGeos);
     if (accentMesh) {
       const mesh = new Mesh(accentMesh, this.materials.frame);
       mesh.frustumCulled = false;
       mesh.castShadow = organicProps;
-      parent.add(mesh);
+      root.add(mesh);
     }
 
-    this.addSinisterSummit(parent, baseSize * 0.28);
+    this.addSinisterSummit(root, baseSize * 0.28);
+    parent.add(root);
   }
 
   /** Blocky idol crowning the storm tower — horns, hunched shoulders, glowing eyes. */
@@ -2813,7 +3241,81 @@ export class MazeWorld {
       );
     }
 
+    // Pull the idol slightly back so a doorway can face the menu camera.
+    idol.position.z = -tipSize * 0.12;
     parent.add(idol);
+    this.addSummitDoorway(parent, tipSize);
+  }
+
+  /** Stone arch + twin doors on the summit — portal plane shows the play world when entering. */
+  private addSummitDoorway(parent: Group, tipSize: number): void {
+    const stone = this.materials.frame;
+    const shade = this.groundMats.failCrack;
+    const wood = this.groundMats.wreck;
+    const woodDark = this.groundMats.wreckDark;
+    // Compact shrine door — sits on the pedestal, not a full-width gate.
+    const openingW = tipSize * 0.34;
+    const openingH = tipSize * 0.48;
+    const thick = tipSize * 0.05;
+    const root = new Group();
+    this.homeDoorRoot = root;
+
+    const postL = new Mesh(new BoxGeometry(thick, openingH + thick * 0.6, thick * 1.1), stone);
+    postL.position.set(-openingW * 0.5 - thick * 0.35, openingH * 0.5, 0);
+    postL.castShadow = organicProps;
+    const postR = postL.clone();
+    postR.position.x = openingW * 0.5 + thick * 0.35;
+    const lintel = new Mesh(new BoxGeometry(openingW + thick * 1.6, thick * 0.7, thick * 1.15), shade);
+    lintel.position.set(0, openingH + thick * 0.15, 0);
+    lintel.castShadow = organicProps;
+    const sill = new Mesh(
+      new BoxGeometry(openingW + thick * 0.8, thick * 0.35, thick * 1.4),
+      this.groundMats.moonRock,
+    );
+    sill.position.set(0, thick * 0.1, thick * 0.08);
+    root.add(postL, postR, lintel, sill);
+
+    const mkDoor = (side: -1 | 1): Mesh => {
+      const pivot = new Mesh(new BoxGeometry(0.01, 0.01, 0.01), woodDark);
+      pivot.position.set(side * openingW * 0.5, openingH * 0.5, 0);
+      const leaf = new Mesh(
+        new BoxGeometry(openingW * 0.48, openingH * 0.92, thick * 0.22),
+        side < 0 ? wood : woodDark,
+      );
+      leaf.position.set(-side * openingW * 0.24, 0, thick * 0.05);
+      leaf.castShadow = organicProps;
+      const band = new Mesh(new BoxGeometry(openingW * 0.42, thick * 0.12, thick * 0.28), shade);
+      band.position.set(-side * openingW * 0.24, openingH * 0.12, thick * 0.12);
+      const knob = new Mesh(new BoxGeometry(thick * 0.18, thick * 0.18, thick * 0.2), stone);
+      knob.position.set(-side * openingW * 0.08, 0, thick * 0.2);
+      pivot.add(leaf, band, knob);
+      root.add(pivot);
+      return pivot;
+    };
+    this.homeDoorLeft = mkDoor(-1);
+    this.homeDoorRight = mkDoor(1);
+
+    const portal = new Mesh(
+      new PlaneGeometry(openingW * 0.9, openingH * 0.88),
+      this.groundMats.failGroundDark,
+    );
+    portal.position.set(0, openingH * 0.5, -thick * 0.35);
+    portal.visible = false;
+    root.add(portal);
+    this.homeDoorPortal = portal;
+
+    // Small horned pediment — keeps the shrine tied to the idol without dwarfing it.
+    const hornL = new Mesh(new BoxGeometry(thick * 0.55, tipSize * 0.14, thick * 0.55), stone);
+    hornL.position.set(-openingW * 0.22, openingH + tipSize * 0.1, -thick * 0.08);
+    hornL.rotation.z = 0.4;
+    const hornR = hornL.clone();
+    hornR.position.x = openingW * 0.22;
+    hornR.rotation.z = -0.4;
+    root.add(hornL, hornR);
+
+    root.userData.doorCenterY = openingH * 0.5;
+    parent.add(root);
+    this.syncHomeDoorFacing();
   }
 
   private applyHomeLighting(): void {
@@ -4080,6 +4582,12 @@ export class MazeWorld {
     this.clearRain();
     this.dropLightningBolt();
     this.lightningLight = null;
+    this.homeTowerRoot = null;
+    this.homeDoorRoot = null;
+    this.homeDoorLeft = null;
+    this.homeDoorRight = null;
+    this.homeDoorPortal = null;
+    this.homeFreeDoorRoot = null;
     if (this.meadow) {
       this.board.remove(this.meadow);
       this.meadow.traverse((child) => this.disposeGenerated(child));
@@ -4116,6 +4624,10 @@ export class MazeWorld {
   }
 
   private placeCamera(): void {
+    if (this.enterPlay) {
+      this.placeEnterPlayCamera();
+      return;
+    }
     if (!this.tower) return;
     if (this.homeBackdrop) {
       this.placeHomeCamera();
@@ -4125,30 +4637,12 @@ export class MazeWorld {
       this.placeMeadowCamera();
       return;
     }
+    this.computePlayCamera(this.enterPlayEye, this.enterPlayLook);
+    this.camera.position.copy(this.enterPlayEye);
+    this.camera.lookAt(this.enterPlayLook);
+
     const low = this.escaped ? 0 : this.lowest();
     const span = Math.max(this.tower.width, this.tower.depth) + Math.abs(low) * 0.28;
-    const zoom = this.settings?.values.zoom ?? 1;
-    const angle = (this.shownAngle() * Math.PI) / 180;
-    const orbit = (this.shownOrbit() * Math.PI) / 180;
-    const fov = (this.camera.fov * Math.PI) / 180;
-    const half = Math.tan(fov / 2);
-    const fill = 1.22;
-    const distForHeight = (span * fill) / (2 * half);
-    const distForWidth = (span * fill) / (2 * half * Math.max(this.aspect, 0.6));
-    const fitted = Math.max(distForHeight, distForWidth) * 1.22;
-    const radius = (fitted * Math.hypot(0.74, 0.7)) / Math.max(zoom, 0.2);
-    const horizontal = radius * Math.cos(angle);
-    const look = new Vector3(0, this.focusY, 0).applyQuaternion(this.board.quaternion);
-    const aim = span * 0.04;
-    look.x += aim * Math.sin(orbit);
-    look.z += aim * Math.cos(orbit);
-    this.camera.position.set(
-      look.x + horizontal * Math.sin(orbit),
-      look.y + radius * Math.sin(angle),
-      look.z + horizontal * Math.cos(orbit),
-    );
-    this.camera.lookAt(look);
-
     const range = span * 0.78 + Math.abs(low) * 0.2;
     const shadow = this.key.shadow.camera as OrthographicCamera;
     shadow.left = -range;
@@ -4156,7 +4650,114 @@ export class MazeWorld {
     shadow.top = range;
     shadow.bottom = -range;
     shadow.updateProjectionMatrix();
-    this.key.target.position.copy(look);
+    this.key.target.position.copy(this.enterPlayLook);
+  }
+
+  /** Play-orbit eye/look for the current tower (includes board rise offset). */
+  private computePlayCamera(outEye: Vector3, outLook: Vector3): void {
+    const tower = this.tower;
+    if (!tower) {
+      outEye.copy(this.camera.position);
+      outLook.set(0, this.focusY, 0);
+      return;
+    }
+    const low = this.escaped ? 0 : this.lowest();
+    const span = Math.max(tower.width, tower.depth) + Math.abs(low) * 0.28;
+    const zoom = this.settings?.values.zoom ?? 1;
+    const angle = (this.shownAngle() * Math.PI) / 180;
+    const orbit = (this.shownOrbit() * Math.PI) / 180;
+    const fovDeg = this.enterPlay?.toFov ?? this.camera.fov;
+    const fov = (fovDeg * Math.PI) / 180;
+    const half = Math.tan(fov / 2);
+    const fill = 1.22;
+    const distForHeight = (span * fill) / (2 * half);
+    const distForWidth = (span * fill) / (2 * half * Math.max(this.aspect, 0.6));
+    const fitted = Math.max(distForHeight, distForWidth) * 1.22;
+    const radius = (fitted * Math.hypot(0.74, 0.7)) / Math.max(zoom, 0.2);
+    const horizontal = radius * Math.cos(angle);
+    outLook.set(0, this.focusY, 0).applyQuaternion(this.board.quaternion);
+    const aim = span * 0.04;
+    outLook.x += aim * Math.sin(orbit);
+    outLook.z += aim * Math.cos(orbit);
+    outLook.add(this.board.position);
+    outEye.set(
+      outLook.x + horizontal * Math.sin(orbit),
+      outLook.y + radius * Math.sin(angle),
+      outLook.z + horizontal * Math.cos(orbit),
+    );
+  }
+
+  private placeEnterPlayCamera(): void {
+    const ep = this.enterPlay;
+    if (!ep) return;
+    const orbit = this.homeOrbit;
+    const playFov = ep.toFov;
+    this.placeDoorEnterCamera(ep, orbit, playFov);
+
+    this.camera.position.copy(this.enterPlayEye);
+    this.camera.lookAt(this.enterPlayLook);
+    this.meadowCamEye.copy(this.enterPlayEye);
+    this.meadowCamLook.copy(this.enterPlayLook);
+
+    const tower = this.tower;
+    const span = tower ? Math.max(tower.width, tower.depth) : HOME_BACKDROP_SPAN;
+    const range = Math.max(span * 2.2, HOME_TOWER_H * 0.55) * 0.9;
+    const shadow = this.key.shadow.camera as OrthographicCamera;
+    shadow.left = -range;
+    shadow.right = range;
+    shadow.top = range;
+    shadow.bottom = -range;
+    shadow.updateProjectionMatrix();
+    this.key.target.position.copy(this.enterPlayLook);
+  }
+
+  /** Zoom into the closed enter door until it fills the frame, then hold play under curtains. */
+  private placeDoorEnterCamera(
+    ep: NonNullable<MazeWorld["enterPlay"]>,
+    orbit: number,
+    playFov: number,
+  ): void {
+    if (ep.crossed) {
+      this.computePlayCamera(this.enterPlayEye, this.enterPlayLook);
+      this.applyEnterPlayLens(playFov);
+      return;
+    }
+
+    const door = ep.kind === "free" ? this.homeFreeDoorRoot : this.homeDoorRoot;
+    this.enterPlayDoorOut.set(Math.sin(orbit), 0, Math.cos(orbit));
+    if (door) {
+      door.getWorldPosition(this.enterPlayDoorPos);
+      const centerY = Number(door.userData.doorCenterY ?? 0.22);
+      this.enterPlayDoorPos.y += centerY;
+    } else {
+      const meadowY = this.meadow?.position.y ?? -MEADOW_DROP;
+      const out = ep.kind === "free" ? 1.4 : 0.2;
+      this.enterPlayDoorPos.set(
+        this.enterPlayDoorOut.x * out,
+        ep.kind === "free" ? meadowY + 0.4 : meadowY + HOME_TOWER_H + 0.4,
+        this.enterPlayDoorOut.z * out,
+      );
+    }
+
+    // End so close the closed door fills the frame — then we cut to curtains.
+    const standoff = ep.kind === "free" ? 0.42 : 0.2;
+    this.enterPlayDoorEye.copy(this.enterPlayDoorPos).addScaledVector(this.enterPlayDoorOut, standoff);
+    this.enterPlayDoorEye.y += 0.02;
+    this.enterPlayDoorLook.copy(this.enterPlayDoorPos).addScaledVector(this.enterPlayDoorOut, -0.02);
+
+    const a = easeInOutCubic(Math.min(1, ep.t / ENTER_PLAY_SWAP));
+    this.enterPlayEye.lerpVectors(this.enterPlayFromEye, this.enterPlayDoorEye, a);
+    this.enterPlayLook.lerpVectors(this.enterPlayFromLook, this.enterPlayDoorLook, a);
+    // Widen slightly so the door eats the frame by the cut.
+    const fov = ep.fromFov + (72 - ep.fromFov) * (0.55 * a);
+    this.applyEnterPlayLens(fov);
+  }
+
+  private applyEnterPlayLens(fov: number): void {
+    const next = clamp(fov, 18, 95);
+    if (Math.abs(this.camera.fov - next) < 0.05) return;
+    this.camera.fov = next;
+    this.camera.updateProjectionMatrix();
   }
 
   private placeHomeCamera(): void {
@@ -4283,6 +4884,16 @@ export class MazeWorld {
       parent.add(group);
     }
 
+    for (const gate of layout.oneWays) {
+      const dir = DIRECTION_VECTOR[gate.dir];
+      const mark = new Mesh(this.arrowGeometry, this.gateMarkMat);
+      mark.position.set(gate.x, gate.y + 0.014, gate.z);
+      mark.rotation.y = Math.atan2(-dir.x, -dir.z);
+      mark.scale.set(0.8, 1, 0.9);
+      mark.renderOrder = 2;
+      parent.add(mark);
+    }
+
     for (const warp of layout.warps) {
       const tone = warp.pair % WARP_COLOR_COUNT;
       const mat = this.warpMats[tone];
@@ -4353,7 +4964,7 @@ export class MazeWorld {
     const geo = new BoxGeometry(piece.hx * 2, piece.hy * 2, piece.hz * 2);
     const surfaces = this.themeSurfaces.get(theme);
     const shared = this.surfaceMaterial(piece.kind, surfaces);
-    const material = piece.kind === "crumble" ? shared.clone() : shared;
+    const material = piece.kind === "crumble" || piece.kind === "wall" ? shared.clone() : shared;
     const mesh = new Mesh(geo, material);
     mesh.position.set(piece.x, piece.y, piece.z);
     mesh.castShadow = piece.kind === "wall";
@@ -4381,6 +4992,10 @@ export class MazeWorld {
       mesh.userData.well = well;
       this.crumbleMeshes.push(mesh);
     }
+    if (piece.kind === "wall") {
+      mesh.userData.owned = true;
+      this.trackGhostWall(mesh);
+    }
     if (piece.gate) {
       mesh.userData.gate = piece.gate;
       const tone = piece.tone ?? 0;
@@ -4399,6 +5014,55 @@ export class MazeWorld {
       this.smashWalls.push(mesh);
     }
     parent.add(mesh);
+  }
+
+  private trackGhostWall(mesh: Mesh): void {
+    const mat = mesh.material;
+    if (mat instanceof MeshToonMaterial) {
+      mesh.userData.baseEmissive = mat.emissive.getHex();
+      mesh.userData.baseEmissiveIntensity = mat.emissiveIntensity;
+    }
+    this.ghostWalls.push(mesh);
+  }
+
+  /** Interior walls go soft and pulse while the ghost power-up is active. */
+  private syncGhostWalls(pose: Pose, time: number): void {
+    const on = pose.ghostPower > 0;
+    if (!on && !this.ghostWallsLit) return;
+    const active = this.floorGroups[this.currentFloor()];
+    const hurry = on && pose.ghostPower < 0.28;
+    const wave = this.reduceMotion
+      ? 0.55
+      : 0.5 + 0.5 * Math.sin(time * (hurry ? 9 : 4.2));
+    const opacity = on ? 0.16 + 0.22 * wave : 1;
+    const glow = on ? 0.2 + 0.45 * wave : 0;
+    for (let i = this.ghostWalls.length - 1; i >= 0; i -= 1) {
+      const mesh = this.ghostWalls[i];
+      if (!mesh?.parent) {
+        this.ghostWalls.splice(i, 1);
+        continue;
+      }
+      const mat = mesh.material;
+      if (!(mat instanceof MeshToonMaterial)) continue;
+      const live = on && mesh.parent === active && !mesh.userData.shattered;
+      if (live) {
+        mat.transparent = true;
+        mat.opacity = opacity;
+        mat.depthWrite = false;
+        mat.emissive.set(this.ghostAuraColor);
+        mat.emissiveIntensity = glow;
+        continue;
+      }
+      if (!mat.transparent && mat.opacity >= 1 && mat.emissiveIntensity === (mesh.userData.baseEmissiveIntensity as number | undefined ?? 0)) {
+        continue;
+      }
+      mat.transparent = false;
+      mat.opacity = 1;
+      mat.depthWrite = true;
+      mat.emissive.setHex((mesh.userData.baseEmissive as number | undefined) ?? 0);
+      mat.emissiveIntensity = (mesh.userData.baseEmissiveIntensity as number | undefined) ?? 0;
+    }
+    this.ghostWallsLit = on;
   }
 
   private syncTiles(pose: Pose, time: number): void {
@@ -4499,6 +5163,7 @@ export class MazeWorld {
       || child.geometry === this.coinGeometry
       || child.geometry === this.starGeometry
       || child.geometry === this.wingGeometry
+      || child.geometry === this.ghostGeometry
       || child.geometry === this.sparkGeometry
       || child.geometry === this.rainGeometry
       || child.geometry === this.warpGateGeometry
@@ -4546,17 +5211,22 @@ export class MazeWorld {
     this.coins.length = 0;
     this.stars.length = 0;
     this.wings.length = 0;
+    this.ghosts.length = 0;
     this.warpSpins.length = 0;
     this.gateMeshes.length = 0;
     this.smashWalls.length = 0;
+    this.ghostWalls.length = 0;
+    this.ghostWallsLit = false;
     this.crumbleMeshes.length = 0;
   }
 
   private syncHoverAura(pose: Pose, time: number): void {
-    const on = pose.hoverPower > 0;
+    const power = Math.max(pose.hoverPower, pose.ghostPower);
+    const on = power > 0;
     this.ballAura.visible = on;
     if (!on) return;
-    const hurry = pose.hoverPower < 0.28;
+    this.ballAuraMat.color.set(pose.ghostPower > pose.hoverPower ? this.ghostAuraColor : this.hoverAuraColor);
+    const hurry = power < 0.28;
     const pulse = this.reduceMotion
       ? 0.3
       : 0.22 + (0.14 + (hurry ? 0.1 : 0)) * (0.5 + 0.5 * Math.sin(time * (hurry ? 10 : 4.5)));
@@ -4807,7 +5477,7 @@ interface PickupBit {
   taken: boolean;
   age: number;
   baseY: number;
-  kind: "heart" | "coin" | "star" | "wings";
+  kind: "heart" | "coin" | "star" | "wings" | "ghost";
 }
 
 interface Debris {
@@ -4863,6 +5533,8 @@ type AnimalKind =
   | "fox"
   | "hare"
   | "camel"
+  | "giraffe"
+  | "elephant"
   | "lizard"
   | "snake"
   | "scorpion"
@@ -5026,7 +5698,7 @@ const SCENE_ANIMALS: Record<WinSceneKind, AnimalKind[]> = {
   pasture: ["cow", "sheep", "dog", "horse"],
   beach: ["crab", "seagull", "turtle", "seal"],
   snow: ["penguin", "bear", "fox", "hare"],
-  desert: ["camel", "lizard", "snake", "scorpion"],
+  desert: ["camel", "giraffe", "elephant", "lizard"],
   orchard: ["chicken", "pig", "goat", "rabbit"],
   twilight: ["deer", "owl", "raccoon", "fox"],
   underwater: ["shark", "whale", "jelly", "fish"],
@@ -6160,6 +6832,8 @@ function animalScale(kind: AnimalKind): number {
   if (kind === "whale") return 2.15;
   if (kind === "jelly") return 1.7;
   if (kind === "shark") return 1.55;
+  if (kind === "elephant") return 1.45;
+  if (kind === "giraffe") return 1.35;
   return 1;
 }
 
@@ -6227,6 +6901,11 @@ type AnimalMats = {
   foxTip: MeshToonMaterial;
   hare: MeshToonMaterial;
   camel: MeshToonMaterial;
+  giraffe: MeshToonMaterial;
+  giraffeSpot: MeshToonMaterial;
+  elephant: MeshToonMaterial;
+  elephantEar: MeshToonMaterial;
+  elephantTusk: MeshToonMaterial;
   lizard: MeshToonMaterial;
   snake: MeshToonMaterial;
   scorpion: MeshToonMaterial;
@@ -6285,6 +6964,8 @@ const ANIMAL_BUILDERS: Record<AnimalKind, (group: Group, mats: AnimalMats) => vo
   fox: buildFox,
   hare: buildHare,
   camel: buildCamel,
+  giraffe: buildGiraffe,
+  elephant: buildElephant,
   lizard: buildLizard,
   snake: buildSnake,
   scorpion: buildScorpion,
@@ -6456,6 +7137,36 @@ function buildCamel(group: Group, mats: AnimalMats): void {
   voxel(group, mats.camel, 0.1, 0.07, 0.07, 0.4, 0.58, 0);
   for (const [x, z] of [[-0.16, 0.07], [-0.16, -0.07], [0.14, 0.07], [0.14, -0.07]] as const) {
     voxel(group, mats.horseMane, 0.035, 0.16, 0.035, x, 0.16, z);
+  }
+}
+
+function buildGiraffe(group: Group, mats: AnimalMats): void {
+  voxel(group, mats.giraffe, 0.22, 0.12, 0.1, 0, 0.42, 0);
+  voxel(group, mats.giraffeSpot, 0.08, 0.08, 0.11, -0.04, 0.46, 0);
+  voxel(group, mats.giraffeSpot, 0.06, 0.05, 0.11, 0.1, 0.4, 0);
+  voxel(group, mats.giraffe, 0.05, 0.28, 0.05, 0.22, 0.7, 0);
+  voxel(group, mats.giraffeSpot, 0.04, 0.08, 0.055, 0.22, 0.78, 0);
+  voxel(group, mats.giraffe, 0.08, 0.06, 0.06, 0.3, 0.98, 0);
+  voxel(group, mats.giraffeSpot, 0.02, 0.04, 0.015, 0.28, 1.08, 0.03);
+  voxel(group, mats.giraffeSpot, 0.02, 0.04, 0.015, 0.28, 1.08, -0.03);
+  voxel(group, mats.giraffe, 0.03, 0.03, 0.1, -0.22, 0.46, 0);
+  for (const [x, z] of [[-0.12, 0.06], [-0.12, -0.06], [0.1, 0.06], [0.1, -0.06]] as const) {
+    voxel(group, mats.giraffeSpot, 0.03, 0.2, 0.03, x, 0.2, z);
+  }
+}
+
+function buildElephant(group: Group, mats: AnimalMats): void {
+  voxel(group, mats.elephant, 0.32, 0.18, 0.18, 0, 0.4, 0);
+  voxel(group, mats.elephant, 0.14, 0.12, 0.12, 0.34, 0.48, 0);
+  voxel(group, mats.elephant, 0.04, 0.16, 0.04, 0.44, 0.36, 0);
+  voxel(group, mats.elephant, 0.05, 0.04, 0.04, 0.46, 0.2, 0);
+  voxel(group, mats.elephantEar, 0.02, 0.12, 0.14, 0.28, 0.52, 0.16);
+  voxel(group, mats.elephantEar, 0.02, 0.12, 0.14, 0.28, 0.52, -0.16);
+  voxel(group, mats.elephantTusk, 0.02, 0.02, 0.08, 0.4, 0.36, 0.08);
+  voxel(group, mats.elephantTusk, 0.02, 0.02, 0.08, 0.4, 0.36, -0.08);
+  voxel(group, mats.elephant, 0.04, 0.04, 0.12, -0.32, 0.42, 0);
+  for (const [x, z] of [[-0.16, 0.1], [-0.16, -0.1], [0.14, 0.1], [0.14, -0.1]] as const) {
+    voxel(group, mats.elephantEar, 0.05, 0.16, 0.05, x, 0.16, z);
   }
 }
 
@@ -6762,6 +7473,37 @@ function wingGeometry(): BufferGeometry {
   geo.center();
   // Sit the root closer to x=0 so mirrored halves meet in the middle.
   geo.translate(0.02, 0.02, 0);
+  return geo;
+}
+
+/** Cartoon ghost: domed head, scalloped hem, two eye cutouts. Faces +Z. */
+function ghostGeometry(): BufferGeometry {
+  const shape = new Shape();
+  shape.moveTo(-0.18, -0.18);
+  shape.lineTo(-0.18, 0.04);
+  shape.bezierCurveTo(-0.18, 0.22, -0.1, 0.3, 0, 0.3);
+  shape.bezierCurveTo(0.1, 0.3, 0.18, 0.22, 0.18, 0.04);
+  shape.lineTo(0.18, -0.18);
+  shape.quadraticCurveTo(0.13, -0.09, 0.09, -0.18);
+  shape.quadraticCurveTo(0.045, -0.09, 0, -0.18);
+  shape.quadraticCurveTo(-0.045, -0.09, -0.09, -0.18);
+  shape.quadraticCurveTo(-0.13, -0.09, -0.18, -0.18);
+  // Large oval cutouts so the eyes read clearly while the pickup spins.
+  for (const x of [-0.07, 0.07]) {
+    const eye = new Path();
+    eye.absellipse(x, 0.08, 0.042, 0.058, 0, Math.PI * 2, true, 0);
+    shape.holes.push(eye);
+  }
+  const geo = new ExtrudeGeometry(shape, {
+    depth: 0.1,
+    bevelEnabled: true,
+    bevelThickness: 0.012,
+    bevelSize: 0.01,
+    bevelSegments: 1,
+    curveSegments: 12,
+  });
+  geo.translate(0, 0, -0.05);
+  geo.center();
   return geo;
 }
 
