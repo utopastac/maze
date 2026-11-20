@@ -47,20 +47,12 @@ import {
   type WallAxis,
 } from "../core/maze.ts";
 import {
-  PHYSICS_KEYS,
-  SETTING_DEFAULTS,
-  SETTING_SPECS,
   SKY_THEMES,
-  clampSetting,
   clampSkyThemeIndex,
   cloneFloorPhysics,
-  defaultFloorPhysics,
   type PhysicsSettingKey,
 } from "../core/playSettings.ts";
 import {
-  deleteAuthoredLevel,
-  listAuthoredLevels,
-  loadAuthoredLevel,
   replaceAuthoredLevel,
   saveAuthoredLevel,
   type AuthoredLevel,
@@ -131,8 +123,12 @@ import {
   type PaletteKind,
 } from "./editorTools.ts";
 import { iconSvg, setPickupIcon, type CellMarkIcon, type IconName } from "./icons.ts";
-import { buttonClassAttr, createButton } from "./kit/index.ts";
+import { buttonClassAttr } from "./kit/index.ts";
 import styles from "./editor.module.css";
+import { renderBoardDom } from "./editorBoardDom.ts";
+import { EditorDraftsPanel } from "./editorDraftsPanel.ts";
+import { EditorHistory } from "./editorHistory.ts";
+import { EditorPhysicsPanel } from "./editorPhysicsPanel.ts";
 
 export type EditorMode = "share" | "campaign";
 
@@ -165,13 +161,6 @@ type LineDrag = {
   moved: boolean;
   pointerId: number;
 };
-
-type HistoryEntry = {
-  tower: Tower;
-  floorIndex: number;
-};
-
-const HISTORY_LIMIT = 100;
 
 export class LevelEditor {
   private readonly root: HTMLElement;
@@ -240,8 +229,7 @@ export class LevelEditor {
   private readonly settingsPanel: HTMLElement;
   private readonly physicsEnable: HTMLInputElement;
   private readonly physicsFields: HTMLElement;
-  private readonly physicsInputs = new Map<PhysicsSettingKey, HTMLInputElement>();
-  private readonly physicsReadouts = new Map<PhysicsSettingKey, HTMLElement>();
+  private readonly physicsPanel: EditorPhysicsPanel;
   private readonly nameInput: HTMLInputElement;
   private stroke: Stroke | null = null;
   private wallDrag: WallDrag | null = null;
@@ -255,13 +243,12 @@ export class LevelEditor {
   private noticeTimer = 0;
   private readonly undoBtn: HTMLButtonElement;
   private readonly redoBtn: HTMLButtonElement;
-  private past: HistoryEntry[] = [];
-  private future: HistoryEntry[] = [];
-  private historyOpen = false;
+  private readonly history: EditorHistory;
   /** Campaign draft currently open (separate localStorage from Saved levels). */
   private draftId: string | null = null;
   private readonly draftsRoot: HTMLElement;
   private readonly draftsList: HTMLElement;
+  private readonly draftsPanel: EditorDraftsPanel;
 
   constructor(root: HTMLElement, callbacks: EditorCallbacks) {
     installCrumblePreviewCss();
@@ -456,11 +443,26 @@ export class LevelEditor {
     this.tileMenu = this.require("[data-tile-menu]");
     this.undoBtn = this.require("[data-undo]");
     this.redoBtn = this.require("[data-redo]");
+    this.history = new EditorHistory({ undo: this.undoBtn, redo: this.redoBtn });
+    this.physicsPanel = new EditorPhysicsPanel(
+      { fields: this.physicsFields, enable: this.physicsEnable },
+      { onValue: (key, value) => this.setPhysicsValue(key, value) },
+    );
+    this.draftsPanel = new EditorDraftsPanel(
+      { root: this.draftsRoot, list: this.draftsList },
+      {
+        draftId: () => this.draftId,
+        setDraftId: (id) => { this.draftId = id; },
+        onLoad: (tower, id) => this.applyLoadedDraft(tower, id),
+        onFlash: (message) => this.flash(message),
+      },
+    );
     this.mountPalette();
     this.mountTileMenu();
     this.mountThemes();
     this.mountSkies();
-    this.mountPhysics();
+    this.physicsPanel.mount();
+    this.syncPhysics();
     this.require("[data-scrim]").addEventListener("click", this.requestClose);
     this.require("[data-close]").addEventListener("click", this.requestClose);
     this.require("[data-clear]").addEventListener("click", () => {
@@ -491,10 +493,10 @@ export class LevelEditor {
       this.showDrafts();
     });
     this.require("[data-drafts-close]").addEventListener("click", () => {
-      this.hideDrafts();
+      this.draftsPanel.hide();
     });
     this.require("[data-drafts-scrim]").addEventListener("click", () => {
-      this.hideDrafts();
+      this.draftsPanel.hide();
     });
     this.require("[data-play]").addEventListener("click", () => {
       this.commitName();
@@ -615,7 +617,7 @@ export class LevelEditor {
     this.mode = mode;
     this.root.dataset.mode = mode;
     this.draftId = null;
-    this.hideDrafts();
+    this.draftsPanel.hide();
     const saveBtn = this.require<HTMLButtonElement>("[data-save]");
     saveBtn.title = mode === "campaign"
       ? "Save tower draft to this device (separate from Saved levels)"
@@ -664,7 +666,7 @@ export class LevelEditor {
     this.railHover = { col: null, row: null };
     this.hideTileMenu();
     this.hideSettingsPanel();
-    this.hideDrafts();
+    this.draftsPanel.hide();
     this.hideGap();
     this.hideToast();
     delete this.chrome.dataset.dragging;
@@ -679,54 +681,42 @@ export class LevelEditor {
   };
 
   private resetHistory(): void {
-    this.past = [];
-    this.future = [];
-    this.historyOpen = false;
-    this.syncHistoryButtons();
+    this.history.reset();
   }
 
   /** Snapshot before a one-shot mutation (always starts a new undo step). */
   private snapshot(): void {
-    this.historyOpen = false;
-    this.past.push({ tower: cloneTower(this.tower), floorIndex: this.floorIndex });
-    if (this.past.length > HISTORY_LIMIT) this.past.shift();
-    this.future = [];
-    this.syncHistoryButtons();
+    this.history.snapshot(this.tower, this.floorIndex);
   }
 
   /** Snapshot once for a continuous gesture (paint stroke, wall drag, slider). */
   private beginEdit(): void {
-    if (this.historyOpen) return;
-    this.snapshot();
-    this.historyOpen = true;
+    this.history.beginEdit(this.tower, this.floorIndex);
   }
 
   private endEdit(): void {
-    this.historyOpen = false;
+    this.history.endEdit();
   }
 
   private syncHistoryButtons(): void {
-    this.undoBtn.disabled = this.past.length === 0;
-    this.redoBtn.disabled = this.future.length === 0;
+    this.history.syncButtons();
   }
 
   private undo(): void {
-    if (!this.isOpen() || this.past.length === 0) return;
-    this.endEdit();
-    this.future.push({ tower: cloneTower(this.tower), floorIndex: this.floorIndex });
-    const entry = this.past.pop()!;
+    if (!this.isOpen()) return;
+    const entry = this.history.undo({ tower: this.tower, floorIndex: this.floorIndex });
+    if (!entry) return;
     this.restoreHistory(entry);
   }
 
   private redo(): void {
-    if (!this.isOpen() || this.future.length === 0) return;
-    this.endEdit();
-    this.past.push({ tower: cloneTower(this.tower), floorIndex: this.floorIndex });
-    const entry = this.future.pop()!;
+    if (!this.isOpen()) return;
+    const entry = this.history.redo({ tower: this.tower, floorIndex: this.floorIndex });
+    if (!entry) return;
     this.restoreHistory(entry);
   }
 
-  private restoreHistory(entry: HistoryEntry): void {
+  private restoreHistory(entry: { tower: Tower; floorIndex: number }): void {
     this.tower = cloneTower(entry.tower);
     this.floorIndex = Math.min(entry.floorIndex, this.tower.floors.length - 1);
     this.stroke = null;
@@ -947,7 +937,7 @@ export class LevelEditor {
 
   private cancelPairing(): boolean {
     if (!this.pairing()) return false;
-    if (this.past.length > 0) {
+    if (this.history.canUndo) {
       this.undo();
       return true;
     }
@@ -1067,30 +1057,6 @@ export class LevelEditor {
     this.skySelect.value = value;
   }
 
-  private mountPhysics(): void {
-    this.physicsFields.replaceChildren();
-    for (const key of PHYSICS_KEYS) {
-      const spec = SETTING_SPECS.find((item) => item.key === key);
-      if (!spec) continue;
-      const field = document.createElement("div");
-      field.className = `field ${styles.physicsField}`;
-      field.innerHTML = `
-        <label><span>${spec.label}</span><span data-readout></span></label>
-        <input type="range" min="${spec.min}" max="${spec.max}" step="${spec.step}" aria-label="${spec.label}" />
-      `;
-      const input = field.querySelector("input");
-      const readout = field.querySelector<HTMLElement>("[data-readout]");
-      if (!input || !readout) continue;
-      input.addEventListener("input", () => {
-        this.setPhysicsValue(key, Number(input.value));
-      });
-      this.physicsInputs.set(key, input);
-      this.physicsReadouts.set(key, readout);
-      this.physicsFields.append(field);
-    }
-    this.syncPhysics();
-  }
-
   private toggleSettingsPanel(): void {
     if (this.settingsPanel.hidden) this.showSettingsPanel();
     else this.hideSettingsPanel();
@@ -1119,38 +1085,20 @@ export class LevelEditor {
 
   private setPhysicsEnabled(enabled: boolean): void {
     this.snapshot();
-    if (enabled) this.draft.physics = defaultFloorPhysics();
+    const next = this.physicsPanel.applyEnabled(this.draft.physics, enabled);
+    if (next) this.draft.physics = next;
     else delete this.draft.physics;
     this.syncPhysics();
   }
 
   private setPhysicsValue(key: PhysicsSettingKey, value: number): void {
-    const next = clampSetting(key, value);
     this.beginEdit();
-    const physics = this.draft.physics ?? defaultFloorPhysics();
-    physics[key] = next;
-    this.draft.physics = physics;
-    if (!this.physicsEnable.checked) this.physicsEnable.checked = true;
+    this.draft.physics = this.physicsPanel.writeValue(this.draft.physics, key, value);
     this.syncPhysics();
   }
 
   private syncPhysics(): void {
-    const physics = this.draft.physics;
-    const enabled = Boolean(physics);
-    this.physicsEnable.checked = enabled;
-    this.physicsFields.classList.toggle(styles.physicsFieldsDimmed, !enabled);
-    for (const key of PHYSICS_KEYS) {
-      const spec = SETTING_SPECS.find((item) => item.key === key);
-      if (!spec) continue;
-      const value = physics?.[key] ?? SETTING_DEFAULTS[key];
-      const input = this.physicsInputs.get(key);
-      const readout = this.physicsReadouts.get(key);
-      if (input) {
-        input.value = String(value);
-        input.disabled = !enabled;
-      }
-      if (readout) readout.textContent = spec.format(value);
-    }
+    this.physicsPanel.sync(this.draft.physics);
   }
 
   private setBrush(kind: EditorTool): void {
@@ -1213,71 +1161,12 @@ export class LevelEditor {
 
   private showDrafts(): void {
     if (this.mode !== "campaign") return;
-    this.renderDrafts();
-    this.draftsRoot.hidden = false;
+    this.draftsPanel.show();
   }
 
-  private hideDrafts(): void {
-    this.draftsRoot.hidden = true;
-    this.draftsList.replaceChildren();
-  }
-
-  private renderDrafts(): void {
-    const entries = listAuthoredLevels();
-    this.draftsList.replaceChildren();
-    if (entries.length === 0) {
-      const empty = document.createElement("p");
-      empty.className = styles.draftsEmpty;
-      empty.textContent = "No tower drafts yet. Hit Save to keep one here.";
-      this.draftsList.append(empty);
-      return;
-    }
-    for (const entry of entries) {
-      this.draftsList.append(this.mountDraftItem(entry));
-    }
-  }
-
-  private mountDraftItem(entry: AuthoredLevel): HTMLElement {
-    const row = document.createElement("div");
-    row.className = styles.draftItem;
-    const main = document.createElement("button");
-    main.type = "button";
-    main.className = styles.draftOpen;
-    const name = document.createElement("span");
-    name.className = styles.draftName;
-    name.textContent = entry.name;
-    const meta = document.createElement("span");
-    meta.className = styles.draftMeta;
-    meta.textContent = `${entry.cols}×${entry.rows}`;
-    main.append(name, meta);
-    main.addEventListener("click", () => this.loadDraft(entry.id));
-    const del = createButton({
-      icon: "close",
-      ariaLabel: `Delete ${entry.name}`,
-      title: "Delete draft",
-      className: styles.draftDelete,
-      onClick: (event) => {
-        event.stopPropagation();
-        if (!deleteAuthoredLevel(entry.id)) return;
-        if (this.draftId === entry.id) this.draftId = null;
-        this.renderDrafts();
-        this.flash("Draft deleted.");
-      },
-    });
-    row.append(main, del);
-    return row;
-  }
-
-  private loadDraft(id: string): void {
-    const tower = loadAuthoredLevel(id);
-    if (!tower) {
-      this.flash("Couldn't load that draft.");
-      this.renderDrafts();
-      return;
-    }
-    this.hideDrafts();
+  private applyLoadedDraft(tower: Tower, id: string): void {
     this.draftId = id;
-    this.tower = cloneTower(tower);
+    this.tower = tower;
     if (this.tower.floors.length > 1) this.tower = { floors: [cloneTower(this.tower).floors[0]!] };
     this.floorIndex = 0;
     this.brush = "move";
@@ -1984,92 +1873,17 @@ export class LevelEditor {
 
   private renderBoard(): void {
     const { cols, rows } = this.draft;
-    this.board.style.setProperty("--cols", String(cols));
-    this.board.style.setProperty("--rows", String(rows));
-    this.sheet.style.setProperty("--cols", String(cols));
-    this.sheet.style.setProperty("--rows", String(rows));
-    this.board.replaceChildren();
-    this.cells.clear();
-    this.walls.clear();
-    this.mountRails();
-
-    for (let r = 0; r < rows; r += 1) {
-      for (let c = 0; c < cols; c += 1) {
-        const cell = document.createElement("button");
-        cell.type = "button";
-        cell.className = styles.cell;
-        cell.tabIndex = -1;
-        cell.dataset.cell = "";
-        cell.dataset.c = String(c);
-        cell.dataset.r = String(r);
-        cell.style.setProperty("--c", String(c));
-        cell.style.setProperty("--r", String(r));
-        const pickup = document.createElement("span");
-        pickup.className = styles.pickup;
-        pickup.setAttribute("aria-hidden", "true");
-        cell.append(pickup);
-        this.cells.set(`${c},${r}`, cell);
-        this.board.append(cell);
-      }
-    }
-
-    for (let r = 0; r < rows; r += 1) {
-      for (let c = 0; c < cols - 1; c += 1) this.addWall("v", c, r);
-    }
-    for (let r = 0; r < rows - 1; r += 1) {
-      for (let c = 0; c < cols; c += 1) this.addWall("h", c, r);
-    }
-
+    renderBoardDom({
+      board: this.board,
+      sheet: this.sheet,
+      colRail: this.colRail,
+      rowRail: this.rowRail,
+      cells: this.cells,
+      walls: this.walls,
+    }, cols, rows);
     this.syncSize();
     this.syncCells();
     this.syncWalls();
-  }
-
-  private mountRails(): void {
-    const { cols, rows } = this.draft;
-    this.colRail.replaceChildren();
-    this.rowRail.replaceChildren();
-    for (let c = 0; c < cols; c += 1) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = styles.handle;
-      button.dataset.handle = "col";
-      button.dataset.index = String(c);
-      button.style.setProperty("--i", String(c));
-      button.setAttribute("aria-label", `Select column ${c + 1}`);
-      button.dataset.tip = "Drag to move";
-      button.dataset.tipSide = "top";
-      button.innerHTML = `<span class="${styles.handleBars}" aria-hidden="true"></span>`;
-      this.colRail.append(button);
-    }
-    for (let r = 0; r < rows; r += 1) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = styles.handle;
-      button.dataset.handle = "row";
-      button.dataset.index = String(r);
-      button.style.setProperty("--i", String(r));
-      button.setAttribute("aria-label", `Select row ${r + 1}`);
-      button.dataset.tip = "Drag to move";
-      button.dataset.tipSide = "left";
-      button.innerHTML = `<span class="${styles.handleBars}" aria-hidden="true"></span>`;
-      this.rowRail.append(button);
-    }
-  }
-
-  private addWall(axis: WallAxis, c: number, r: number): void {
-    const wall = document.createElement("div");
-    wall.className = styles.wall;
-    wall.role = "button";
-    wall.tabIndex = -1;
-    wall.dataset.wall = "";
-    wall.dataset.axis = axis;
-    wall.dataset.c = String(c);
-    wall.dataset.r = String(r);
-    wall.style.setProperty("--c", String(c));
-    wall.style.setProperty("--r", String(r));
-    this.board.append(wall);
-    this.walls.set(`${axis}:${c},${r}`, wall);
   }
 
   private syncCells(): void {

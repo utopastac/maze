@@ -1,0 +1,242 @@
+/* Kit partial: forms.css — edit this file for this lane only. */
+
+/* —— Tabs —— */
+.kit-tabs {
+  display: grid;
+  gap: var(--space-2);
+  align-content: start;
+  min-width: 0;
+}
+
+.kit-tab {
+  appearance: none;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--control-radius);
+  margin: 0;
+  min-width: 0;
+  min-height: 36px;
+  padding: var(--space-2) var(--space-3);
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-2);
+  background: var(--glass);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--text-xs);
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease;
+
+  & :is(svg) {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+  }
+
+  & span {
+    min-width: 0;
+  }
+
+  &:hover,
+  &:focus-visible {
+    color: var(--ink);
+    background: color-mix(in srgb, var(--glass) 80%, var(--ink) 8%);
+    outline: none;
+  }
+
+  &:focus-visible {
+    outline: 1px solid var(--seam);
+    outline-offset: 1px;
+  }
+
+  &.kit-tab-active {
+    color: var(--seam);
+    border-color: color-mix(in srgb, var(--seam) 55%, transparent);
+    background: color-mix(in srgb, var(--glass) 70%, var(--seam) 12%);
+    font-weight: 500;
+
+    &:hover,
+    &:focus-visible {
+      color: var(--seam);
+      background: color-mix(in srgb, var(--glass) 70%, var(--seam) 12%);
+    }
+  }
+}
+
+/* —— Range / toggle —— */
+.kit-range {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+
+  & label {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-3);
+    color: var(--ink);
+    font-size: var(--text-sm);
+  }
+
+  & input[type="range"] {
+    width: 100%;
+    accent-color: var(--seam);
+  }
+
+  &.kit-range-dimmed {
+    opacity: 0.45;
+  }
+}
+
+.kit-toggle {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 36px;
+  cursor: pointer;
+  font-size: var(--text-sm);
+
+  & input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  & .kit-switch {
+    position: relative;
+    width: 42px;
+    height: 24px;
+    flex: 0 0 auto;
+    border-radius: 999px;
+    background: var(--glass);
+    box-shadow: inset 0 0 0 2px var(--glass-border);
+    transition: background 0.16s ease;
+
+    &::after {
+      content: "";
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--ink);
+      transition: transform 0.16s ease;
+    }
+  }
+
+  & input:checked + .kit-switch {
+    background: color-mix(in srgb, var(--seam) 55%, var(--glass));
+    box-shadow: inset 0 0 0 2px var(--seam);
+
+    &::after {
+      transform: translateX(18px);
+      background: var(--selected-ink);
+    }
+  }
+
+  & input:focus-visible + .kit-switch {
+    outline: 2px solid var(--seam);
+    outline-offset: 2px;
+  }
+}
+
+.kit-toast {
+  position: absolute;
+  z-index: 40;
+  top: calc(var(--safe-top) + var(--chrome-top));
+  left: 50%;
+  width: min(360px, calc(100% - 48px));
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--control-radius);
+  background: var(--panel-fill);
+  box-shadow: var(--panel-shadow);
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, -8px);
+  transition:
+    opacity 0.18s ease,
+    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+
+  &[data-phase="in"] {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.kit-toast-body {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--text-sm);
+  line-height: 1.35;
+  text-align: center;
+  text-shadow: var(--type-shadow);
+}
+
+/* Nested confirm dialog (pause quit, delete, reset). */
+.kit-confirm {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  pointer-events: auto;
+
+  &[hidden] {
+    display: none;
+  }
+
+  & > .kit-scrim {
+    background: color-mix(in srgb, var(--maze-void) 55%, transparent);
+  }
+
+  & > .kit-card {
+    --kit-card-width: 320px;
+    display: grid;
+    gap: var(--space-3);
+    padding: 22px 20px var(--space-5);
+    text-align: center;
+  }
+
+  & .kit-title {
+    font-size: 18px;
+    font-weight: 500;
+    line-height: 1.3;
+  }
+
+  & .kit-meta {
+    margin: 0;
+    color: var(--ink-dim);
+    line-height: 1.4;
+  }
+
+  & .kit-actions {
+    gap: var(--space-2);
+    margin-top: var(--space-1);
+  }
+
+  & [data-confirm-cancel],
+  & [data-confirm-ok] {
+    min-width: 88px;
+    height: 36px;
+    padding: 0 var(--space-4);
+    font-size: var(--text-sm);
+  }
+
+  & [data-confirm-ok] {
+    color: var(--selected-ink);
+    background: var(--seam);
+    box-shadow: none;
+  }
+}

@@ -25,7 +25,6 @@ import {
   isMenuScreen,
   parseRoute,
   routeHash,
-  routesEqual,
   type AppRoute,
 } from "../core/route.ts";
 import { initPhysics, Simulation, type Pose } from "../core/simulation.ts";
@@ -49,6 +48,8 @@ import { Toast } from "../ui/toast.ts";
 import type { WebGLRenderer } from "three";
 import { CampaignSession, type CampaignRunState } from "./campaignSession.ts";
 import { PlayInput, type PlayInputHost } from "./playInput.ts";
+import { AppRouter, type ShellScreen } from "./appRouting.ts";
+import { ShellMenus } from "./shellMenus.ts";
 
 const FIRST_SEED = 11;
 const LEVEL_SELECT_SEED = FIRST_SEED;
@@ -89,13 +90,14 @@ export class App {
   private readonly picker: LevelSelect;
   private readonly library: SavedLevelsPanel;
   private readonly toast: Toast;
-  private route: AppRoute = { kind: "home" };
-  private settingsReturn: AppRoute = { kind: "home" };
+  private readonly router = new AppRouter({
+    apply: (route, fromHash) => this.applyRoute(route, fromHash),
+  });
+  private readonly menus: ShellMenus;
   /** Mid-play settings: cover the run without parking/disposing it. */
   private settingsOverlay = false;
   /** After playtest / quit, return here instead of home. */
   private playReturn: AppRoute | null = null;
-  private syncingHash = false;
   private practiceFromTower = false;
   private pauseNote = "";
   private pauseNoteTimer = 0;
@@ -232,12 +234,89 @@ export class App {
         else this.goHome();
       },
     });
+    this.menus = new ShellMenus(
+      {
+        shell: this.shell,
+        playHudCanvas: this.playHudCanvas,
+        home: this.home,
+        intro: this.intro,
+        pause: this.pause,
+        settings: this.panel,
+        editor: this.editor,
+        picker: this.picker,
+        library: this.library,
+        hud: this.hud,
+        playHud: this.playHud,
+      },
+      {
+        routeKind: () => this.route.kind,
+        awaitingStart: () => this.awaitingStart,
+        running: () => this.running,
+        phaseIsPlay: () => this.phase === "play",
+        canPause: () => this.canPause(),
+        practiceFromTower: () => this.practiceFromTower,
+        setPracticeFromTower: (value) => { this.practiceFromTower = value; },
+        settingsOverlay: () => this.settingsOverlay,
+        setSettingsOverlay: (value) => { this.settingsOverlay = value; },
+        goHome: () => this.goHome(),
+        setRoute: (route, replace) => this.setRoute(route, replace),
+        parkWorld: () => this.parkWorld(),
+        freezeForPause: () => this.freezeForPause(),
+        pauseStats: () => this.towerPauseStats(),
+        closeWinGallery: (remount) => this.closeWinGallery(remount),
+        releaseInput: () => this.input.releaseAll(),
+        stopRunning: () => { this.running = false; },
+        restCamera: () => this.view?.restCamera(),
+        isHomeBackdrop: () => this.view?.isHomeBackdrop() ?? false,
+        shouldLeaveHomeBackdrop: () => (
+          this.route.kind !== "home"
+          && this.route.kind !== "tower"
+          && !this.enteringPlay
+        ),
+        setHomeView: (view) => this.view?.setHomeView(view),
+        enterHomeBackdrop: () => this.view?.enterHomeBackdrop(),
+        leaveHomeBackdrop: () => this.view?.leaveHomeBackdrop(),
+        clearPlayReturn: () => { this.playReturn = null; },
+        authoredTower: () => this.authored,
+        blankAuthorTower: () => blankAuthorTower(),
+        cloneAuthored: () => cloneTower(this.authored!),
+        ensureAuthored: () => {
+          if (!this.authored) this.authored = blankAuthorTower();
+        },
+        pickerCampaign: () => this.pickerCampaign,
+        setPickerCampaign: (campaign) => { this.pickerCampaign = campaign; },
+        sessionCampaign: () => this.session.campaign,
+        generatePickerCampaign: () => generateCampaign(LEVEL_SELECT_SEED),
+        settingsReturnTarget: () => this.router.settingsReturnTarget(),
+        hasLiveSim: () => this.sim !== null,
+        reopenPauseAfterSettings: () => {
+          if (this.canPause()) this.openPause();
+        },
+        finishEditingExtras: (returnHome) => {
+          if (returnHome && this.route.kind === "create") {
+            this.goHome();
+            return;
+          }
+          if (!this.home.isOpen() && !this.awaitingStart && !this.running && this.phase === "play") {
+            this.hud.showHint();
+          }
+        },
+        onPauseClosed: () => {
+          this.clearPauseNote();
+          if (this.awaitingStart) return;
+          if (this.phase === "play" || this.phase === "falling") {
+            this.running = true;
+            this.hud.hideHint();
+          }
+        },
+      },
+    );
     this.input.attach();
     this.canvas.addEventListener("contextmenu", (event) => event.preventDefault());
     this.playHudCanvas.addEventListener("pointerdown", this.onHomePointerDown);
     this.playHudCanvas.addEventListener("pointermove", this.onHomePointerMove);
     window.addEventListener("resize", () => this.resize());
-    window.addEventListener("hashchange", this.onHashChange);
+    this.router.attach();
   }
 
   async start(): Promise<void> {
@@ -250,7 +329,7 @@ export class App {
       const shared = levelFromHash(location.hash);
       if (shared) {
         this.mountTower(shared, true);
-        this.route = { kind: "level" };
+        this.router.set({ kind: "level" });
         this.setShellScreen("level");
       } else {
         this.hud.setNote("That link didn't load");
@@ -264,63 +343,21 @@ export class App {
     requestAnimationFrame(this.frame);
   }
 
-  private onHashChange = (): void => {
-    if (this.syncingHash) return;
-    this.applyRoute(parseRoute(location.hash), true);
-  };
-
-  private setRoute(route: AppRoute, replace = false): void {
-    if (route.kind === "settings" && this.route.kind !== "settings") {
-      this.rememberSettingsReturn();
-    }
-    if (routesEqual(this.route, route) && this.routeMatchesHash(route)) {
-      this.applyRoute(route, true);
-      return;
-    }
-    this.route = route;
-    const next = routeHash(route);
-    if (location.hash !== next) {
-      this.syncingHash = true;
-      if (replace) history.replaceState(null, "", next);
-      else history.pushState(null, "", next);
-      this.syncingHash = false;
-    }
-    this.applyRoute(route, true);
+  private get route(): AppRoute {
+    return this.router.route;
   }
 
-  private rememberSettingsReturn(): void {
-    if (this.route.kind === "settings") return;
-    // Shared-level hash is cleared when parking; land on free play instead.
-    this.settingsReturn = this.route.kind === "level"
-      ? { kind: "play" }
-      : { kind: this.route.kind };
+  private setRoute(route: AppRoute, replace = false): void {
+    this.router.navigate(route, replace);
   }
 
   private leaveSettings(): void {
-    if (this.settingsOverlay) {
-      this.hideSettingsOverlay();
-      this.playHud.setVisible(this.sim !== null);
-      if (this.canPause()) this.openPause();
-      return;
-    }
-    const dest = this.settingsReturn.kind === "settings"
-      ? { kind: "home" as const }
-      : this.settingsReturn;
-    this.closeSettingsScreen(false);
-    this.setRoute(dest);
-  }
-
-  private routeMatchesHash(route: AppRoute): boolean {
-    if (route.kind === "level") return hasLevelHash(location.hash);
-    return parseRoute(location.hash).kind === route.kind;
+    this.menus.leaveSettings();
   }
 
   private applyRoute(route: AppRoute, fromHash: boolean): void {
     if (!this.view) return;
-    if (route.kind === "settings" && this.route.kind !== "settings") {
-      this.rememberSettingsReturn();
-    }
-    this.route = route;
+    this.router.enter(route);
     this.practiceFromTower = false;
     this.setShellScreen(route.kind);
 
@@ -394,39 +431,16 @@ export class App {
     }
   }
 
-  private setShellScreen(kind: AppRoute["kind"] | "play"): void {
-    this.shell.dataset.screen = kind;
+  private setShellScreen(kind: ShellScreen): void {
+    this.menus.setShellScreen(kind);
   }
 
   private leaveMenuScreens(shatterHome = false): void {
-    this.closeHome(shatterHome);
-    this.closeTowerIntro(false);
-    this.hideSettingsOverlay();
-    this.closeSettingsScreen(false);
-    this.closeSavedLevels(false);
-    if (this.editor.isOpen()) {
-      this.editor.hide();
-      this.hud.setEditSelected(false);
-      this.hud.setAuthorSelected(false);
-    }
+    this.menus.leaveMenuScreens(shatterHome);
   }
 
   private closeAllMenus(showHint: boolean): void {
-    this.closePause();
-    this.closeTowerIntro(false);
-    this.closeLevelSelect(false);
-    this.closeSavedLevels(false);
-    this.hideSettingsOverlay();
-    this.closeSettingsScreen(false);
-    this.closeWinGallery(false);
-    if (this.editor.isOpen()) {
-      this.editor.hide();
-      this.hud.setEditSelected(false);
-      this.hud.setAuthorSelected(false);
-    }
-    if (showHint && !this.awaitingStart && !this.running && this.phase === "play") {
-      this.hud.showHint();
-    }
+    this.menus.closeAllMenus(showHint);
   }
 
   private goHome(): void {
@@ -462,48 +476,17 @@ export class App {
   }
 
   private openHome(): void {
-    this.closeAllMenus(false);
-    this.closeTowerIntro(false);
-    this.parkWorld();
-    if (location.hash !== "#home") {
-      this.syncingHash = true;
-      history.replaceState(null, "", "#home");
-      this.syncingHash = false;
-    }
-    this.setShellScreen("home");
-    this.home.show();
-    this.home.setMode("main");
-    if (this.view?.isHomeBackdrop()) this.view.setHomeView("menu");
-    else this.view?.enterHomeBackdrop();
-    this.playHud.setVisible(true);
-    this.playHud.setHomeMenuMode("main");
-    this.playHud.setHomeMenu(true);
-    this.playHudCanvas.style.cursor = "default";
+    this.router.replaceHash("#home");
+    this.menus.openHome();
   }
 
   private closeHome(shatter = false): void {
-    if (!this.home.isOpen()) return;
-    this.closeTowerLoadModal();
-    if (shatter && this.playHud.isHomeMenuOpen()) this.playHud.shatterHomeMenu();
-    else this.playHud.setHomeMenu(false);
-    this.home.hide();
-    this.playHud.setHomeHover(null);
-    this.playHudCanvas.style.cursor = "";
-    if (
-      this.route.kind !== "home"
-      && this.route.kind !== "tower"
-      && !this.enteringPlay
-    ) {
-      this.view?.leaveHomeBackdrop();
-    }
+    this.menus.closeHome(shatter);
   }
 
   private pickHome(action: PlayHudHomeAction): void {
-    if (!this.home.isOpen()) return;
+    if (this.menus.pickHome(action)) return;
     switch (action) {
-      case "tower":
-        this.setRoute({ kind: "tower" });
-        break;
       case "towerNew":
         this.beginCampaignNew();
         break;
@@ -513,23 +496,7 @@ export class App {
       case "towerPractice":
         this.openPracticeSelect();
         break;
-      case "towerBack":
-        this.goHome();
-        break;
-      case "play":
-        this.setRoute({ kind: "play" });
-        break;
-      case "create":
-        this.closeHome(true);
-        this.setRoute({ kind: "create" });
-        break;
-      case "saved":
-        this.closeHome(true);
-        this.setRoute({ kind: "saved" });
-        break;
-      case "settings":
-        this.closeHome(true);
-        this.setRoute({ kind: "settings" });
+      default:
         break;
     }
   }
@@ -672,41 +639,19 @@ export class App {
   }
 
   private openTowerScreen(): void {
-    this.closeAllMenus(false);
-    this.closeTowerLoadModal();
-    if (!this.home.isOpen() || !this.view?.isHomeBackdrop()) {
-      this.parkWorld();
-      this.home.show();
-      this.view?.enterHomeBackdrop();
-    }
-    // Keep the storm viewport/HUD visible — Tower is an in-world camera beat.
-    this.setShellScreen("home");
-    this.home.setMode("tower");
-    this.view?.setHomeView("tower");
-    this.playHud.setVisible(true);
-    // Mode before open so the Mazespire hero intro does not flash.
-    this.playHud.setHomeMenuMode("tower");
-    this.playHud.setHomeMenu(true);
-    this.playHudCanvas.style.cursor = "default";
+    this.menus.openTowerScreen();
   }
 
   private closeTowerIntro(returnHome = true): void {
-    if (!this.intro.isOpen()) return;
-    const wasModal = this.intro.isModal();
-    this.intro.hide();
-    if (wasModal) return;
-    if (returnHome && this.route.kind === "tower") {
-      this.goHome();
-    }
+    this.menus.closeTowerIntro(returnHome);
   }
 
   private openTowerLoadModal(): void {
-    this.intro.showLoadModal();
+    this.menus.openTowerLoadModal();
   }
 
   private closeTowerLoadModal(): void {
-    if (!this.intro.isModal()) return;
-    this.intro.hide();
+    this.menus.closeTowerLoadModal();
   }
 
   private beginCampaignNew(): void {
@@ -762,78 +707,30 @@ export class App {
   private markPlaying(shared = false): void {
     this.hud.setPauseAvailable(true);
     if (shared || hasLevelHash(location.hash)) {
-      this.route = { kind: "level" };
+      this.router.set({ kind: "level" });
       this.setShellScreen("level");
       return;
     }
-    this.route = { kind: "play" };
+    this.router.set({ kind: "play" });
     this.setShellScreen("play");
-    const next = routeHash({ kind: "play" });
-    if (location.hash === next) return;
-    this.syncingHash = true;
-    history.replaceState(null, "", next);
-    this.syncingHash = false;
+    this.router.replaceHash(routeHash({ kind: "play" }));
   }
 
   private openPracticeSelect(): void {
-    this.practiceFromTower = true;
-    this.closeTowerIntro(false);
-    this.openLevelSelect();
+    this.menus.openPracticeSelect();
   }
 
-  private openLevelSelect(): void {
-    if (!this.view || this.picker.isOpen()) return;
-    if (this.editor.isOpen()) {
-      this.editor.hide();
-      this.hud.setEditSelected(false);
-      this.hud.setAuthorSelected(false);
-    }
-    this.closeHome();
-    this.closePause();
-    if (!this.practiceFromTower) this.closeTowerIntro(false);
-    this.closeSavedLevels(false);
-    this.closeSettingsScreen(false);
-    this.closeWinGallery(false);
-    this.input.releaseAll();
-    this.running = false;
-    this.pickerCampaign = this.session.campaign ?? this.pickerCampaign ?? generateCampaign(LEVEL_SELECT_SEED);
-    this.picker.show(this.pickerCampaign, { practice: this.practiceFromTower });
-    this.hud.hideHint();
-  }
 
   private closeLevelSelect(restore = true): void {
-    if (!this.picker.isOpen()) return;
-    this.picker.hide();
-    if (!restore) {
-      this.practiceFromTower = false;
-      return;
-    }
-    if (this.practiceFromTower) {
-      this.practiceFromTower = false;
-      this.setRoute({ kind: "tower" }, true);
-      return;
-    }
-    if (!this.home.isOpen() && !this.awaitingStart && !this.running && this.phase === "play") {
-      this.hud.showHint();
-    }
+    this.menus.closeLevelSelect(restore);
   }
 
   private openSavedScreen(): void {
-    this.closeAllMenus(false);
-    this.closeHome(false);
-    this.parkWorld();
-    this.playReturn = null;
-    this.playHud.setVisible(false);
-    this.setShellScreen("saved");
-    this.library.show();
+    this.menus.openSavedScreen();
   }
 
   private closeSavedLevels(returnHome = true): void {
-    if (!this.library.isOpen()) return;
-    this.library.hide();
-    if (returnHome && this.route.kind === "saved") {
-      this.goHome();
-    }
+    this.menus.closeSavedLevels(returnHome);
   }
 
   private playSavedLevel(tower: Tower): void {
@@ -845,16 +742,7 @@ export class App {
   }
 
   private openCreateScreen(): void {
-    this.closeAllMenus(false);
-    this.closeHome(false);
-    this.parkWorld();
-    this.playReturn = null;
-    this.playHud.setVisible(false);
-    this.setShellScreen("create");
-    if (!this.authored) this.authored = blankAuthorTower();
-    this.editor.open(cloneTower(this.authored), "share");
-    this.hud.setEditSelected(true);
-    this.hud.setAuthorSelected(false);
+    this.menus.openCreateScreen();
   }
 
   private playCampaignFloor(index: number): void {
@@ -1365,30 +1253,11 @@ export class App {
   }
 
   private openPause(): void {
-    if (!this.canPause()) return;
-    if (this.pause.isOpen()) return;
-    if (this.editor.isOpen()) {
-      this.editor.hide();
-      this.finishEditing(false);
-    }
-    this.closeLevelSelect(false);
-    this.closeSavedLevels(false);
-    this.hideSettingsOverlay();
-    this.closeTowerIntro(false);
-    this.closeWinGallery(false);
-    this.freezeForPause();
-    this.pause.show(this.towerPauseStats());
+    this.menus.openPause();
   }
 
   private closePause(): void {
-    if (!this.pause.isOpen()) return;
-    this.clearPauseNote();
-    this.pause.hide();
-    if (this.awaitingStart) return;
-    if (this.phase === "play" || this.phase === "falling") {
-      this.running = true;
-      this.hud.hideHint();
-    }
+    this.menus.closePause();
   }
 
   private quitFromPause(): void {
@@ -1556,25 +1425,7 @@ export class App {
   }
 
   private openEditor(mode: EditorMode): void {
-    if (this.editor.isOpen()) return;
-    if (mode === "share" && !this.authored) return;
-    this.closeHome();
-    this.closePause();
-    this.closeTowerIntro(false);
-    this.closeLevelSelect(false);
-    this.closeSavedLevels(false);
-    this.closeSettingsScreen(false);
-    this.closeWinGallery();
-    this.input.releaseAll();
-    this.view?.restCamera();
-    const tower = mode === "campaign"
-      ? (this.authored ? cloneTower(this.authored) : blankAuthorTower())
-      : cloneTower(this.authored!);
-    this.editor.open(tower, mode);
-    this.hud.setEditSelected(mode === "share");
-    this.hud.setAuthorSelected(mode === "campaign");
-    this.hud.hideHint();
-    this.playHud.setVisible(false);
+    this.menus.openEditor(mode);
   }
 
   private playEdited(tower: Tower): void {
@@ -1590,87 +1441,25 @@ export class App {
   }
 
   private finishEditing(returnHome = true): void {
-    if (this.editor.isOpen()) this.editor.hide();
-    this.hud.setEditSelected(false);
-    this.hud.setAuthorSelected(false);
-    this.playHud.setVisible(true);
-    if (returnHome && this.route.kind === "create") {
-      this.goHome();
-      return;
-    }
-    if (!this.home.isOpen() && !this.awaitingStart && !this.running && this.phase === "play") {
-      this.hud.showHint();
-    }
+    this.menus.finishEditing(returnHome);
   }
 
   private toggleSettings(): void {
-    if (this.panel.isOpen() || this.route.kind === "settings" || this.settingsOverlay) {
-      this.leaveSettings();
-      return;
-    }
-    if (this.canPause() || this.pause.isOpen()) {
-      this.openSettingsFromPause();
-      return;
-    }
-    this.setRoute({ kind: "settings" });
+    this.menus.toggleSettings();
   }
 
   /** Full settings destination from menus — parks the world. */
   private openSettingsScreen(): void {
-    this.settingsOverlay = false;
-    delete this.shell.dataset.settings;
-    this.closeAllMenus(false);
-    this.closeHome(false);
-    this.parkWorld();
-    this.playReturn = null;
-    this.playHud.setVisible(false);
-    this.setShellScreen("settings");
-    this.hud.setSettingsSelected(true);
-    this.panel.show();
+    this.menus.openSettingsScreen();
   }
 
-  /** Settings over a live paused run — does not dispose the maze. */
-  private openSettingsFromPause(): void {
-    if (!this.sim && !this.pause.isOpen()) {
-      this.setRoute({ kind: "settings" });
-      return;
-    }
-    if (this.pause.isOpen()) this.pause.hide();
-    else if (this.canPause()) this.freezeForPause();
-    else {
-      this.setRoute({ kind: "settings" });
-      return;
-    }
-    this.settingsOverlay = true;
-    this.shell.dataset.settings = "overlay";
-    this.closeLevelSelect(false);
-    this.closeWinGallery(false);
-    this.playHud.setVisible(false);
-    this.hud.setSettingsSelected(true);
-    this.panel.show();
-  }
 
   private hideSettingsOverlay(): void {
-    const wasOverlay = this.settingsOverlay;
-    this.settingsOverlay = false;
-    delete this.shell.dataset.settings;
-    if (!wasOverlay) return;
-    if (this.panel.isOpen()) this.panel.hide();
-    this.hud.setSettingsSelected(false);
+    this.menus.hideSettingsOverlay();
   }
 
   private closeSettingsScreen(returnToPrevious = true): void {
-    if (this.settingsOverlay) {
-      if (returnToPrevious) this.leaveSettings();
-      else this.hideSettingsOverlay();
-      return;
-    }
-    if (!this.panel.isOpen()) return;
-    this.panel.hide();
-    this.hud.setSettingsSelected(false);
-    if (returnToPrevious && this.route.kind === "settings") {
-      this.leaveSettings();
-    }
+    this.menus.closeSettingsScreen(returnToPrevious);
   }
 
   private publish(tower: Tower): Promise<boolean | null> {

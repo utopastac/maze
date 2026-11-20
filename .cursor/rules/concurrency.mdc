@@ -1,0 +1,23 @@
+---
+description: Parallel agent ownership — keep edits in separate lanes to reduce conflicts
+alwaysApply: true
+---
+
+# Concurrent agent edits
+
+Before editing, pick one lane from `ARCHITECTURE.md` and stay there.
+
+- **Domain** → `src/core/**` only
+- **Play 3D board** → `MazeWorld` play-floor / materials — not win gallery or playHud
+- **Home / enter-play** → `homeTower.ts`, `enterPlay*`, `playCamera.ts`
+- **Win gallery** → `winGalleryKit.ts`, `winGalleryScenes.ts`
+- **Play HUD** → `src/render/hud/**` (homeMenu / startGate / playStats / fx)
+- **DOM UI** → `src/ui/**` + kit; kit CSS → one of `buttons` / `shell` / `forms`
+- **Editor** → `editor*.ts`, `editorBoardDom.ts`, `editorHistory` / `Drafts` / `Physics`, `editor.module.css`
+- **Campaign / routing** → `campaignSession.ts`, `appRouting.ts`, `shellMenus.ts`, `route.ts`, minimal App wiring
+
+Never grow `App.ts`, `MazeWorld.ts`, `editor.ts`, or `playHud.ts` by large new features — extract a sibling module first.
+
+Shared controls: only add to `src/ui/kit/`. Game rules: only add to `src/core/`.
+
+After changes: `npm run typecheck` and `npm test` (Node 22+).

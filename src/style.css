@@ -140,6 +140,133 @@
   --sky-sad-4: #4a5568;
   --sky-sad-5: #6a8090;
   --sky-sad-6: #121820;
+
+  /* Victory gallery skies — one palette per meadow theme. */
+  --sky-pasture-deep: #6aa8e8;
+  --sky-pasture-0: #f4f8ff;
+  --sky-pasture-1: #b8d8ff;
+  --sky-pasture-2: #ffe8a0;
+  --sky-pasture-3: #9ad4a8;
+  --sky-pasture-4: #7ec0f4;
+  --sky-pasture-5: #fff4d0;
+  --sky-pasture-6: #3a78c0;
+
+  --sky-beach-deep: #1a88c8;
+  --sky-beach-0: #7af0ff;
+  --sky-beach-1: #ffe0a8;
+  --sky-beach-2: #ffb07a;
+  --sky-beach-3: #4ad4e8;
+  --sky-beach-4: #fff0d0;
+  --sky-beach-5: #2de2c8;
+  --sky-beach-6: #0a5a88;
+
+  --sky-snow-deep: #b8d0e8;
+  --sky-snow-0: #ffffff;
+  --sky-snow-1: #d8e8f8;
+  --sky-snow-2: #a0c4e8;
+  --sky-snow-3: #e8f4ff;
+  --sky-snow-4: #c0d8f0;
+  --sky-snow-5: #8ab0d0;
+  --sky-snow-6: #5a7898;
+
+  --sky-desert-deep: #c8a060;
+  --sky-desert-0: #fff0c8;
+  --sky-desert-1: #ffd080;
+  --sky-desert-2: #e8b060;
+  --sky-desert-3: #ffe8a0;
+  --sky-desert-4: #d09048;
+  --sky-desert-5: #fff8e0;
+  --sky-desert-6: #a07038;
+
+  --sky-orchard-deep: #7ab0e0;
+  --sky-orchard-0: #ffd0e8;
+  --sky-orchard-1: #fff0c0;
+  --sky-orchard-2: #c8f0c0;
+  --sky-orchard-3: #e8c8ff;
+  --sky-orchard-4: #a8d8ff;
+  --sky-orchard-5: #ffe8d0;
+  --sky-orchard-6: #5890c0;
+
+  --sky-twilight-deep: #1a1038;
+  --sky-twilight-0: #c090ff;
+  --sky-twilight-1: #ff80b8;
+  --sky-twilight-2: #6a50c0;
+  --sky-twilight-3: #ffb070;
+  --sky-twilight-4: #8090ff;
+  --sky-twilight-5: #e070ff;
+  --sky-twilight-6: #2a1858;
+
+  --sky-underwater-deep: #021820;
+  --sky-underwater-0: #1a8898;
+  --sky-underwater-1: #2de2c8;
+  --sky-underwater-2: #0a5068;
+  --sky-underwater-3: #7affd0;
+  --sky-underwater-4: #1a6088;
+  --sky-underwater-5: #40c0ff;
+  --sky-underwater-6: #041828;
+
+  --sky-city-deep: #1a2030;
+  --sky-city-0: #6a7888;
+  --sky-city-1: #ff9a50;
+  --sky-city-2: #3a4858;
+  --sky-city-3: #a0b0c0;
+  --sky-city-4: #506070;
+  --sky-city-5: #ffc070;
+  --sky-city-6: #121820;
+
+  --sky-village-deep: #3a2850;
+  --sky-village-0: #ffb070;
+  --sky-village-1: #ff8040;
+  --sky-village-2: #ffe0a0;
+  --sky-village-3: #c070ff;
+  --sky-village-4: #ff6090;
+  --sky-village-5: #ffd080;
+  --sky-village-6: #281838;
+
+  --sky-moon-deep: #050508;
+  --sky-moon-0: #c8d0e0;
+  --sky-moon-1: #687088;
+  --sky-moon-2: #e8f0ff;
+  --sky-moon-3: #404858;
+  --sky-moon-4: #a0a8b8;
+  --sky-moon-5: #8898c0;
+  --sky-moon-6: #101018;
+
+  --sky-venus-deep: #281008;
+  --sky-venus-0: #ff9040;
+  --sky-venus-1: #ffc060;
+  --sky-venus-2: #c05020;
+  --sky-venus-3: #ffe080;
+  --sky-venus-4: #ff6030;
+  --sky-venus-5: #a03818;
+  --sky-venus-6: #401808;
+
+  --sky-forest-deep: #183028;
+  --sky-forest-0: #70c070;
+  --sky-forest-1: #a8e090;
+  --sky-forest-2: #ffe8a0;
+  --sky-forest-3: #48a068;
+  --sky-forest-4: #c0e8b0;
+  --sky-forest-5: #88c878;
+  --sky-forest-6: #204030;
+
+  --sky-rainforest-deep: #0c2018;
+  --sky-rainforest-0: #2a8860;
+  --sky-rainforest-1: #50d090;
+  --sky-rainforest-2: #1a5040;
+  --sky-rainforest-3: #a0ffc8;
+  --sky-rainforest-4: #38a878;
+  --sky-rainforest-5: #70e0b0;
+  --sky-rainforest-6: #102820;
+
+  --sky-disco-deep: #12081f;
+  --sky-disco-0: #ff2ad4;
+  --sky-disco-1: #3af0ff;
+  --sky-disco-2: #ffe14a;
+  --sky-disco-3: #9a4dff;
+  --sky-disco-4: #ff6b4a;
+  --sky-disco-5: #5a7fff;
+  --sky-disco-6: #3a2a8a;
   --maze-floor: #2c333b;
   --maze-grout: #514c47;
   --maze-start: #3a4652;

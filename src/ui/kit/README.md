@@ -1,28 +1,18 @@
 # UI kit
 
-Single place for Mazespire’s non-3D chrome.
+Single place for Mazespire’s non-3D chrome. **Split CSS** so concurrent agents can edit different partials.
 
 | File | Role |
 |------|------|
-| `kit.css` | Shared styles: buttons, cards, confirms, fields, tabs, ranges, toggles, list rows |
-| `button.ts` | `createButton` / `buttonClass` |
-| `panel.ts` | Cards, scrims, heads, action rows |
-| `modal.ts` | Enter/exit animation + confirm dialogs |
-| `field.ts` | Labeled inputs / selects |
-| `tabs.ts` | Accessible tab lists |
-| `rangeField.ts` | Settings-style range + readout |
-| `toggle.ts` | Switch-styled checkbox |
-| `listRow.ts` | Clickable save/list rows |
+| `kit.css` | Entry (`@import` partials) — imported from `main.ts` |
+| `buttons.css` | `glass-btn` / `glass-pill` / tones |
+| `shell.css` | Cards, scrims, confirms, toast, list rows |
+| `forms.css` | Tabs, ranges, toggles |
+| `button.ts` / `tabs.ts` / `rangeField.ts` / `toggle.ts` / `listRow.ts` / … | Factories |
 | `index.ts` | Public exports |
 
 Tokens (`--ink`, `--space-*`, `--text-*`, …) live in `src/style.css` `:root`.
 
 ```ts
-import {
-  createButton,
-  createListRow,
-  createRangeField,
-  createTabList,
-  createToggle,
-} from "./kit/index.ts";
+import { createButton, createListRow, createRangeField, createTabList } from "./kit/index.ts";
 ```

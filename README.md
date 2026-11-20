@@ -31,16 +31,18 @@ npm run typecheck  # tsc --noEmit
 | Path | Role |
 |------|------|
 | `src/core/` | Domain: maze, tower, campaign, physics, share codec, routing, storage |
-| `src/render/` | Three.js world split: `MazeWorld`, `playCamera`, `enterPlay*`, `homeTower`, materials |
+| `src/render/` | Three.js: `MazeWorld`, `boardEffects`, `winGallery*`, `homeTower`, `enterPlay*`, `hud/` |
 | `src/ui/kit/` | **Shared DOM design system** — buttons, tabs, ranges, list rows, modals |
-| `src/ui/` | Screen panels + `editorTools` / `editorBoardPaint` helpers |
-| `src/app/` | `App` + `playInput` + `campaignSession` |
+| `src/ui/` | Screen panels + editor helpers (`editorTools`, `editorBoardPaint`, `editorBoardDom`) |
+| `src/app/` | `App` + `playInput` + `campaignSession` + `appRouting` |
+
+See **`ARCHITECTURE.md`** and **`AGENTS.md`** for parallel-work ownership lanes.
 
 ### UI kit (non-3D chrome)
 
 Edit common controls in one place:
 
-- **Styles:** `src/ui/kit/kit.css` (imported from `main.ts`)
+- **Styles:** `src/ui/kit/{buttons,shell,forms}.css` via `kit.css` (imported from `main.ts`)
 - **Factories:** `src/ui/kit/` — `createButton`, `createCard`, `createConfirmDialog`, `createField`, …
 - **Tokens:** `:root` in `src/style.css` (`--ink`, `--space-*`, `--text-*`, `--seam`, …)
 

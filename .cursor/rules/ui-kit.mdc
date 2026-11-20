@@ -1,0 +1,14 @@
+---
+description: DOM chrome must use the shared UI kit
+globs: src/ui/**/*.ts
+alwaysApply: false
+---
+
+# UI kit
+
+Non-3D controls come from `src/ui/kit` (`createButton`, `createTabList`, `createRangeField`, `createToggle`, `createListRow`, `createConfirmDialog`, …).
+
+- Styles: edit one partial — `buttons.css` / `shell.css` / `forms.css` (`kit.css` only re-exports)
+- Tokens live in `src/style.css` `:root`
+- Do not hand-roll new `glass-btn` / `glass-pill` CSS in screen modules
+- Screen `*.module.css` files own layout only

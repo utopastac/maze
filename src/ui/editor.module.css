@@ -2224,39 +2224,10 @@ button.tileMenuItem {
 }
 
 .draftItem {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 36px;
+  /* kit-list-row + trailing delete */
   gap: 6px;
-  align-items: center;
-}
-
-.draftOpen {
-  appearance: none;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--control-radius);
-  margin: 0;
   min-height: 44px;
-  padding: 8px 12px;
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  background: var(--glass);
-  color: var(--ink);
-  font: inherit;
-  cursor: pointer;
-  text-align: left;
-
-  &:focus-visible {
-    outline: 1px solid var(--seam);
-    outline-offset: 1px;
-  }
-
-  @media (hover: hover) and (pointer: fine) {
-    &:hover {
-      background: color-mix(in srgb, var(--glass) 80%, var(--ink) 8%);
-    }
-  }
+  padding: 8px 4px 8px 12px;
 }
 
 .draftName {

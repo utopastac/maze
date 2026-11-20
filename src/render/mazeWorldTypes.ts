@@ -5,6 +5,9 @@ import {
   Vector3,
 } from "three";
 
+/** Content meadow size multiplier (props, signs, camera framing, FX volume). */
+export const MEADOW_SPAN_MULT = 2.8;
+
 export interface PickupBit {
   root: Object3D;
   visual: Mesh;

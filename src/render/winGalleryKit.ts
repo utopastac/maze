@@ -97,6 +97,31 @@ export const WIN_SCENES: WinSceneKind[] = [
 
 export const GALLERY_SCENES = [...WIN_SCENES, "fail"] as const;
 
+export type GallerySceneId = (typeof GALLERY_SCENES)[number];
+
+/** Void-sky theme id for each gallery meadow (CSS `--sky-{id}-*`). */
+export const GALLERY_SCENE_SKY: Record<GallerySceneId, string> = {
+  pasture: "pasture",
+  beach: "beach",
+  snow: "snow",
+  desert: "desert",
+  orchard: "orchard",
+  twilight: "twilight",
+  underwater: "underwater",
+  city: "city",
+  village: "village",
+  moon: "moon",
+  venus: "venus",
+  forest: "forest",
+  rainforest: "rainforest",
+  disco: "disco",
+  fail: "sad",
+};
+
+export function gallerySkyTheme(scene: GallerySceneId | string): string {
+  return GALLERY_SCENE_SKY[scene as GallerySceneId] ?? "rainbow";
+}
+
 export const WIN_GLYPH_W = [
   "#...#",
   "#...#",
