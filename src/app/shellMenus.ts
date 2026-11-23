@@ -135,16 +135,14 @@ export class ShellMenus {
     if (this.host.isHomeBackdrop()) this.host.setHomeView("menu");
     else this.host.enterHomeBackdrop();
     this.views.playHud.setVisible(true);
-    this.views.playHud.setHomeMenuMode("main");
-    this.views.playHud.setHomeMenu(true);
-    this.views.playHudCanvas.style.cursor = "default";
+    this.views.playHud.setHomeMenu(false);
+    this.views.playHudCanvas.style.cursor = "";
   }
 
-  closeHome(shatter = false): void {
+  closeHome(_shatter = false): void {
     if (!this.views.home.isOpen()) return;
     this.closeTowerLoadModal();
-    if (shatter && this.views.playHud.isHomeMenuOpen()) this.views.playHud.shatterHomeMenu();
-    else this.views.playHud.setHomeMenu(false);
+    this.views.playHud.setHomeMenu(false);
     this.views.home.hide();
     this.views.playHud.setHomeHover(null);
     this.views.playHudCanvas.style.cursor = "";
@@ -164,15 +162,15 @@ export class ShellMenus {
         this.host.setRoute({ kind: "play" });
         break;
       case "create":
-        this.closeHome(true);
+        this.closeHome();
         this.host.setRoute({ kind: "create" });
         break;
       case "saved":
-        this.closeHome(true);
+        this.closeHome();
         this.host.setRoute({ kind: "saved" });
         break;
       case "settings":
-        this.closeHome(true);
+        this.closeHome();
         this.host.setRoute({ kind: "settings" });
         break;
       default:
@@ -193,9 +191,8 @@ export class ShellMenus {
     this.views.home.setMode("tower");
     this.host.setHomeView("tower");
     this.views.playHud.setVisible(true);
-    this.views.playHud.setHomeMenuMode("tower");
-    this.views.playHud.setHomeMenu(true);
-    this.views.playHudCanvas.style.cursor = "default";
+    this.views.playHud.setHomeMenu(false);
+    this.views.playHudCanvas.style.cursor = "";
   }
 
   closeTowerIntro(returnHome = true): void {

@@ -277,11 +277,12 @@ export class StartButton {
   private canvasH = 0;
   width = 1;
   private height = 1;
+  private minWidth = 0;
   private text = "";
   private faceFill = "";
   private ink = "";
 
-  constructor(text: string, faceFill: string, ink: string, height: number) {
+  constructor(text: string, faceFill: string, ink: string, height: number, minWidth = 0) {
     this.paintCanvas = document.createElement("canvas");
     const ctx = this.paintCanvas.getContext("2d");
     if (!ctx) throw new Error("Play HUD start button canvas unavailable");
@@ -310,7 +311,7 @@ export class StartButton {
     this.face = new Mesh(new PlaneGeometry(1, 1), this.faceMat);
     this.shade = new Mesh(new PlaneGeometry(1, 1), this.shadeMat);
     this.root.add(this.shade, this.face);
-    this.set(text, faceFill, ink, height);
+    this.set(text, faceFill, ink, height, minWidth);
   }
 
   private rebindTexture(): void {
@@ -326,17 +327,20 @@ export class StartButton {
     this.shadeMat.needsUpdate = true;
   }
 
-  set(text: string, faceFill: string, ink: string, height: number): void {
+  set(text: string, faceFill: string, ink: string, height: number, minWidth = 0): void {
+    const floorMin = Math.max(0, minWidth);
     if (
       text === this.text
       && faceFill === this.faceFill
       && ink === this.ink
       && Math.abs(height - this.height) < 1e-6
+      && Math.abs(floorMin - this.minWidth) < 1e-6
     ) return;
     this.text = text;
     this.faceFill = faceFill;
     this.ink = ink;
     this.height = height;
+    this.minWidth = floorMin;
 
     const px = START_BTN_PX_PAINT;
     const padX = 64;
@@ -346,8 +350,11 @@ export class StartButton {
     this.ctx.font = START_BTN_FONT;
     const widths = letters.map((ch) => Math.max(1, this.ctx.measureText(ch).width));
     const textW = widths.reduce((sum, glyphW, i) => sum + glyphW + (i > 0 ? tracking : 0), 0);
-    const w = Math.max(8, Math.ceil(textW + padX * 2));
     const h = Math.max(8, Math.ceil(px + padY * 2));
+    const naturalW = Math.max(8, Math.ceil(textW + padX * 2));
+    // World minWidth → canvas pixels at this plate height (width = height * w/h).
+    const minCanvasW = floorMin > 0 ? Math.ceil((floorMin * h) / Math.max(height, 1e-6)) : 0;
+    const w = Math.max(naturalW, minCanvasW);
     const resized = this.canvasW !== w || this.canvasH !== h;
     this.paintCanvas.width = w;
     this.paintCanvas.height = h;

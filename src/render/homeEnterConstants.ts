@@ -5,6 +5,13 @@ export const HOME_LAYER_H = 0.145;
 export const HOME_TOWER_H = HOME_TOWER_LAYERS * HOME_LAYER_H;
 export const HOME_BACKDROP_SPAN = CELL * 7;
 
+/** Title-screen: start far from the storm tower, then fly in to the menu shot. */
+export const HOME_ARRIVE_SECS = 3.1;
+/** Distance multiplier at arrive t=0 (settled menu shot is 1). */
+export const HOME_ARRIVE_FAR = 12;
+/** Extra eye height (× HOME_TOWER_H) at arrive t=0 — drops as we settle. */
+export const HOME_ARRIVE_LIFT = 1.65;
+
 /** Zoom door → curtains open on a distant board → dolly into play orbit. */
 export const ENTER_PLAY_SECS = 3.6;
 /** Door fills the screen — mount play, open curtains onto the far board. */

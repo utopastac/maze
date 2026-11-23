@@ -63,6 +63,7 @@ import {
 } from "./enterPlayCamera.ts";
 import {
   ENTER_PLAY_SKY_ZOOM_DOOR,
+  HOME_ARRIVE_SECS,
   HOME_BACKDROP_SPAN,
   HOME_TOWER_H,
 } from "./homeEnterConstants.ts";
@@ -73,6 +74,7 @@ import {
   addOminousTower,
   type HomeTowerContext,
 } from "./homeTower.ts";
+import { addHomeSkyLogo, tickHomeSkyLogo } from "./homeSkyLogo.ts";
 import { BoardEffects } from "./boardEffects.ts";
 import { WinGalleryScenes } from "./winGalleryScenes.ts";
 import { makeThemeSurfaces, type ThemeSurfaces } from "./themeMaterials.ts";
@@ -239,6 +241,8 @@ export class MazeWorld {
   private homeOrbit = 0;
   private homeView: "menu" | "tower" = "menu";
   private homeViewBlend = 1;
+  /** 0..1 fly-in from a distant title shot (1 = settled). */
+  private homeArriveT = 1;
   private readonly homeViewFromEye = new Vector3();
   private readonly homeViewFromLook = new Vector3();
   private readonly homeViewEye = new Vector3();
@@ -248,6 +252,8 @@ export class MazeWorld {
   private homeDoorRoot: Group | null = null;
   /** Meadow floor trapdoor — free-play zooms down into this hatch. */
   private homeFreeDoorRoot: Group | null = null;
+  /** Arched Mazespire wordmark floating in the home storm sky. */
+  private homeSkyLogo: Group | null = null;
   private readonly enterCtl: EnterPlayController;
   private lightningCooldown = 1.2;
   private lightningFlash = 0;
@@ -764,6 +770,7 @@ export class MazeWorld {
     this.homeBackdrop = false;
     this.homeView = "menu";
     this.homeViewBlend = 1;
+    this.homeArriveT = 1;
     this.clearLightning();
     this.restoreHomeLighting();
     this.camera.far = 140;
@@ -814,6 +821,7 @@ export class MazeWorld {
     this.homeBackdrop = true;
     this.homeView = "menu";
     this.homeViewBlend = 1;
+    this.homeArriveT = this.reduceMotion ? 1 : 0;
     this.homeOrbit = 0.55; // start on a corner so the pyramid taper reads clearly
     this.lightningCooldown = 0.6 + Math.random() * 1.4;
     this.ball.visible = false;
@@ -831,7 +839,8 @@ export class MazeWorld {
     this.syncVoidSky(this.lastTime);
     this.applyHomeLighting();
     this.key.shadow.camera.far = 80;
-    this.camera.far = 220;
+    // Far enough for the arrive pull (HOME_ARRIVE_FAR × menu distance + lift).
+    this.camera.far = 480;
     // Ultrawide like an iPhone 0.5× — big floor, looming stack.
     this.camera.fov = 88;
     this.camera.updateProjectionMatrix();
@@ -847,6 +856,7 @@ export class MazeWorld {
     this.homeBackdrop = false;
     this.homeView = "menu";
     this.homeViewBlend = 1;
+    this.homeArriveT = 1;
     this.escaped = false;
     this.failed = false;
     this.meadowCamLive = false;
@@ -957,8 +967,12 @@ export class MazeWorld {
       if (this.homeViewBlend < 1) {
         this.homeViewBlend = Math.min(1, this.homeViewBlend + dt / 2.75);
       }
+      if (this.homeArriveT < 1) {
+        this.homeArriveT = Math.min(1, this.homeArriveT + dt / HOME_ARRIVE_SECS);
+      }
     } else {
       this.homeViewBlend = 1;
+      this.homeArriveT = 1;
     }
     this.tickLightning(dt);
     this.fx.tickRain(dt);
@@ -1297,7 +1311,12 @@ export class MazeWorld {
       this.gallery.tick(time, this.failed);
       if (this.homeBackdrop || this.failed) this.fx.tickRain(dt);
       else this.fx.tickFireworks(dt);
-      if (this.homeBackdrop) this.tickLightning(dt);
+      if (this.homeBackdrop) {
+        this.tickLightning(dt);
+        if (this.homeSkyLogo) {
+          tickHomeSkyLogo(this.homeSkyLogo, this.camera, time, this.reduceMotion);
+        }
+      }
     }
     this.boostMarkMat.emissiveIntensity = 0.55 + Math.sin(time * 4.5) * 0.28;
     this.iceMarkMat.emissiveIntensity = 0.35 + Math.sin(time * 1.6) * 0.12;
@@ -2000,6 +2019,7 @@ export class MazeWorld {
     addOminousTower(homeCtx, group, towerSpan);
     addFreePlayTrapdoor(homeCtx, group, span, towerSpan * 0.36);
     addHomeShacks(homeCtx, group, span, towerSpan * 0.36);
+    this.homeSkyLogo = addHomeSkyLogo(group);
 
     const light = new PointLight("#eef4ff", 0, span * 3.2, 1.6);
     light.position.set(0, 1.5, span * 0.15);
@@ -2262,6 +2282,7 @@ export class MazeWorld {
     this.homeTowerWallMat = null;
     this.homeDoorRoot = null;
     this.homeFreeDoorRoot = null;
+    this.homeSkyLogo = null;
     this.gallery.clear();
   }
 
@@ -2380,6 +2401,7 @@ export class MazeWorld {
       homeViewFromEye: this.homeViewFromEye,
       homeViewFromLook: this.homeViewFromLook,
       boardQuat: this.board.quaternion,
+      homeArriveT: this.homeArriveT,
     });
 
     this.camera.position.copy(this.meadowCamEye);
@@ -2853,6 +2875,10 @@ export class MazeWorld {
           || mat instanceof MeshStandardMaterial
           || mat instanceof MeshBasicMaterial
         ) {
+          if (child.userData.ownedTex instanceof CanvasTexture) {
+            child.userData.ownedTex.dispose();
+            child.userData.ownedTex = null;
+          }
           mat.dispose();
         }
       }

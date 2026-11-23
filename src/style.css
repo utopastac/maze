@@ -689,8 +689,8 @@ body,
 }
 
 #app[data-screen="home"] #play-hud {
-  z-index: 9;
-  pointer-events: auto;
+  z-index: 1;
+  pointer-events: none;
 }
 
 /* Load modal / practice picker float over the in-world Tower submenu + chrome. */

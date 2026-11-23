@@ -8,12 +8,11 @@ import { clamp01, easeOutBack, tokenColor, tokenHex } from "./util.ts";
 const HOME_TITLE_PX = 52;
 const HOME_BTN_PX = 38;
 const HOME_BTN_GAP = 10;
-/** Title-screen: hero logo hold → shatter away → button stagger. */
-const HOME_INTRO_SECS = 1.55;
-const HOME_INTRO_HERO_SCALE = 2.55;
-const HOME_INTRO_HOLD = 0.26;
-const HOME_INTRO_BLAST = 0.4;
-const HOME_INTRO_BTNS = 0.48;
+/** Design-pixel inset from the right edge for the main CTA stack. */
+const HOME_PAD_RIGHT = 22;
+/** Title-screen: CTA stagger only (Mazespire wordmark lives in the 3D sky). */
+const HOME_INTRO_SECS = 0.72;
+const HOME_INTRO_BTNS = 0;
 
 type HomeHit = HudHitBox & { action: PlayHudHomeAction };
 
@@ -44,7 +43,7 @@ const HOME_LABELS: Record<PlayHudHomeAction, string> = {
   towerBack: "Back",
 };
 
-/** Full-screen title menu: hero logo, CTA buttons, tower submenu bar. */
+/** Full-screen title menu: CTA buttons + tower submenu (brand mark is in the 3D sky). */
 export class HomeMenu {
   readonly layer = new Group();
   private readonly ctx: HudContext;
@@ -52,13 +51,12 @@ export class HomeMenu {
   private readonly btnRows: Group[] = HOME_ACTIONS.map(() => new Group());
   private readonly btns: (StartButton | null)[] = HOME_ACTIONS.map(() => null);
   private scrim: Mesh | null = null;
+  /** Tower-submenu title only — main Mazespire mark lives in the home 3D scene. */
   private titlePlate: ArchLabel | null = null;
   private isOpen = false;
   private mode: PlayHudHomeMenuMode = "main";
   /** 0..1 title-screen intro (1 = settled). */
   private introT = 1;
-  /** Fired once when the hero logo bursts into shards. */
-  private introBurst = false;
   private hits: HomeHit[] = [];
   private hover: PlayHudHomeAction | null = null;
 
@@ -77,7 +75,7 @@ export class HomeMenu {
     return this.mode;
   }
 
-  /** True while the hero intro is still running. */
+  /** True while the CTA intro stagger is still running. */
   get intro(): boolean {
     return this.introT < 1;
   }
@@ -90,12 +88,9 @@ export class HomeMenu {
       this.hover = null;
       this.mode = "main";
       this.introT = 1;
-      this.introBurst = false;
       this.resetIntroScales();
     } else {
-      const hero = this.mode === "main";
-      this.introT = hero ? 0 : 1;
-      this.introBurst = !hero;
+      this.introT = this.mode === "main" ? 0 : 1;
     }
   }
 
@@ -104,9 +99,7 @@ export class HomeMenu {
     if (this.mode === mode) return false;
     this.mode = mode;
     this.hover = null;
-    // Tower submenu skips the Mazespire hero beat; returning to main stays settled.
     this.introT = 1;
-    this.introBurst = true;
     return true;
   }
 
@@ -138,7 +131,6 @@ export class HomeMenu {
       const prevIntro = this.introT;
       if (reduceMotion) {
         this.introT = 1;
-        this.introBurst = true;
       } else {
         this.introT = Math.min(1, this.introT + dt / HOME_INTRO_SECS);
         this.applyIntro(this.introT);
@@ -173,41 +165,19 @@ export class HomeMenu {
     }
   }
 
-  /** Re-apply the in-flight hero intro after a relayout. */
+  /** Re-apply the in-flight CTA intro after a relayout. */
   reapplyIntro(): void {
     if (this.introT < 1) this.applyIntro(this.introT);
   }
 
-  /** Hero Mazespire hold → full shatter (gone); then buttons stagger in. */
+  /** Buttons stagger in over the live 3D sky wordmark. */
   applyIntro(t: number): void {
     if (this.mode !== "main") {
       this.resetIntroScales();
       return;
     }
-    const title = this.titlePlate?.root;
-    const hero = title?.userData.hero as { x: number; y: number; z: number } | undefined;
-    if (title && hero) {
-      if (t < HOME_INTRO_BLAST) {
-        title.visible = true;
-        const wind = clamp01((t - HOME_INTRO_HOLD) / Math.max(1e-4, HOME_INTRO_BLAST - HOME_INTRO_HOLD));
-        const punch = t < HOME_INTRO_HOLD
-          ? 1
-          : 1 + Math.sin(Math.min(1, wind) * Math.PI) * 0.22;
-        title.position.set(hero.x, hero.y, hero.z);
-        title.scale.setScalar(HOME_INTRO_HERO_SCALE * punch);
-        title.rotation.x = -0.06;
-        title.rotation.y = 0.02;
-      } else {
-        if (!this.introBurst) {
-          this.burstHeroLogo();
-          this.introBurst = true;
-        }
-        title.visible = false;
-        title.scale.setScalar(1);
-      }
-    }
 
-    const btnT = clamp01((t - HOME_INTRO_BTNS) / (1 - HOME_INTRO_BTNS));
+    const btnT = clamp01((t - HOME_INTRO_BTNS) / Math.max(1e-4, 1 - HOME_INTRO_BTNS));
     for (let i = 0; i < this.btnRows.length; i += 1) {
       const row = this.btnRows[i];
       if (!row?.visible) continue;
@@ -291,13 +261,16 @@ export class HomeMenu {
 
     const towerMode = this.mode === "tower";
     const actions = towerMode ? TOWER_HOME_ACTIONS : HOME_ACTIONS;
-    const titleText = towerMode ? "TOWER" : "MAZESPIRE";
     const titleH = HOME_TITLE_PX * u;
-    if (!this.titlePlate) {
-      this.titlePlate = new ArchLabel(titleText, "#ffffff", titleH);
-      this.layer.add(this.titlePlate.root);
-    } else {
-      this.titlePlate.set(titleText, "#ffffff", titleH);
+    if (towerMode) {
+      if (!this.titlePlate) {
+        this.titlePlate = new ArchLabel("TOWER", "#ffffff", titleH);
+        this.layer.add(this.titlePlate.root);
+      } else {
+        this.titlePlate.set("TOWER", "#ffffff", titleH);
+      }
+    } else if (this.titlePlate) {
+      this.titlePlate.root.visible = false;
     }
 
     const btnH = HOME_BTN_PX * u;
@@ -307,7 +280,11 @@ export class HomeMenu {
     const hits: HomeHit[] = [];
     let menuWidth = 0;
 
-    const syncBtn = (i: number, action: PlayHudHomeAction): StartButton | null => {
+    const syncBtn = (
+      i: number,
+      action: PlayHudHomeAction,
+      minWidth = 0,
+    ): StartButton | null => {
       const row = this.btnRows[i];
       if (!row) return null;
       const label = HOME_LABELS[action];
@@ -315,11 +292,11 @@ export class HomeMenu {
       const fill = primary ? goal : face;
       let btn = this.btns[i];
       if (!btn) {
-        btn = new StartButton(label, fill, voidInk, btnH);
+        btn = new StartButton(label, fill, voidInk, btnH, minWidth);
         this.btns[i] = btn;
         row.add(btn.root);
       } else {
-        btn.set(label, fill, voidInk, btnH);
+        btn.set(label, fill, voidInk, btnH, minWidth);
       }
       return btn;
     };
@@ -382,27 +359,25 @@ export class HomeMenu {
         x += w + gap;
       }
     } else {
-      // Title is hero-only: it shatters away and never reforms in the menu stack.
-      if (this.titlePlate) {
-        const hero = { x: cx, y: viewH * 0.52, z: 6 };
-        this.titlePlate.root.userData.hero = hero;
-        this.titlePlate.root.position.set(hero.x, hero.y, hero.z);
-        this.titlePlate.root.rotation.x = -0.06;
-        this.titlePlate.root.rotation.y = 0.02;
-        if (this.introBurst || this.introT >= HOME_INTRO_BLAST) {
-          this.titlePlate.root.visible = false;
-          this.titlePlate.root.scale.setScalar(1);
-        } else {
-          this.titlePlate.root.visible = true;
-          this.titlePlate.root.scale.setScalar(HOME_INTRO_HERO_SCALE);
-        }
-      }
-      const rows: { height: number; after: number; place: (y: number) => void }[] = [];
+      // Brand mark sits in the home 3D sky — HUD only carries the CTA stack.
+      // Natural widths first, then stretch every CTA to the widest label.
+      let uniformW = 0;
       for (let i = 0; i < actions.length; i += 1) {
         const action = actions[i];
         if (!action) continue;
         const btn = syncBtn(i, action);
-        if (!btn) continue;
+        if (btn) uniformW = Math.max(uniformW, btn.width);
+      }
+      for (let i = 0; i < actions.length; i += 1) {
+        const action = actions[i];
+        if (!action) continue;
+        syncBtn(i, action, uniformW);
+      }
+      const menuX = viewW - HOME_PAD_RIGHT * u - uniformW * 0.5;
+      const rows: { height: number; after: number; place: (y: number) => void }[] = [];
+      for (let i = 0; i < actions.length; i += 1) {
+        const action = actions[i];
+        if (!action) continue;
         const index = i;
         const act = action;
         rows.push({
@@ -414,16 +389,16 @@ export class HomeMenu {
             if (!current || !slot) return;
             slot.visible = true;
             slot.userData.baseY = y;
-            slot.userData.finalX = cx;
+            slot.userData.finalX = menuX;
             slot.scale.setScalar(1);
             slot.userData.scale = 1;
-            slot.position.set(cx, y, 4 + index * 0.05);
+            slot.position.set(menuX, y, 4 + index * 0.05);
             slot.rotation.x = -0.08;
             current.root.rotation.x = -0.1;
             const bufY = ctx.bufferH - (y + btnH * 0.5) / s;
             hits.push({
               action: act,
-              x: (cx - current.width * 0.5) / s,
+              x: (menuX - current.width * 0.5) / s,
               y: bufY,
               w: current.width / s,
               h: btnH / s,
@@ -451,41 +426,11 @@ export class HomeMenu {
   private resetIntroScales(): void {
     if (this.titlePlate) {
       this.titlePlate.root.scale.setScalar(1);
-      this.titlePlate.root.visible = true;
+      this.titlePlate.root.visible = this.mode === "tower";
     }
     for (const row of this.btnRows) {
       row.scale.setScalar(1);
       row.userData.scale = 1;
     }
-  }
-
-  private burstHeroLogo(): void {
-    const ctx = this.ctx;
-    const title = this.titlePlate;
-    if (!title || !ctx.shown || ctx.bufferW < 2) return;
-    const titleH = HOME_TITLE_PX * ctx.designScale() * HOME_INTRO_HERO_SCALE;
-    const width = Math.max(titleH, title.width * HOME_INTRO_HERO_SCALE);
-    const origin = this.fx.originOf(title.root);
-    const cols = Math.max(10, Math.min(22, Math.round((width / titleH) * 2.6)));
-    const rows = 5;
-    const cell = Math.max(titleH * 0.22, width / cols);
-    const palette = [0xffffff, 0xffffff, 0xf0f0f0, 0xdddddd, 0x222222];
-    for (let r = 0; r < rows; r += 1) {
-      for (let c = 0; c < cols; c += 1) {
-        const ox = (c / Math.max(1, cols - 1) - 0.5) * width * 0.96;
-        const oy = (r / Math.max(1, rows - 1) - 0.5) * titleH * 0.9;
-        this.fx.spawnShards(
-          origin.x + ox,
-          origin.y + oy,
-          origin.z,
-          cell,
-          2,
-          GATE_SHATTER_LIFE * 1.15,
-          true,
-          palette,
-        );
-      }
-    }
-    title.root.visible = false;
   }
 }

@@ -314,8 +314,6 @@ export class App {
     );
     this.input.attach();
     this.canvas.addEventListener("contextmenu", (event) => event.preventDefault());
-    this.playHudCanvas.addEventListener("pointerdown", this.onHomePointerDown);
-    this.playHudCanvas.addEventListener("pointermove", this.onHomePointerMove);
     window.addEventListener("resize", () => this.resize());
     this.router.attach();
   }
@@ -1549,7 +1547,7 @@ export class App {
         else if (this.editor.isOpen()) this.finishEditing();
         else if (this.intro.isModal()) this.closeTowerLoadModal();
         else if (this.intro.isOpen()) this.closeTowerIntro();
-        else if (this.home.isOpen() && this.playHud.homeMenuModeOf() === "tower") this.goHome();
+        else if (this.home.isOpen() && this.home.menuMode() === "tower") this.goHome();
       },
       phase: () => this.phase,
       isBrowsingWins: () => this.browsingWins,
@@ -1589,16 +1587,4 @@ export class App {
     this.fallTimer = 0;
   }
 
-  private onHomePointerDown = (event: PointerEvent): void => {
-    if (event.button !== 0 || !this.home.isOpen() || this.intro.isOpen()) return;
-    const action = this.playHud.hitTestHome(event.clientX, event.clientY);
-    if (action) this.pickHome(action);
-  };
-
-  private onHomePointerMove = (event: PointerEvent): void => {
-    if (!this.home.isOpen() || this.intro.isOpen()) return;
-    const action = this.playHud.hitTestHome(event.clientX, event.clientY);
-    this.playHud.setHomeHover(action);
-    this.playHudCanvas.style.cursor = action ? "pointer" : "default";
-  };
 }

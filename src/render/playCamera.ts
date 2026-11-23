@@ -2,8 +2,8 @@ import { Quaternion, Vector3, type Object3D } from "three";
 import { MEADOW_DROP, type TowerLayout } from "../core/layout.ts";
 import { clamp } from "../core/math.ts";
 import { SETTING_SPECS, type PlaySettings } from "../core/playSettings.ts";
-import { easeInOutCubic, easeOutCubic, wrapDegrees } from "./easing.ts";
-import { HOME_TOWER_H } from "./homeEnterConstants.ts";
+import { easeInOutCubic, easeInOutQuint, easeOutCubic, wrapDegrees } from "./easing.ts";
+import { HOME_ARRIVE_FAR, HOME_ARRIVE_LIFT, HOME_TOWER_H } from "./homeEnterConstants.ts";
 
 const ANGLE_SPEC = SETTING_SPECS.find((spec) => spec.key === "angle");
 export const PLAY_ANGLE_MIN = ANGLE_SPEC?.min ?? 22;
@@ -161,15 +161,21 @@ export function placeHomeBackdropCamera(
     homeViewFromEye: Vector3;
     homeViewFromLook: Vector3;
     boardQuat: Quaternion;
+    /** 0 = far approach start, 1 = settled title shot. */
+    homeArriveT: number;
   },
 ): void {
   const orbit = opts.homeOrbit + (opts.glance.glanceDOrbit * Math.PI) / 180;
   const { up, down } = opts.glance.meadowUpDown();
+  const arrive = easeInOutQuint(opts.homeArriveT);
+  // Far → near pull: tower reads as a distant silhouette, then flies into the menu framing.
+  const pull = HOME_ARRIVE_FAR + (1 - HOME_ARRIVE_FAR) * arrive;
+  const farLift = (1 - arrive) * HOME_TOWER_H * HOME_ARRIVE_LIFT;
 
   if (opts.homeView === "tower") {
     const lookY = opts.meadowY + HOME_TOWER_H * (1.02 + up * 0.03 - down * 0.03);
     const eyeY = opts.meadowY + HOME_TOWER_H * (1.14 + up * 0.08 - down * 0.05);
-    const dist = HOME_TOWER_H * (0.28 + up * 0.08 - down * 0.03);
+    const dist = HOME_TOWER_H * (0.28 + up * 0.08 - down * 0.03) * pull;
     const rightX = Math.cos(orbit);
     const rightZ = -Math.sin(orbit);
     const lookOff = HOME_TOWER_H * 0.16;
@@ -177,13 +183,13 @@ export function placeHomeBackdropCamera(
     scratch.homeViewLook.set(rightX * lookOff, lookY, rightZ * lookOff);
     scratch.homeViewEye.set(
       Math.sin(orbit) * dist + rightX * side,
-      eyeY,
+      eyeY + farLift,
       Math.cos(orbit) * dist + rightZ * side,
     );
   } else {
     const lookY = opts.meadowY + HOME_TOWER_H * (0.34 + up * 0.14 - down * 0.08);
-    const eyeY = opts.meadowY + 0.85 + down * 0.35 + up * 0.55;
-    const dist = HOME_TOWER_H * (0.72 + up * 0.3 - down * 0.06);
+    const eyeY = opts.meadowY + 0.85 + down * 0.35 + up * 0.55 + farLift;
+    const dist = HOME_TOWER_H * (0.72 + up * 0.3 - down * 0.06) * pull;
     scratch.homeViewLook.set(0, lookY, 0);
     scratch.homeViewEye.set(Math.sin(orbit) * dist, eyeY, Math.cos(orbit) * dist);
     scratch.homeViewEye.y = Math.max(scratch.homeViewEye.y, opts.meadowY + 0.55);

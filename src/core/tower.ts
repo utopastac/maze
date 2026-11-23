@@ -52,7 +52,8 @@ export function generateTower(seed: number, cols = 7, rows = 7, count = TOWER_FL
     floors.push(maze);
     landing = { ...maze.goal };
   }
-  const tower = { floors };
+  const tower: Tower = { floors };
+  setMaxHearts(tower, DEFAULT_MAX_HEARTS);
   repairTower(tower);
   return tower;
 }
