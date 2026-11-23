@@ -24,8 +24,10 @@ export type PlayInputHost = {
   isAwaitingStart(): boolean;
   canPause(): boolean;
   hitTestStart(x: number, y: number): boolean;
+  hitTestLoss(x: number, y: number): "retry" | "leave" | null;
   setCanvasCursor(cursor: string): void;
   onPressStart(): void;
+  onPressLoss(action: "retry" | "leave"): void;
   onTiltActivity(): void;
   onKeysChanged(): void;
   onOpenPause(): void;
@@ -182,6 +184,13 @@ export class PlayInput {
       if (this.host.hitTestStart(event.clientX, event.clientY)) this.host.onPressStart();
       return;
     }
+    if (phase === "lost") {
+      const loss = this.host.hitTestLoss(event.clientX, event.clientY);
+      if (loss) {
+        this.host.onPressLoss(loss);
+        return;
+      }
+    }
     this.dragPointer = event.pointerId;
     this.lastX = event.clientX;
     this.lastY = event.clientY;
@@ -194,6 +203,12 @@ export class PlayInput {
     if (this.host.isAwaitingStart()) {
       this.host.setCanvasCursor(
         this.host.hitTestStart(event.clientX, event.clientY) ? "pointer" : "default",
+      );
+      return;
+    }
+    if (this.host.phase() === "lost" && event.pointerId !== this.dragPointer) {
+      this.host.setCanvasCursor(
+        this.host.hitTestLoss(event.clientX, event.clientY) ? "pointer" : "default",
       );
       return;
     }
@@ -245,6 +260,12 @@ export class PlayInput {
     }
     if (this.host.isAwaitingStart()) {
       if (!event.repeat && (key === "enter" || event.key === " ")) this.host.onPressStart();
+      return;
+    }
+    if (phase === "lost") {
+      if (!event.repeat && (key === "enter" || event.key === " ")) {
+        this.host.onPressLoss("retry");
+      }
       return;
     }
     const chord = event.metaKey || event.ctrlKey || event.altKey;

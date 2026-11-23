@@ -105,6 +105,7 @@ import {
   paintRamp,
   makeCrumbleMat,
   makeCrumbleWell,
+  makeSpecialTileMat,
   makeVoidStarMat,
   crumbleChunks,
   toon,
@@ -294,14 +295,14 @@ export class MazeWorld {
 
     this.materials = {
       floor: toon(token("--maze-floor")),
-      boost: toon(token("--maze-boost"), token("--maze-boost"), 0.16),
-      warp: toon(token("--maze-warp"), token("--maze-warp"), 0.14),
-      ice: toon(token("--maze-ice"), token("--maze-ice-mark"), 0.1),
+      boost: makeSpecialTileMat("boost", "--maze-boost", 0.16),
+      warp: makeSpecialTileMat("warp", "--maze-warp", 0.14),
+      ice: makeSpecialTileMat("ice", "--maze-ice-mark", 0.1),
       crumble: makeCrumbleMat(),
       block: toon(token("--maze-block")),
-      switch: toon(token("--maze-switch"), token("--maze-switch-0"), 0.12),
+      switch: makeSpecialTileMat("switch", "--maze-switch-0", 0.12),
       start: toon(token("--maze-start")),
-      goal: toon(token("--maze-goal-floor"), token("--maze-goal"), 0.55),
+      goal: makeSpecialTileMat("goal", "--maze-goal", 0.55),
       wall: toon(token("--maze-wall")),
       grout: toon(token("--maze-grout")),
       frame: toon(token("--maze-frame")),
@@ -765,7 +766,6 @@ export class MazeWorld {
     this.homeViewBlend = 1;
     this.clearLightning();
     this.restoreHomeLighting();
-    this.key.shadow.camera.far = 40;
     this.camera.far = 140;
     this.camera.fov = this.settings?.values.field ?? 40;
     this.camera.updateProjectionMatrix();
@@ -791,6 +791,8 @@ export class MazeWorld {
     this.gallery.sceneIndex = 0;
     this.gallery.applyWinScene(0);
     this.beginMeadowCamera();
+    // Gallery browse has no escape fly-to — snap the meadow camera.
+    this.meadowCamT = 1;
     this.placeCamera();
   }
 
@@ -2050,6 +2052,9 @@ export class MazeWorld {
     this.key.intensity = 1.45;
     this.key.color.set("#fff6ea");
     this.key.position.set(4.4, 12.8, 6.2);
+    this.key.shadow.bias = -0.001;
+    this.key.shadow.normalBias = 0.06;
+    this.key.shadow.camera.near = 1;
   }
 
   private tickLightning(dt: number): void {
@@ -2269,6 +2274,15 @@ export class MazeWorld {
     this.meadowCamFromLook.set(0, this.focusY, 0).applyQuaternion(this.board.quaternion);
     this.meadowCamLive = true;
     this.meadowCamT = this.reduceMotion ? 1 : 0;
+    // Meadow sits at -MEADOW_DROP; stretch the shadow volume to match home backdrop.
+    this.key.shadow.camera.near = 0.5;
+    this.key.shadow.camera.far = 120;
+    this.key.shadow.bias = -0.0002;
+    this.key.shadow.normalBias = 0.02;
+    // Let the key light dominate so cast shadows read on the big meadow pads.
+    this.hemiLight.intensity = 0.42;
+    this.ambientLight.intensity = 0.14;
+    this.key.intensity = 1.75;
     this.restCamera();
   }
 
@@ -2407,14 +2421,17 @@ export class MazeWorld {
     this.camera.lookAt(this.meadowCamLookBlend);
 
     const span = Math.max(tower.width, tower.depth) * MEADOW_SPAN_MULT;
-    const range = span * 0.85;
+    const range = span * 1.05;
+    const look = this.meadowCamLookBlend;
+    // Keep the key light above the meadow so casters stay inside the shadow frustum.
+    this.key.position.set(look.x + span * 0.55, look.y + span * 0.95, look.z + span * 0.7);
     const shadow = this.key.shadow.camera as OrthographicCamera;
     shadow.left = -range;
     shadow.right = range;
     shadow.top = range;
     shadow.bottom = -range;
     shadow.updateProjectionMatrix();
-    this.key.target.position.copy(this.meadowCamLookBlend);
+    this.key.target.position.copy(look);
   }
 
   private addTileMarks(parent: Group, layout: MazeLayout): void {

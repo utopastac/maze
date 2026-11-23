@@ -17,7 +17,6 @@ import {
 } from "./mazeWorldTypes.ts";
 import {
   ramp,
-  organicProps,
   token,
 } from "./boardMaterials.ts";
 
@@ -271,6 +270,8 @@ export function flatDisc(radius: number, mat: MeshToonMaterial): Mesh {
   const mesh = new Mesh(new CircleGeometry(Math.max(0.05, radius), 16), mat);
   mesh.rotation.x = -Math.PI / 2;
   mesh.renderOrder = 1;
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
   return mesh;
 }
 
@@ -1320,10 +1321,8 @@ export function voxel(
   z: number,
 ): void {
   const mesh = new Mesh(new BoxGeometry(hx * 2, hy * 2, hz * 2), mat);
-  if (organicProps) {
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-  }
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
   mesh.position.set(x, y, z);
   parent.add(mesh);
 }

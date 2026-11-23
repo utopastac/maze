@@ -428,6 +428,134 @@ function roundRect(
   ctx.closePath();
 }
 
+/** Dark plate with a seam-colored ring — matches kit accent / metal-ring pills. */
+export class OutlineButton {
+  readonly root = new Group();
+  private readonly faceMat: MeshBasicMaterial;
+  private readonly shadeMat: MeshBasicMaterial;
+  private readonly face: Mesh;
+  private readonly shade: Mesh;
+  private texture: CanvasTexture;
+  private readonly paintCanvas: HTMLCanvasElement;
+  private readonly ctx: CanvasRenderingContext2D;
+  private canvasW = 0;
+  private canvasH = 0;
+  width = 1;
+  private height = 1;
+  private text = "";
+  private ring = "";
+  private ink = "";
+  private faceFill = "";
+
+  constructor(
+    text: string,
+    ring: string,
+    ink: string,
+    faceFill: string,
+    height: number,
+  ) {
+    this.paintCanvas = document.createElement("canvas");
+    const ctx = this.paintCanvas.getContext("2d");
+    if (!ctx) throw new Error("Play HUD outline button canvas unavailable");
+    this.ctx = ctx;
+    this.texture = new CanvasTexture(this.paintCanvas);
+    this.texture.colorSpace = SRGBColorSpace;
+    this.texture.magFilter = LinearFilter;
+    this.texture.minFilter = LinearFilter;
+    this.texture.generateMipmaps = false;
+
+    this.faceMat = new MeshBasicMaterial({
+      map: this.texture,
+      transparent: true,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    this.shadeMat = new MeshBasicMaterial({
+      map: this.texture,
+      color: "#000000",
+      transparent: true,
+      opacity: 0.55,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    this.face = new Mesh(new PlaneGeometry(1, 1), this.faceMat);
+    this.shade = new Mesh(new PlaneGeometry(1, 1), this.shadeMat);
+    this.root.add(this.shade, this.face);
+    this.set(text, ring, ink, faceFill, height);
+  }
+
+  private rebindTexture(): void {
+    this.texture.dispose();
+    this.texture = new CanvasTexture(this.paintCanvas);
+    this.texture.colorSpace = SRGBColorSpace;
+    this.texture.magFilter = LinearFilter;
+    this.texture.minFilter = LinearFilter;
+    this.texture.generateMipmaps = false;
+    this.faceMat.map = this.texture;
+    this.shadeMat.map = this.texture;
+    this.faceMat.needsUpdate = true;
+    this.shadeMat.needsUpdate = true;
+  }
+
+  set(
+    text: string,
+    ring: string,
+    ink: string,
+    faceFill: string,
+    height: number,
+  ): void {
+    if (
+      text === this.text
+      && ring === this.ring
+      && ink === this.ink
+      && faceFill === this.faceFill
+      && Math.abs(height - this.height) < 1e-6
+    ) return;
+    this.text = text;
+    this.ring = ring;
+    this.ink = ink;
+    this.faceFill = faceFill;
+    this.height = height;
+
+    const px = 64;
+    const padX = 56;
+    const padY = 28;
+    const font = `600 ${px}px Arial, Helvetica, sans-serif`;
+    this.ctx.font = font;
+    const textW = this.ctx.measureText(text).width;
+    const w = Math.max(8, Math.ceil(Math.max(textW + padX * 2, px * 4.2)));
+    const h = Math.max(8, Math.ceil(px + padY * 2));
+    const resized = this.canvasW !== w || this.canvasH !== h;
+    this.paintCanvas.width = w;
+    this.paintCanvas.height = h;
+    this.canvasW = w;
+    this.canvasH = h;
+    if (resized) this.rebindTexture();
+    this.ctx.clearRect(0, 0, w, h);
+    this.ctx.font = font;
+
+    const radius = Math.max(1, Math.round(h * 0.04));
+    const rim = Math.max(4, Math.round(h * 0.07));
+    roundRect(this.ctx, 0, 0, w, h, radius);
+    this.ctx.fillStyle = ring;
+    this.ctx.fill();
+    roundRect(this.ctx, rim, rim, w - rim * 2, h - rim * 2, Math.max(1, radius - 1));
+    this.ctx.fillStyle = faceFill;
+    this.ctx.fill();
+
+    this.ctx.textAlign = "center";
+    this.ctx.textBaseline = "middle";
+    this.ctx.fillStyle = ink;
+    this.ctx.fillText(text, w * 0.5, h * 0.52);
+    this.texture.needsUpdate = true;
+
+    this.width = height * (w / h);
+    this.face.scale.set(this.width, height, 1);
+    this.shade.scale.set(this.width, height, 1);
+    this.shade.position.set(height * 0.06, -height * 0.08, -height * 0.12);
+  }
+}
+
 /** Arial Black outlined label as textured planes with a 3D shade offset. */
 export class TextPlate {
   readonly root = new Group();

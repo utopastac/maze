@@ -16,6 +16,17 @@ export type PlayHudStartGate = {
   coins: number;
 };
 
+/** Out-of-hearts result card on the 3D HUD layer. */
+export type PlayHudLoss = {
+  floor: number;
+  total: number;
+  seconds: number;
+  /** Campaign runs also offer a Home CTA. */
+  showLeave: boolean;
+};
+
+export type PlayHudLossAction = "retry" | "leave";
+
 export type PlayHudHomeAction =
   | "tower"
   | "play"

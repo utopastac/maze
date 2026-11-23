@@ -7,6 +7,7 @@ import {
 } from "three";
 import { snapPixels } from "../../core/playSettings.ts";
 import { HudContext, createHudAssets } from "./context.ts";
+import { FailPanel } from "./failPanel.ts";
 import { HudFx } from "./fx.ts";
 import { HomeMenu } from "./homeMenu.ts";
 import { PlayStats } from "./playStats.ts";
@@ -14,6 +15,8 @@ import { StartGate } from "./startGate.ts";
 import type {
   PlayHudHomeAction,
   PlayHudHomeMenuMode,
+  PlayHudLoss,
+  PlayHudLossAction,
   PlayHudStartGate,
   PlayHudStats,
 } from "./types.ts";
@@ -23,7 +26,8 @@ import type {
  * on their own WebGL canvas (UI pixels only).
  *
  * Thin facade: owns the renderer/scene/view state and delegates to
- * {@link HomeMenu}, {@link StartGate}, {@link PlayStats}, and {@link HudFx}.
+ * {@link HomeMenu}, {@link StartGate}, {@link FailPanel}, {@link PlayStats},
+ * and {@link HudFx}.
  */
 export class PlayHud {
   private readonly canvas: HTMLCanvasElement;
@@ -34,6 +38,7 @@ export class PlayHud {
   private readonly fx: HudFx;
   private readonly stats: PlayStats;
   private readonly startGate: StartGate;
+  private readonly failPanel: FailPanel;
   private readonly home: HomeMenu;
   /** Hide corner play chrome while a home → play camera enter is running. */
   private suppressPlayChrome = false;
@@ -57,6 +62,7 @@ export class PlayHud {
     this.fx = new HudFx(this.ctx);
     this.stats = new PlayStats(this.ctx);
     this.startGate = new StartGate(this.ctx, this.fx);
+    this.failPanel = new FailPanel(this.ctx, this.fx);
     this.home = new HomeMenu(this.ctx, this.fx);
 
     this.scene.add(new AmbientLight("#ffffff", 0.55));
@@ -74,7 +80,7 @@ export class PlayHud {
       this.fx.shoutLayer,
       this.fx.shatterLayer,
     );
-    this.scene.add(this.startGate.layer, this.home.layer);
+    this.scene.add(this.startGate.layer, this.failPanel.layer, this.home.layer);
     this.canvas.hidden = true;
   }
 
@@ -111,11 +117,26 @@ export class PlayHud {
     const open = gate !== null;
     if (!open && !this.startGate.open) return;
     if (open && this.home.open) this.setHomeMenu(false);
+    if (open && this.failPanel.open) this.setLoss(null);
     this.startGate.setGate(gate);
     this.syncOverlayVisibility();
     ctx.layoutDirty = true;
     if (ctx.shown) this.paint(true);
     if (open && ctx.shown) this.startGate.applyIntro(0);
+  }
+
+  /** Out-of-hearts result card on the 3D HUD layer. */
+  setLoss(loss: PlayHudLoss | null): void {
+    const ctx = this.ctx;
+    const open = loss !== null;
+    if (!open && !this.failPanel.open) return;
+    if (open && this.home.open) this.setHomeMenu(false);
+    if (open && this.startGate.open) this.setStartGate(null);
+    this.failPanel.setLoss(loss);
+    this.syncOverlayVisibility();
+    ctx.layoutDirty = true;
+    if (ctx.shown) this.paint(true);
+    if (open && ctx.shown) this.failPanel.applyIntro(0);
   }
 
   /** Full-screen title menu on the 3D HUD layer. */
@@ -129,6 +150,7 @@ export class PlayHud {
       return;
     }
     if (open && this.startGate.open) this.setStartGate(null);
+    if (open && this.failPanel.open) this.setLoss(null);
     this.home.setOpenState(open);
     this.syncOverlayVisibility();
     ctx.layoutDirty = true;
@@ -154,6 +176,13 @@ export class PlayHud {
     this.setStartGate(null);
   }
 
+  /** Blow apart the out-of-hearts card before retry / leave. */
+  shatterLoss(): void {
+    if (!this.failPanel.open) return;
+    if (this.ctx.shown && this.ctx.bufferW >= 2) this.failPanel.spawnShards();
+    this.setLoss(null);
+  }
+
   /** Blow apart the home menu before leaving for a destination. */
   shatterHomeMenu(): void {
     if (!this.home.open) return;
@@ -165,6 +194,10 @@ export class PlayHud {
     return this.startGate.open;
   }
 
+  isLossOpen(): boolean {
+    return this.failPanel.open;
+  }
+
   isHomeMenuOpen(): boolean {
     return this.home.open;
   }
@@ -172,6 +205,11 @@ export class PlayHud {
   /** Hit-test the Start button in CSS client coordinates. */
   hitTestStart(clientX: number, clientY: number): boolean {
     return this.startGate.hitTest(clientX, clientY);
+  }
+
+  /** Hit-test the out-of-hearts Retry / Home CTAs. */
+  hitTestLoss(clientX: number, clientY: number): PlayHudLossAction | null {
+    return this.failPanel.hitTest(clientX, clientY);
   }
 
   /** Hit-test a home menu CTA in CSS client coordinates. */
@@ -228,8 +266,9 @@ export class PlayHud {
 
   update(dt: number, reduceMotion: boolean): void {
     if (!this.ctx.shown) return;
-    this.stats.tick(dt, reduceMotion, !this.startGate.open);
+    this.stats.tick(dt, reduceMotion, !this.startGate.open && !this.failPanel.open);
     this.startGate.tick(dt, reduceMotion);
+    this.failPanel.tick(dt, reduceMotion);
     this.home.tick(dt, reduceMotion);
     this.fx.tick(dt, reduceMotion);
     this.paint(false);
@@ -237,10 +276,11 @@ export class PlayHud {
 
   private syncOverlayVisibility(): void {
     const on = this.ctx.shown;
-    const overlay = this.startGate.open || this.home.open;
+    const overlay = this.startGate.open || this.home.open || this.failPanel.open;
     const playChrome = on && !overlay && !this.suppressPlayChrome;
     this.stats.root.visible = playChrome;
     this.startGate.layer.visible = on && this.startGate.open && !this.suppressPlayChrome;
+    this.failPanel.layer.visible = on && this.failPanel.open;
     this.home.layer.visible = on && this.home.open;
     this.fx.shoutLayer.visible = playChrome;
     this.fx.shatterLayer.visible = on;
@@ -269,6 +309,9 @@ export class PlayHud {
       if (this.home.open) {
         this.home.layout();
         this.home.reapplyIntro();
+      } else if (this.failPanel.open) {
+        this.failPanel.layout();
+        this.failPanel.reapplyIntro();
       } else if (this.startGate.open) {
         this.startGate.layout();
         this.startGate.reapplyIntro();

@@ -17,7 +17,7 @@ import {
   type TowerLayout,
 } from "../core/layout.ts";
 import {
-  organicProps,
+  enableMeadowShadows,
   facet,
   token,
 } from "./boardMaterials.ts";
@@ -354,6 +354,7 @@ export class WinGalleryScenes {
     const riverScene = kind === "pasture" || kind === "forest" || kind === "rainforest";
     this.addAnimals(group, span, kind, riverScene ? meadowStream(span) : null);
     this.addWinSign(group, span);
+    enableMeadowShadows(group);
     this.board.add(group);
     this.meadow = group;
   }
@@ -412,7 +413,7 @@ export class WinGalleryScenes {
 
     const pad = new Mesh(new BoxGeometry(ground, 0.22, ground), this.groundMats.failGroundDark);
     pad.position.y = -0.11;
-    pad.receiveShadow = organicProps;
+    pad.receiveShadow = true;
     group.add(pad);
 
     const tiles = Math.max(4, Math.round(ground / 2.4));
@@ -423,7 +424,7 @@ export class WinGalleryScenes {
     const carpet = new Mesh(new PlaneGeometry(ground, ground), this.failFloorMat);
     carpet.rotation.x = -Math.PI / 2;
     carpet.position.y = 0.01;
-    carpet.receiveShadow = organicProps;
+    carpet.receiveShadow = true;
     group.add(carpet);
 
     this.addFailRubble(group, span);
@@ -436,6 +437,7 @@ export class WinGalleryScenes {
     this.addFailLantern(group, span);
     this.addFailGhost(group, span);
     this.addFailSign(group, span);
+    enableMeadowShadows(group);
     this.board.add(group);
     this.meadow = group;
     for (let i = 0; i < 48; i += 1) this.fx.spawnRaindrop(group);
@@ -469,8 +471,8 @@ export class WinGalleryScenes {
       rock.rotation.y = a * 0.7;
       rock.rotation.z = ((i % 7) - 3) * 0.05;
       rock.rotation.x = ((i % 5) - 2) * 0.04;
-      rock.castShadow = organicProps;
-      rock.receiveShadow = organicProps;
+      rock.castShadow = true;
+      rock.receiveShadow = true;
       parent.add(rock);
     }
     for (let i = 0; i < 10; i += 1) {
@@ -728,7 +730,7 @@ export class WinGalleryScenes {
     const ground = this.meadowGroundSpan(span);
     const pad = new Mesh(new BoxGeometry(ground, 0.22, ground), sideMats[kind]);
     pad.position.y = -0.11;
-    pad.receiveShadow = organicProps;
+    pad.receiveShadow = true;
     parent.add(pad);
 
     const floorMat = this.floorMats[kind];
@@ -740,7 +742,7 @@ export class WinGalleryScenes {
     const carpet = new Mesh(new PlaneGeometry(ground, ground), floorMat);
     carpet.rotation.x = -Math.PI / 2;
     carpet.position.y = 0.01;
-    carpet.receiveShadow = organicProps;
+    carpet.receiveShadow = true;
     parent.add(carpet);
     this.addFloorDetail(parent, span, kind);
   }
@@ -923,7 +925,7 @@ export class WinGalleryScenes {
     );
     path.rotation.x = -Math.PI / 2;
     path.position.set(lakeX, 0.035, lakeZ);
-    path.receiveShadow = organicProps;
+    path.receiveShadow = true;
     parent.add(path);
 
     const approach = new Mesh(
@@ -931,7 +933,7 @@ export class WinGalleryScenes {
       this.groundMats.pavement,
     );
     approach.position.set(0, 0.03, lakeZ + lakeR * 1.55);
-    approach.receiveShadow = organicProps;
+    approach.receiveShadow = true;
     parent.add(approach);
 
     const rim = span * 0.4;
@@ -1270,7 +1272,7 @@ export class WinGalleryScenes {
     const sandDepth = half - shoreZ;
     const sandPad = new Mesh(new BoxGeometry(ground, 0.22, sandDepth), this.groundMats.sandDark);
     sandPad.position.set(0, -0.11, shoreZ + sandDepth * 0.5);
-    sandPad.receiveShadow = organicProps;
+    sandPad.receiveShadow = true;
     parent.add(sandPad);
 
     const floorMat = this.floorMats.beach;
@@ -1283,26 +1285,26 @@ export class WinGalleryScenes {
     const carpet = new Mesh(new PlaneGeometry(ground, sandDepth), floorMat);
     carpet.rotation.x = -Math.PI / 2;
     carpet.position.set(0, 0.01, shoreZ + sandDepth * 0.5);
-    carpet.receiveShadow = organicProps;
+    carpet.receiveShadow = true;
     parent.add(carpet);
 
     // Sea from the waterline out past the far clip (−Z horizon).
     const oceanDepth = half + shoreZ;
     const deep = new Mesh(new BoxGeometry(ground, 0.2, oceanDepth), this.oceanDeepMat);
     deep.position.set(0, -0.08, shoreZ - oceanDepth * 0.5);
-    deep.receiveShadow = organicProps;
+    deep.receiveShadow = true;
     parent.add(deep);
 
     // Thin nearshore tint — keeps the sea one body instead of stacked pool bands.
     const shallows = new Mesh(new BoxGeometry(ground, 0.1, span * 0.2), this.oceanMat);
     shallows.position.set(0, -0.03, shoreZ - span * 0.08);
-    shallows.receiveShadow = organicProps;
+    shallows.receiveShadow = true;
     parent.add(shallows);
 
     // Wet sand tide line on the beach edge.
     const wet = new Mesh(new BoxGeometry(ground, 0.05, span * 0.1), this.groundMats.sandDark);
     wet.position.set(0, 0.02, shoreZ + span * 0.04);
-    wet.receiveShadow = organicProps;
+    wet.receiveShadow = true;
     parent.add(wet);
   }
 

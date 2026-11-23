@@ -11,13 +11,13 @@ import {
   MeshBasicMaterial,
   MeshToonMaterial,
   NearestFilter,
+  Object3D,
   Path,
   ShaderMaterial,
   Shape,
   SRGBColorSpace,
   Vector2,
   Vector3,
-  type Texture,
 } from "three";
 import {
   mergeGeometries,
@@ -30,8 +30,10 @@ import {
 import {
 } from "../core/math.ts";
 import {
-  makeCrumbleCanvas,
-} from "./crumblePaint.ts";
+  crumbleTexture,
+  specialTileTexture,
+  type SpecialTileId,
+} from "./tileTextures.ts";
 
 export function starGeometry(): BufferGeometry {
   const shape = new Shape();
@@ -140,6 +142,17 @@ export function setOrganicProps(value: boolean): void {
   organicProps = value;
 }
 
+/** Cast/receive on every mesh under a meadow (win, fail) — same as the play board. */
+export function enableMeadowShadows(root: Object3D): void {
+  root.traverse((child) => {
+    const mesh = child as Mesh;
+    // Prefer isMesh over instanceof — Vite can load duplicate three copies.
+    if (!mesh.isMesh) return;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+  });
+}
+
 function shadeRamp(bands: number): DataTexture {
   const tex = new DataTexture(rampBytes(bands, false), RAMP_WIDTH, 1);
   tex.magFilter = NearestFilter;
@@ -188,23 +201,26 @@ function bandValue(t: number, bands: number): number {
 export function makeCrumbleMat(): MeshToonMaterial {
   return new MeshToonMaterial({
     color: "#ffffff",
-    map: makeCrumbleTexture(),
+    map: crumbleTexture(),
     emissive: token("--maze-crumble-mark"),
     emissiveIntensity: 0.03,
     gradientMap: ramp,
   });
 }
 
-function makeCrumbleTexture(): Texture {
-  const tex = new CanvasTexture(makeCrumbleCanvas());
-  tex.colorSpace = SRGBColorSpace;
-  tex.magFilter = NearestFilter;
-  tex.minFilter = NearestFilter;
-  tex.wrapS = ClampToEdgeWrapping;
-  tex.wrapT = ClampToEdgeWrapping;
-  tex.generateMipmaps = false;
-  tex.needsUpdate = true;
-  return tex;
+/** Special floor tiles (boost / warp / ice / switch / goal) from `texture-imports/tiles/`. */
+export function makeSpecialTileMat(
+  id: SpecialTileId,
+  emissiveToken: string,
+  emissiveIntensity: number,
+): MeshToonMaterial {
+  return new MeshToonMaterial({
+    color: "#ffffff",
+    map: specialTileTexture(id),
+    emissive: token(emissiveToken),
+    emissiveIntensity,
+    gradientMap: ramp,
+  });
 }
 
 export function makeCrumbleWell(

@@ -32,6 +32,7 @@ import { TiltController } from "../core/tilt.ts";
 import { applyRendererLook, createRenderer } from "../render/createRenderer.ts";
 import { MazeWorld, type EnterPlayKind } from "../render/MazeWorld.ts";
 import { PlayHud, type PlayHudHomeAction } from "../render/playHud.ts";
+import { loadTileTextures } from "../render/tileTextures.ts";
 import { cloneMaze } from "../core/maze.ts";
 import { saveLevel } from "../core/savedLevels.ts";
 import { DEFAULT_FLOOR_THEME, parseFloorTheme } from "../core/theme.ts";
@@ -321,6 +322,7 @@ export class App {
 
   async start(): Promise<void> {
     await initPhysics();
+    await loadTileTextures();
     this.renderer = createRenderer(this.canvas);
     this.view = new MazeWorld();
     this.view.useSettings(this.settings);
@@ -459,6 +461,7 @@ export class App {
     this.winsFromHome = false;
     this.playHud.setSuppressPlayChrome(false);
     this.playHud.setStartGate(null);
+    this.playHud.setLoss(null);
     this.hud.hideHint();
     this.hud.setCelebrate(false);
     this.hud.setWinsSelected(false);
@@ -570,6 +573,7 @@ export class App {
     this.browsingWins = false;
     this.tilt.snap();
     this.overlay.hide();
+    this.playHud.setLoss(null);
     this.hud.setCelebrate(false);
     this.hud.setWinsSelected(false);
     this.hud.setWinGallery(false);
@@ -616,6 +620,14 @@ export class App {
     this.canvas.style.cursor = "";
     this.hud.hideHint();
     this.syncPlayHud();
+  }
+
+  private pressLoss(action: "retry" | "leave"): void {
+    if (this.phase !== "lost" || !this.playHud.isLossOpen()) return;
+    this.canvas.style.cursor = "";
+    this.playHud.shatterLoss();
+    if (action === "leave") this.goHome();
+    else this.replay();
   }
 
   private swapEnterPlay(): void {
@@ -798,6 +810,7 @@ export class App {
     this.running = false;
     this.awaitingStart = false;
     this.playHud.setStartGate(null);
+    this.playHud.setLoss(null);
     // Leave the home shell so the gallery panel and viewport can paint.
     this.setShellScreen("play");
     this.browsingWins = true;
@@ -1186,9 +1199,8 @@ export class App {
     this.hud.setCelebrate(true);
     // Keep the play HUD up for the center heart drop-in + shatter debris.
     window.setTimeout(() => {
-      if (this.phase === "failing" || this.phase === "lost") {
-        this.playHud.setVisible(false);
-      }
+      // Only hide while still failing — lost re-shows the 3D out-of-hearts card.
+      if (this.phase === "failing") this.playHud.setVisible(false);
     }, 1400);
     this.closeSettingsScreen(false);
   }
@@ -1229,12 +1241,19 @@ export class App {
     this.hud.hideHint();
     this.hud.setCelebrate(true);
     this.playHud.setVisible(false);
+    this.playHud.setLoss(null);
     this.closeSettingsScreen(false);
     this.clearFall();
     this.fallTimer = window.setTimeout(() => {
       this.fallTimer = 0;
       if (this.phase !== "lost") return;
-      this.overlay.showLoss(this.floorAt, this.floorCount, this.seconds, this.mode === "campaign");
+      this.playHud.setVisible(true);
+      this.playHud.setLoss({
+        floor: this.floorAt,
+        total: this.floorCount,
+        seconds: this.seconds,
+        showLeave: this.mode === "campaign",
+      });
     }, 1100);
   }
 
@@ -1538,10 +1557,12 @@ export class App {
       isAwaitingStart: () => this.awaitingStart,
       canPause: () => this.canPause(),
       hitTestStart: (x, y) => this.playHud.hitTestStart(x, y),
+      hitTestLoss: (x, y) => this.playHud.hitTestLoss(x, y),
       setCanvasCursor: (cursor) => {
         this.canvas.style.cursor = cursor;
       },
       onPressStart: () => this.pressStart(),
+      onPressLoss: (action) => this.pressLoss(action),
       onTiltActivity: () => this.noteActivity(),
       onKeysChanged: () => this.hud.setHeld(this.input.keys),
       onOpenPause: () => this.openPause(),
