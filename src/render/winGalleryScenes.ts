@@ -34,9 +34,9 @@ import {
   FAIL_GLYPH_I,
   FAIL_GLYPH_L,
   FAIL_GLYPH_BANG,
-  GRAVE_GLYPH_RIP,
-  GRAVE_GLYPH_CROSS,
-  GRAVE_GLYPH_R,
+  GRAVE_GLYPH_RUNE_A,
+  GRAVE_GLYPH_RUNE_B,
+  GRAVE_GLYPH_RUNE_C,
   SCENE_ANIMALS,
   type AnimalBit,
   meadowStream,
@@ -517,9 +517,9 @@ export class WinGalleryScenes {
       yaw: number;
       glyph: string[];
     }[] = [
-      { x: rim * -0.82, z: rim * -0.05, scale: 1.35, yaw: 0.22, glyph: GRAVE_GLYPH_RIP },
-      { x: rim * -0.58, z: rim * 0.48, scale: 1.5, yaw: -0.12, glyph: GRAVE_GLYPH_CROSS },
-      { x: rim * -0.92, z: rim * 0.42, scale: 1.15, yaw: 0.35, glyph: GRAVE_GLYPH_R },
+      { x: rim * -0.82, z: rim * -0.05, scale: 1.35, yaw: 0.22, glyph: GRAVE_GLYPH_RUNE_A },
+      { x: rim * -0.58, z: rim * 0.48, scale: 1.5, yaw: -0.12, glyph: GRAVE_GLYPH_RUNE_B },
+      { x: rim * -0.92, z: rim * 0.42, scale: 1.15, yaw: 0.35, glyph: GRAVE_GLYPH_RUNE_C },
     ];
     for (const grave of graves) {
       parent.add(

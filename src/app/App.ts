@@ -461,7 +461,7 @@ export class App {
     this.winsFromHome = false;
     this.playHud.setSuppressPlayChrome(false);
     this.playHud.setStartGate(null);
-    this.playHud.setLoss(null);
+    this.playHud.setResult(null);
     this.hud.hideHint();
     this.hud.setCelebrate(false);
     this.hud.setWinsSelected(false);
@@ -573,7 +573,7 @@ export class App {
     this.browsingWins = false;
     this.tilt.snap();
     this.overlay.hide();
-    this.playHud.setLoss(null);
+    this.playHud.setResult(null);
     this.hud.setCelebrate(false);
     this.hud.setWinsSelected(false);
     this.hud.setWinGallery(false);
@@ -622,10 +622,12 @@ export class App {
     this.syncPlayHud();
   }
 
-  private pressLoss(action: "retry" | "leave"): void {
-    if (this.phase !== "lost" || !this.playHud.isLossOpen()) return;
+  private pressResult(action: "primary" | "leave"): void {
+    if (!this.playHud.isResultOpen()) return;
+    if (this.phase !== "lost" && this.phase !== "won") return;
+    if (this.phase === "won" && this.browsingWins) return;
     this.canvas.style.cursor = "";
-    this.playHud.shatterLoss();
+    this.playHud.shatterResult();
     if (action === "leave") this.goHome();
     else this.replay();
   }
@@ -810,7 +812,7 @@ export class App {
     this.running = false;
     this.awaitingStart = false;
     this.playHud.setStartGate(null);
-    this.playHud.setLoss(null);
+    this.playHud.setResult(null);
     // Leave the home shell so the gallery panel and viewport can paint.
     this.setShellScreen("play");
     this.browsingWins = true;
@@ -1218,13 +1220,14 @@ export class App {
     this.hud.hideHint();
     this.hud.setCelebrate(true);
     this.playHud.setVisible(false);
+    this.playHud.setResult(null);
     this.closeSettingsScreen(false);
     this.clearFall();
     this.fallTimer = window.setTimeout(() => {
       this.fallTimer = 0;
-      if (this.phase !== "won") return;
-      if (this.mode === "campaign") this.overlay.showCampaignWin(this.seconds, this.drops, this.lives);
-      else this.overlay.showWin(this.seconds, this.drops);
+      if (this.phase !== "won" || this.browsingWins) return;
+      this.playHud.setVisible(true);
+      this.playHud.setResult("win");
     }, 1100);
   }
 
@@ -1241,19 +1244,14 @@ export class App {
     this.hud.hideHint();
     this.hud.setCelebrate(true);
     this.playHud.setVisible(false);
-    this.playHud.setLoss(null);
+    this.playHud.setResult(null);
     this.closeSettingsScreen(false);
     this.clearFall();
     this.fallTimer = window.setTimeout(() => {
       this.fallTimer = 0;
       if (this.phase !== "lost") return;
       this.playHud.setVisible(true);
-      this.playHud.setLoss({
-        floor: this.floorAt,
-        total: this.floorCount,
-        seconds: this.seconds,
-        showLeave: this.mode === "campaign",
-      });
+      this.playHud.setResult("loss");
     }, 1100);
   }
 
@@ -1407,6 +1405,7 @@ export class App {
     this.hud.setNote("");
     if (this.phase === "won") {
       this.overlay.hide();
+      this.playHud.setResult(null);
       this.hud.setCelebrate(false);
       this.playHud.setVisible(true);
       this.syncPlayHud();
@@ -1557,12 +1556,13 @@ export class App {
       isAwaitingStart: () => this.awaitingStart,
       canPause: () => this.canPause(),
       hitTestStart: (x, y) => this.playHud.hitTestStart(x, y),
-      hitTestLoss: (x, y) => this.playHud.hitTestLoss(x, y),
+      hitTestResult: (x, y) => this.playHud.hitTestResult(x, y),
+      isResultOpen: () => this.playHud.isResultOpen(),
       setCanvasCursor: (cursor) => {
         this.canvas.style.cursor = cursor;
       },
       onPressStart: () => this.pressStart(),
-      onPressLoss: (action) => this.pressLoss(action),
+      onPressResult: (action) => this.pressResult(action),
       onTiltActivity: () => this.noteActivity(),
       onKeysChanged: () => this.hud.setHeld(this.input.keys),
       onOpenPause: () => this.openPause(),

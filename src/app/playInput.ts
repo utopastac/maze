@@ -24,10 +24,11 @@ export type PlayInputHost = {
   isAwaitingStart(): boolean;
   canPause(): boolean;
   hitTestStart(x: number, y: number): boolean;
-  hitTestLoss(x: number, y: number): "retry" | "leave" | null;
+  hitTestResult(x: number, y: number): "primary" | "leave" | null;
+  isResultOpen(): boolean;
   setCanvasCursor(cursor: string): void;
   onPressStart(): void;
-  onPressLoss(action: "retry" | "leave"): void;
+  onPressResult(action: "primary" | "leave"): void;
   onTiltActivity(): void;
   onKeysChanged(): void;
   onOpenPause(): void;
@@ -184,10 +185,13 @@ export class PlayInput {
       if (this.host.hitTestStart(event.clientX, event.clientY)) this.host.onPressStart();
       return;
     }
-    if (phase === "lost") {
-      const loss = this.host.hitTestLoss(event.clientX, event.clientY);
-      if (loss) {
-        this.host.onPressLoss(loss);
+    if (
+      (phase === "lost" || phase === "won")
+      && this.host.isResultOpen()
+    ) {
+      const result = this.host.hitTestResult(event.clientX, event.clientY);
+      if (result) {
+        this.host.onPressResult(result);
         return;
       }
     }
@@ -206,9 +210,13 @@ export class PlayInput {
       );
       return;
     }
-    if (this.host.phase() === "lost" && event.pointerId !== this.dragPointer) {
+    if (
+      (this.host.phase() === "lost" || this.host.phase() === "won")
+      && this.host.isResultOpen()
+      && event.pointerId !== this.dragPointer
+    ) {
       this.host.setCanvasCursor(
-        this.host.hitTestLoss(event.clientX, event.clientY) ? "pointer" : "default",
+        this.host.hitTestResult(event.clientX, event.clientY) ? "pointer" : "default",
       );
       return;
     }
@@ -262,9 +270,12 @@ export class PlayInput {
       if (!event.repeat && (key === "enter" || event.key === " ")) this.host.onPressStart();
       return;
     }
-    if (phase === "lost") {
+    if (
+      (phase === "lost" || phase === "won")
+      && this.host.isResultOpen()
+    ) {
       if (!event.repeat && (key === "enter" || event.key === " ")) {
-        this.host.onPressLoss("retry");
+        this.host.onPressResult("primary");
       }
       return;
     }

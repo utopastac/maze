@@ -3,8 +3,8 @@ export { PlayHud } from "./hud/PlayHud.ts";
 export type {
   PlayHudHomeAction,
   PlayHudHomeMenuMode,
-  PlayHudLoss,
-  PlayHudLossAction,
+  PlayHudResult,
+  PlayHudResultAction,
   PlayHudStartGate,
   PlayHudStats,
 } from "./hud/types.ts";

@@ -193,29 +193,29 @@ export const FAIL_GLYPH_BANG = [
   ".#.",
 ];
 
-export const GRAVE_GLYPH_RIP = [
-  "###.#.#.###",
-  "#.#.#.#.#.#",
-  "###.#.#.###",
-  "#.#.#.#.#..",
-  "#.#.#.#.#..",
+/** Illegible rune clusters for fail-meadow headstones (not Latin / not crosses). */
+export const GRAVE_GLYPH_RUNE_A = [
+  "#.#...#.#",
+  ".#.#.#.#.",
+  "#...#...#",
+  ".#.#.#.#.",
+  "#.#...#.#",
 ];
 
-export const GRAVE_GLYPH_CROSS = [
-  "..#..",
-  "..#..",
-  "#####",
-  "..#..",
-  "..#..",
-  "..#..",
-];
-
-export const GRAVE_GLYPH_R = [
-  "####.",
+export const GRAVE_GLYPH_RUNE_B = [
+  "#.#.#",
+  ".#.#.",
   "#...#",
-  "####.",
-  "#.#..",
-  "#..#.",
+  ".###.",
+  "#.#.#",
+];
+
+export const GRAVE_GLYPH_RUNE_C = [
+  ".#.#.",
+  "#.#.#",
+  ".#...",
+  "#.#.#",
+  ".#.#.",
 ];
 
 export const SCENE_ANIMALS: Record<WinSceneKind, AnimalKind[]> = {
