@@ -9,7 +9,8 @@ const ANGLE_SPEC = SETTING_SPECS.find((spec) => spec.key === "angle");
 export const PLAY_ANGLE_MIN = ANGLE_SPEC?.min ?? 22;
 export const PLAY_ANGLE_MAX = ANGLE_SPEC?.max ?? 80;
 export const MEADOW_GLANCE_PITCH_MIN = -28;
-export const MEADOW_GLANCE_PITCH_MAX = 88;
+/** How far the home/meadow glance can tilt back / up before clamping. */
+export const MEADOW_GLANCE_PITCH_MAX = 128;
 export const MEADOW_CAM_SECS = 1.25;
 export const MEADOW_EYE_MIN = 0.55;
 
@@ -175,9 +176,9 @@ export function placeHomeBackdropCamera(
   const farLift = (1 - arrive) * HOME_TOWER_H * HOME_ARRIVE_LIFT;
 
   if (opts.homeView === "tower") {
-    const lookY = opts.meadowY + HOME_TOWER_H * (1.02 + up * 0.03 - down * 0.03);
-    const eyeY = opts.meadowY + HOME_TOWER_H * (1.14 + up * 0.08 - down * 0.05);
-    const dist = HOME_TOWER_H * (0.28 + up * 0.08 - down * 0.03) * pull;
+    const lookY = opts.meadowY + HOME_TOWER_H * (1.02 + up * 0.08 - down * 0.03);
+    const eyeY = opts.meadowY + HOME_TOWER_H * (1.14 + up * 0.28 - down * 0.05);
+    const dist = HOME_TOWER_H * (0.28 + up * 0.32 - down * 0.03) * pull;
     const rightX = Math.cos(orbit);
     const rightZ = -Math.sin(orbit);
     const lookOff = HOME_TOWER_H * 0.16;
@@ -192,9 +193,9 @@ export function placeHomeBackdropCamera(
     // Low orbit around the tree islet — hatch reads clear before the enter dive.
     const fx = opts.freeIsland.x;
     const fz = opts.freeIsland.z;
-    const lookY = opts.meadowY + 0.35 + up * 0.25 - down * 0.08;
-    const eyeY = opts.meadowY + 1.35 + up * 0.55 - down * 0.15 + farLift * 0.35;
-    const dist = HOME_TOWER_H * (0.22 + up * 0.06 - down * 0.03);
+    const lookY = opts.meadowY + 0.35 + up * 0.9 - down * 0.08;
+    const eyeY = opts.meadowY + 1.35 + up * HOME_TOWER_H * 0.38 - down * 0.15 + farLift * 0.35;
+    const dist = HOME_TOWER_H * (0.22 + up * 0.55 - down * 0.03);
     scratch.homeViewLook.set(fx, lookY, fz);
     scratch.homeViewEye.set(
       fx + Math.sin(orbit) * dist,
@@ -203,9 +204,10 @@ export function placeHomeBackdropCamera(
     );
     scratch.homeViewEye.y = Math.max(scratch.homeViewEye.y, opts.meadowY + 0.7);
   } else {
-    const lookY = opts.meadowY + HOME_TOWER_H * (0.34 + up * 0.14 - down * 0.08);
-    const eyeY = opts.meadowY + 0.85 + down * 0.35 + up * 0.55 + farLift;
-    const dist = HOME_TOWER_H * (0.72 + up * 0.3 - down * 0.06) * pull;
+    // Title shot: up glance pulls well back and high so the island + sky read.
+    const lookY = opts.meadowY + HOME_TOWER_H * (0.34 + up * 0.28 - down * 0.08);
+    const eyeY = opts.meadowY + 0.85 + down * 0.35 + up * HOME_TOWER_H * 0.48 + farLift;
+    const dist = HOME_TOWER_H * (0.72 + up * 1.15 - down * 0.06) * pull;
     scratch.homeViewLook.set(0, lookY, 0);
     scratch.homeViewEye.set(Math.sin(orbit) * dist, eyeY, Math.cos(orbit) * dist);
     scratch.homeViewEye.y = Math.max(scratch.homeViewEye.y, opts.meadowY + 0.55);
@@ -253,8 +255,8 @@ export function placeMeadowWinCamera(
 
   const { up, down } = opts.glance.meadowUpDown();
   const baseElev = (18 * Math.PI) / 180;
-  const elev = baseElev + up * ((18 * Math.PI) / 180) - down * ((16 * Math.PI) / 180);
-  const dist = span * (1.35 + up * 1.1 - down * 0.2);
+  const elev = baseElev + up * ((36 * Math.PI) / 180) - down * ((16 * Math.PI) / 180);
+  const dist = span * (1.35 + up * 2.0 - down * 0.2);
   const floorGap = opts.meadowY + MEADOW_EYE_MIN - lookY;
   const minElev = floorGap >= dist
     ? Math.PI / 2
