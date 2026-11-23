@@ -65,15 +65,17 @@ import {
   ENTER_PLAY_SKY_ZOOM_DOOR,
   HOME_ARRIVE_SECS,
   HOME_BACKDROP_SPAN,
+  HOME_ISLAND_SPAN_MULT,
   HOME_TOWER_H,
 } from "./homeEnterConstants.ts";
 import {
   addBarrenRocks,
-  addFreePlayTrapdoor,
   addHomeShacks,
   addOminousTower,
   type HomeTowerContext,
 } from "./homeTower.ts";
+import { addFreePlayIsland } from "./homeFreeIsland.ts";
+import { addHomeOcean, setHomeOceanMood, tickHomeOcean } from "./homeOcean.ts";
 import { addHomeSkyLogo, tickHomeSkyLogo } from "./homeSkyLogo.ts";
 import { BoardEffects } from "./boardEffects.ts";
 import { WinGalleryScenes } from "./winGalleryScenes.ts";
@@ -239,7 +241,7 @@ export class MazeWorld {
   private failed = false;
   private homeBackdrop = false;
   private homeOrbit = 0;
-  private homeView: "menu" | "tower" = "menu";
+  private homeView: "menu" | "tower" | "free" = "menu";
   private homeViewBlend = 1;
   /** 0..1 fly-in from a distant title shot (1 = settled). */
   private homeArriveT = 1;
@@ -247,13 +249,17 @@ export class MazeWorld {
   private readonly homeViewFromLook = new Vector3();
   private readonly homeViewEye = new Vector3();
   private readonly homeViewLook = new Vector3();
+  /** Free-play islet center (meadow-local XZ) for camera framing. */
+  private readonly homeFreeIslandAt = new Vector3();
   private homeTowerFloorMat: MeshToonMaterial | null = null;
   private homeTowerWallMat: MeshToonMaterial | null = null;
   private homeDoorRoot: Group | null = null;
-  /** Meadow floor trapdoor — free-play zooms down into this hatch. */
+  /** Free-play hatch on the tree islet — enter zooms down into this. */
   private homeFreeDoorRoot: Group | null = null;
   /** Arched Mazespire wordmark floating in the home storm sky. */
   private homeSkyLogo: Group | null = null;
+  /** Horizon ocean around the home island. */
+  private homeOcean: Group | null = null;
   private readonly enterCtl: EnterPlayController;
   private lightningCooldown = 1.2;
   private lightningFlash = 0;
@@ -294,6 +300,10 @@ export class MazeWorld {
       doorRoot: (kind) => (kind === "free" ? this.homeFreeDoorRoot : this.homeDoorRoot),
       meadowY: () => this.gallery.meadow?.position.y ?? -MEADOW_DROP,
       homeOrbit: () => this.homeOrbit,
+      setHomeTropicalMood: (t) => {
+        this.voidSky.setTropicalMood(t);
+        if (this.homeOcean) setHomeOceanMood(this.homeOcean, t);
+      },
     });
     this.scene.background = this.voidSky.texture;
     this.scene.add(this.board);
@@ -878,18 +888,18 @@ export class MazeWorld {
     this.syncVoidSky(this.lastTime);
   }
 
-  /** Crane between the title low-angle and the summit Tower menu shot. */
-  setHomeView(mode: "menu" | "tower"): void {
+  /** Crane between title / tower summit / free-play islet shots. */
+  setHomeView(mode: "menu" | "tower" | "free", snap = false): void {
     if (!this.homeBackdrop) return;
     if (this.homeView === mode && this.homeViewBlend >= 1) return;
     this.homeViewFromEye.copy(this.camera.position);
     this.homeViewFromLook.copy(this.meadowCamLook);
     this.homeView = mode;
-    this.homeViewBlend = this.reduceMotion ? 1 : 0;
+    this.homeViewBlend = snap || this.reduceMotion ? 1 : 0;
     this.placeCamera();
   }
 
-  homeViewMode(): "menu" | "tower" {
+  homeViewMode(): "menu" | "tower" | "free" {
     return this.homeView;
   }
 
@@ -976,6 +986,12 @@ export class MazeWorld {
     }
     this.tickLightning(dt);
     this.fx.tickRain(dt);
+    if (this.homeSkyLogo) {
+      tickHomeSkyLogo(this.homeSkyLogo, this.camera, time, this.reduceMotion);
+    }
+    if (this.homeOcean) {
+      tickHomeOcean(this.homeOcean, time, this.reduceMotion);
+    }
     this.syncVoidSky(time);
     this.placeCamera();
   }
@@ -1315,6 +1331,9 @@ export class MazeWorld {
         this.tickLightning(dt);
         if (this.homeSkyLogo) {
           tickHomeSkyLogo(this.homeSkyLogo, this.camera, time, this.reduceMotion);
+        }
+        if (this.homeOcean) {
+          tickHomeOcean(this.homeOcean, time, this.reduceMotion);
         }
       }
     }
@@ -1988,18 +2007,40 @@ export class MazeWorld {
     this.clearMeadow();
     const tower = this.tower;
     if (!tower) return;
-    // Extra-wide ground plane so the 0.5× FOV still reads as barren rock, not void.
-    const span = Math.max(tower.width, tower.depth) * 4.2;
+    // Compact rocky island — ocean fills the horizons beyond the shore.
+    const span = Math.max(tower.width, tower.depth) * HOME_ISLAND_SPAN_MULT;
     const group = new Group();
     group.position.y = -MEADOW_DROP;
     group.visible = true;
     group.userData.generated = true;
     this.fx.rainCooldown = 0.01;
 
-    const pad = new Mesh(new BoxGeometry(span, 0.28, span), this.groundMats.failGroundDark);
-    pad.position.y = -0.14;
+    const homeCtx = this.homeTowerContext();
+    const freeIsle = addFreePlayIsland(homeCtx, group, span, {
+      trunk: this.treeMats.trunk,
+      palm: this.palmMat,
+      palmLit: this.palmLitMat,
+    });
+    this.homeFreeIslandAt.set(freeIsle.x, 0, freeIsle.z);
+    this.homeOcean = addHomeOcean(group, [
+      { x: 0, z: 0, r: span * 0.52 },
+      { x: freeIsle.x, z: freeIsle.z, r: freeIsle.radius },
+    ]);
+
+    const pad = new Mesh(new BoxGeometry(span, 0.42, span), this.groundMats.failGroundDark);
+    pad.position.y = -0.12;
     pad.receiveShadow = organicProps;
     group.add(pad);
+
+    // Cliff lip so the island reads as rock rising from the sea.
+    const cliff = new Mesh(
+      new BoxGeometry(span * 1.04, 0.55, span * 1.04),
+      this.groundMats.failGroundDark,
+    );
+    cliff.position.y = -0.28;
+    cliff.receiveShadow = organicProps;
+    cliff.castShadow = organicProps;
+    group.add(cliff);
 
     const tiles = Math.max(6, Math.round(span / 2.0));
     if (this.failFloorMat.map) {
@@ -2012,12 +2053,10 @@ export class MazeWorld {
     carpet.receiveShadow = organicProps;
     group.add(carpet);
 
-    const homeCtx = this.homeTowerContext();
     addBarrenRocks(homeCtx, group, span);
-    // Tower footprint still keyed to the playable tower span, not the expanded ground.
+    // Tower footprint still keyed to the playable tower span, not the island pad.
     const towerSpan = Math.max(tower.width, tower.depth) * MEADOW_SPAN_MULT;
     addOminousTower(homeCtx, group, towerSpan);
-    addFreePlayTrapdoor(homeCtx, group, span, towerSpan * 0.36);
     addHomeShacks(homeCtx, group, span, towerSpan * 0.36);
     this.homeSkyLogo = addHomeSkyLogo(group);
 
@@ -2283,6 +2322,7 @@ export class MazeWorld {
     this.homeDoorRoot = null;
     this.homeFreeDoorRoot = null;
     this.homeSkyLogo = null;
+    this.homeOcean = null;
     this.gallery.clear();
   }
 
@@ -2402,6 +2442,7 @@ export class MazeWorld {
       homeViewFromLook: this.homeViewFromLook,
       boardQuat: this.board.quaternion,
       homeArriveT: this.homeArriveT,
+      freeIsland: this.homeFreeIslandAt,
     });
 
     this.camera.position.copy(this.meadowCamEye);
@@ -2874,6 +2915,7 @@ export class MazeWorld {
           mat instanceof MeshToonMaterial
           || mat instanceof MeshStandardMaterial
           || mat instanceof MeshBasicMaterial
+          || mat instanceof ShaderMaterial
         ) {
           if (child.userData.ownedTex instanceof CanvasTexture) {
             child.userData.ownedTex.dispose();

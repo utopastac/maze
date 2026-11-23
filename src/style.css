@@ -664,7 +664,8 @@ body,
 
 #app[data-screen="home"] #viewport {
   visibility: visible;
-  pointer-events: none;
+  /* Drag to glance the storm island (home panel keeps its own hits). */
+  pointer-events: auto;
 }
 
 /* Home: hide play chrome; debug row only when toggled open (\`). */

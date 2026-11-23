@@ -36,6 +36,11 @@ export class VoidSky {
   private themeId = "";
   private zoom = 1;
   private lastTime = Number.NaN;
+  /** 0 = current theme, 1 = tropical beach blend (home free-enter). */
+  private mood = 0;
+  private moodDeep: [number, number, number] = [0, 0, 0];
+  private readonly moodBlobRgb: [number, number, number][] = [];
+  private moodReady = false;
 
   constructor() {
     this.canvas = document.createElement("canvas");
@@ -89,6 +94,32 @@ export class VoidSky {
     this.paint(Number.isFinite(this.lastTime) ? this.lastTime : 0, true);
   }
 
+  /**
+   * Soft-blend the painted sky toward beach colours (0 stormy → 1 tropical).
+   * Keeps the home theme id as "sad" while the free-enter camera rises.
+   */
+  setTropicalMood(t: number): void {
+    const next = Math.max(0, Math.min(1, t));
+    if (Math.abs(next - this.mood) < 0.002) return;
+    this.ensureMoodTheme();
+    this.mood = next;
+    const deepHex = this.mood > 0.001
+      ? mixHex(token(`--sky-${this.themeId}-deep`), token("--sky-beach-deep"), this.mood)
+      : token(`--sky-${this.themeId}-deep`);
+    document.documentElement.style.setProperty("--maze-void-deep", deepHex);
+    this.paint(Number.isFinite(this.lastTime) ? this.lastTime : 0, true);
+  }
+
+  private ensureMoodTheme(): void {
+    if (this.moodReady) return;
+    this.moodDeep = srgbBytes(token("--sky-beach-deep"));
+    this.moodBlobRgb.length = 0;
+    for (let i = 0; i < this.blobs.length; i += 1) {
+      this.moodBlobRgb.push(srgbBytes(token(`--sky-beach-${i}`)));
+    }
+    this.moodReady = true;
+  }
+
   private applyTheme(id: string): void {
     this.themeId = id;
     const prefix = `--sky-${id}`;
@@ -96,7 +127,14 @@ export class VoidSky {
     for (const [i, blob] of this.blobs.entries()) {
       blob.rgb = srgbBytes(token(`${prefix}-${i}`));
     }
-    document.documentElement.style.setProperty("--maze-void-deep", token(`${prefix}-deep`));
+    if (this.mood < 0.001) {
+      document.documentElement.style.setProperty("--maze-void-deep", token(`${prefix}-deep`));
+    } else {
+      document.documentElement.style.setProperty(
+        "--maze-void-deep",
+        mixHex(token(`${prefix}-deep`), token("--sky-beach-deep"), this.mood),
+      );
+    }
   }
 
   paint(time: number, force = false): void {
@@ -108,7 +146,9 @@ export class VoidSky {
     const cols = Math.ceil(width / block);
     const rows = Math.ceil(height / block);
     const data = this.image.data;
-    const deep = this.deep;
+    const mood = this.mood;
+    if (mood > 0.001) this.ensureMoodTheme();
+    const deep = mood > 0.001 ? lerpRgb(this.deep, this.moodDeep, mood) : this.deep;
     const steps = this.steps;
     const invZoom = 1 / this.zoom;
     for (let row = 0; row < rows; row += 1) {
@@ -119,7 +159,10 @@ export class VoidSky {
         let g = deep[1] * 0.35;
         let b = deep[2] * 0.35;
         let mass = 0.35;
-        for (const blob of this.blobs) {
+        for (const [bi, blob] of this.blobs.entries()) {
+          const rgb = mood > 0.001
+            ? lerpRgb(blob.rgb, this.moodBlobRgb[bi] ?? blob.rgb, mood)
+            : blob.rgb;
           const bx = blob.x + Math.sin(time * blob.speed + blob.phase) * blob.amp;
           const by = blob.y + Math.cos(time * blob.speed * 0.85 + blob.phase * 1.3) * blob.amp;
           const radius = blob.r * (0.92 + Math.sin(time * blob.speed * 1.4 + blob.phase) * 0.08);
@@ -128,9 +171,9 @@ export class VoidSky {
           const falloff = Math.max(0, 1 - Math.sqrt(dx * dx + dy * dy));
           const w = falloff * falloff * blob.weight;
           if (w <= 0) continue;
-          r += blob.rgb[0] * w;
-          g += blob.rgb[1] * w;
-          b += blob.rgb[2] * w;
+          r += rgb[0] * w;
+          g += rgb[1] * w;
+          b += rgb[2] * w;
           mass += w;
         }
         const inv = 1 / mass;
@@ -165,4 +208,22 @@ function quantizeByte(value: number, steps: number): number {
 function srgbBytes(hex: string): [number, number, number] {
   const value = new Color(hex).getHex();
   return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
+}
+
+function lerpRgb(
+  a: [number, number, number],
+  b: [number, number, number],
+  t: number,
+): [number, number, number] {
+  return [
+    a[0] + (b[0] - a[0]) * t,
+    a[1] + (b[1] - a[1]) * t,
+    a[2] + (b[2] - a[2]) * t,
+  ];
+}
+
+function mixHex(a: string, b: string, t: number): string {
+  const ca = new Color(a);
+  const cb = new Color(b);
+  return `#${ca.lerp(cb, t).getHexString()}`;
 }

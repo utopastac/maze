@@ -1,8 +1,10 @@
 import { Vector3, type Group, type PerspectiveCamera, type Scene } from "three";
 import { clamp } from "../core/math.ts";
-import { easeInOutCubic } from "./easing.ts";
+import { easeInOutCubic, easeInOutQuint } from "./easing.ts";
 import { EnterPlayCurtains } from "./enterPlayCurtains.ts";
 import {
+  ENTER_FREE_SECS,
+  ENTER_FREE_SWAP,
   ENTER_PLAY_CURTAIN,
   ENTER_PLAY_FAR,
   ENTER_PLAY_SECS,
@@ -38,6 +40,16 @@ export interface EnterPlayHost {
   /** World Y of the meadow floor. */
   meadowY(): number;
   homeOrbit(): number;
+  /** Free-enter: warm sky + calm the home ocean (0 storm → 1 tropical). */
+  setHomeTropicalMood(t: number): void;
+}
+
+function enterSecs(kind: EnterPlayKind): number {
+  return kind === "free" ? ENTER_FREE_SECS : ENTER_PLAY_SECS;
+}
+
+function enterSwap(kind: EnterPlayKind): number {
+  return kind === "free" ? ENTER_FREE_SWAP : ENTER_PLAY_SWAP;
 }
 
 /**
@@ -60,9 +72,11 @@ export class EnterPlayController {
   private readonly toLook = new Vector3();
   private readonly doorEye = new Vector3();
   private readonly doorLook = new Vector3();
-  private readonly pushEye = new Vector3();
-  private readonly pushLook = new Vector3();
+  private readonly highEye = new Vector3();
   private readonly doorPos = new Vector3();
+  private readonly upWorld = new Vector3(0, 1, 0);
+  /** 0 = Y-up, 1 = hatch-aligned screen-up — eased to avoid the nadir roll snap. */
+  private freeUpBlend = 0;
   private readonly curtains: EnterPlayCurtains;
   private readonly host: EnterPlayHost;
 
@@ -80,23 +94,25 @@ export class EnterPlayController {
   ): void {
     this.fromEye.copy(fromEye);
     this.fromLook.copy(fromLook);
+    this.freeUpBlend = 0;
     this.state = { kind, t: 0, swapped: false, crossed: false, fromFov, toFov, playSky: false };
   }
 
   needsSwap(): boolean {
     const ep = this.state;
     if (!ep || ep.swapped) return false;
-    return ep.t >= ENTER_PLAY_SWAP;
+    return ep.t >= enterSwap(ep.kind);
   }
 
   /** Advance progress and part curtains post-cut. Returns true once t reaches 1. */
   advance(dt: number): boolean {
     const ep = this.state;
     if (!ep) return true;
-    ep.t = Math.min(1, ep.t + dt / ENTER_PLAY_SECS);
+    ep.t = Math.min(1, ep.t + dt / enterSecs(ep.kind));
     if (ep.crossed) {
+      const swap = enterSwap(ep.kind);
       // Curtains part quickly so the distant board is readable, then the zoom owns the beat.
-      const zoomU = (ep.t - ENTER_PLAY_SWAP) / Math.max(1e-4, 1 - ENTER_PLAY_SWAP);
+      const zoomU = (ep.t - swap) / Math.max(1e-4, 1 - swap);
       this.curtains.sync(clamp(zoomU / ENTER_PLAY_CURTAIN, 0, 1));
     }
     return ep.t >= 1;
@@ -132,8 +148,11 @@ export class EnterPlayController {
   /** Drop transition state, curtains, sky zoom, and camera roll. */
   release(): void {
     this.state = null;
+    this.freeUpBlend = 0;
     this.curtains.dispose();
     this.host.voidSky.setZoom(1);
+    this.host.setHomeTropicalMood(0);
+    this.host.camera.up.set(0, 1, 0);
   }
 
   /** Pose the camera for the current `state` (door approach, hatch swing, or post-cut dolly). */
@@ -144,20 +163,10 @@ export class EnterPlayController {
     this.placeTransition(ep, this.host.homeOrbit(), ep.toFov);
 
     camera.position.copy(this.eye);
-    const down = this.eye.y - this.look.y;
-    const side = Math.hypot(this.eye.x - this.look.x, this.eye.z - this.look.z);
-    const topDown =
-      ep.kind === "free"
-      && !ep.crossed
-      && down > 0.2
-      && side < down * 0.08
-      && this.doorOut.lengthSq() > 1e-6;
-    if (topDown) {
-      // Pin eye over the hatch and use a horizontal up so lookAt stays nadir.
-      this.eye.x = this.look.x;
-      this.eye.z = this.look.z;
-      camera.position.copy(this.eye);
-      camera.up.copy(this.doorOut);
+    if (ep.kind === "free" && !ep.crossed && this.doorOut.lengthSq() > 1e-6) {
+      // Ease screen-up from world Y into hatch-aligned −Z — no binary roll snap.
+      const b = easeInOutCubic(this.freeUpBlend);
+      camera.up.copy(this.upWorld).lerp(this.doorOut, b).normalize();
     } else {
       camera.up.set(0, 1, 0);
     }
@@ -170,8 +179,9 @@ export class EnterPlayController {
    */
   private placeTransition(ep: EnterPlayState, orbit: number, playFov: number): void {
     const { voidSky } = this.host;
+    const swap = enterSwap(ep.kind);
     if (ep.crossed) {
-      const u = (ep.t - ENTER_PLAY_SWAP) / Math.max(1e-4, 1 - ENTER_PLAY_SWAP);
+      const u = (ep.t - swap) / Math.max(1e-4, 1 - swap);
       const a = easeInOutCubic(clamp(u, 0, 1));
       this.host.computePlayCamera(this.toEye, this.toLook);
       this.eye.lerpVectors(this.fromEye, this.toEye, a);
@@ -190,7 +200,7 @@ export class EnterPlayController {
     const meadowY = this.host.meadowY();
 
     if (ep.kind === "free") {
-      this.placeFreeTrap(ep, door, meadowY, orbit);
+      this.placeFreeTrap(ep, door, meadowY, orbit, swap);
       return;
     }
 
@@ -208,7 +218,7 @@ export class EnterPlayController {
       this.doorPos.set(this.doorOut.x * 0.2, meadowY + HOME_TOWER_H + 0.4, this.doorOut.z * 0.2);
     }
 
-    const a = easeInOutCubic(Math.min(1, ep.t / ENTER_PLAY_SWAP));
+    const a = easeInOutCubic(Math.min(1, ep.t / swap));
     // Tighter lens so the closed doors can own the frame without crossing the threshold.
     const targetFov = 52;
     const doorFov = ep.fromFov + (targetFov - ep.fromFov) * a;
@@ -230,75 +240,82 @@ export class EnterPlayController {
   }
 
   /**
-   * Swing around the storm tower on an outside arc, then settle dead-center
-   * above the hatch looking straight down.
+   * From the live home pose: skim low toward the islet so palms read, then arc
+   * up above the hatch and dive in — no early sky lift.
    */
   private placeFreeTrap(
     ep: EnterPlayState,
     door: Group | null,
     meadowY: number,
     orbit: number,
+    swap: number,
   ): void {
-    const { doorPos, doorEye, doorLook, fromEye, fromLook } = this;
+    const { doorPos, doorEye, doorLook, highEye, toEye, toLook, fromEye, fromLook } = this;
     if (door) {
       door.getWorldPosition(doorPos);
       doorPos.y += Number(door.userData.doorCenterY ?? 0.04);
     } else {
       doorPos.set(Math.sin(orbit) * 1.6, meadowY + 0.04, Math.cos(orbit) * 1.6);
     }
-    // Final pose: dead-center above the hatch, looking straight down the -Y axis.
+    // Close overhead pose — last beat before the curtain cut.
     doorLook.set(doorPos.x, doorPos.y - 0.04, doorPos.z);
-    doorEye.set(doorPos.x, doorPos.y + 0.62, doorPos.z);
+    doorEye.set(doorPos.x, doorPos.y + 0.85, doorPos.z);
+    // High sky pose — apex of the rise (never overshoot above this, then drop).
+    highEye.set(doorPos.x, doorPos.y + HOME_TOWER_H * 0.7, doorPos.z);
+    // Low island reveal — still approaching across the water, palms in frame.
+    const backX = fromEye.x - doorPos.x;
+    const backZ = fromEye.z - doorPos.z;
+    const backLen = Math.hypot(backX, backZ) || 1;
+    const skimDist = Math.min(HOME_TOWER_H * 0.38, backLen * 0.28);
+    toEye.set(
+      doorPos.x + (backX / backLen) * skimDist,
+      meadowY + 1.25,
+      doorPos.z + (backZ / backLen) * skimDist,
+    );
+    toLook.set(doorPos.x, meadowY + 0.55, doorPos.z);
     // Screen-up aligns with world -Z so the axis-aligned hatch reads square.
     this.doorOut.set(0, 0, -1);
 
-    const a = easeInOutCubic(Math.min(1, ep.t / ENTER_PLAY_SWAP));
-    // Exact home pose as bezier start — polar remapping of look snapped away from
-    // the tower-centered home aim on the first frame (resize → placeCamera at t=0).
-    const fromYaw = Math.atan2(fromEye.x, fromEye.z);
-    const hatchYaw = Math.atan2(doorPos.x, doorPos.z);
-    let delta = hatchYaw - fromYaw;
-    while (delta > Math.PI) delta -= Math.PI * 2;
-    while (delta < -Math.PI) delta += Math.PI * 2;
-    const fromR = Math.hypot(fromEye.x, fromEye.z);
-    const hatchR = Math.hypot(doorPos.x, doorPos.z);
-    const clearR = Math.max(
-      Number(door?.userData.clearRadius ?? 2.8),
-      Math.min(fromR, hatchR) * 0.92,
-    );
-    const midR = Math.max(fromR, hatchR, clearR) * 1.18;
-    const midYaw = fromYaw + delta * 0.5;
-    const midY = fromEye.y * 0.55 + doorEye.y * 0.45 + clearR * 0.08;
-    const midLookY = meadowY + Math.max(0.9, clearR * 0.18);
-    const midLookR = Math.max(clearR * 1.05, (fromR + hatchR) * 0.45);
+    const a = clamp(ep.t / swap, 0, 1);
+    // More time in approach: long low skim → short arc → dive.
+    const riseEnd = 0.72;
+    const skimEnd = 0.58; // of the rise segment — stay low past halfway
+    const fovSkim = Math.min(58, Math.max(ep.fromFov, 42) + 6);
+    const fovHigh = Math.min(66, Math.max(ep.fromFov, 52) + 10);
+    const fovDive = 48;
+    // Warm sky/sea as we near the islet, then hold through the dive.
+    this.host.setHomeTropicalMood(easeInOutCubic(Math.min(1, a / (riseEnd * skimEnd))));
 
-    const omt = 1 - a;
-    const b0 = omt * omt;
-    const b1 = 2 * omt * a;
-    const b2 = a * a;
-    // Cartesian quadratic: a=0 is exactly fromEye/fromLook (no polar snap).
-    this.pushEye.set(
-      fromEye.x * b0 + Math.sin(midYaw) * midR * b1 + doorEye.x * b2,
-      fromEye.y * b0 + midY * b1 + doorEye.y * b2,
-      fromEye.z * b0 + Math.cos(midYaw) * midR * b1 + doorEye.z * b2,
-    );
-    this.pushLook.set(
-      fromLook.x * b0 + Math.sin(midYaw) * midLookR * b1 + doorLook.x * b2,
-      fromLook.y * b0 + midLookY * b1 + doorLook.y * b2,
-      fromLook.z * b0 + Math.cos(midYaw) * midLookR * b1 + doorLook.z * b2,
-    );
-    // Finish overhead early so the last beat is a settled top-down hold.
-    const lock = a >= 0.88 ? 1 : easeInOutCubic(clamp((a - 0.3) / 0.58, 0, 1));
-    this.eye.lerpVectors(this.pushEye, doorEye, lock);
-    this.look.lerpVectors(this.pushLook, doorLook, lock);
-    if (lock >= 1) {
-      this.eye.copy(doorEye);
-      this.look.copy(doorLook);
+    if (a < riseEnd) {
+      const u = a / riseEnd;
+      if (u < skimEnd) {
+        const t = easeInOutCubic(u / skimEnd);
+        this.eye.lerpVectors(fromEye, toEye, t);
+        this.look.lerpVectors(fromLook, toLook, t);
+        this.freeUpBlend = 0;
+        this.applyLens(ep.fromFov + (fovSkim - ep.fromFov) * t);
+        this.host.voidSky.setZoom(1 + (ENTER_PLAY_SKY_ZOOM_DOOR - 1) * t * 0.2);
+        return;
+      }
+
+      const arc = easeInOutQuint((u - skimEnd) / Math.max(1e-4, 1 - skimEnd));
+      this.eye.lerpVectors(toEye, highEye, arc);
+      this.look.lerpVectors(toLook, doorLook, arc);
+      // Start rolling screen-up only once we leave the skim.
+      this.freeUpBlend = easeInOutCubic(clamp((arc - 0.35) / 0.65, 0, 1));
+      this.applyLens(fovSkim + (fovHigh - fovSkim) * arc);
+      this.host.voidSky.setZoom(1 + (ENTER_PLAY_SKY_ZOOM_DOOR - 1) * (0.2 + 0.35 * arc));
+      return;
     }
 
-    const doorFov = ep.fromFov + (58 - ep.fromFov) * (0.7 * a);
-    this.applyLens(doorFov);
-    this.host.voidSky.setZoom(1 + (ENTER_PLAY_SKY_ZOOM_DOOR - 1) * a);
+    const dive = easeInOutQuint((a - riseEnd) / Math.max(1e-4, 1 - riseEnd));
+    this.eye.lerpVectors(highEye, doorEye, dive);
+    this.look.copy(doorLook);
+    this.freeUpBlend = 1;
+    this.applyLens(fovHigh + (fovDive - fovHigh) * dive);
+    this.host.voidSky.setZoom(
+      1 + (ENTER_PLAY_SKY_ZOOM_DOOR - 1) * (0.55 + 0.45 * dive),
+    );
   }
 
   private applyLens(fov: number): void {

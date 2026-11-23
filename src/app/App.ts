@@ -274,7 +274,7 @@ export class App {
           && this.route.kind !== "tower"
           && !this.enteringPlay
         ),
-        setHomeView: (view) => this.view?.setHomeView(view),
+        setHomeView: (view, snap) => this.view?.setHomeView(view, snap),
         enterHomeBackdrop: () => this.view?.enterHomeBackdrop(),
         leaveHomeBackdrop: () => this.view?.leaveHomeBackdrop(),
         clearPlayReturn: () => { this.playReturn = null; },
@@ -894,6 +894,7 @@ export class App {
 
     if (this.home.isOpen()) {
       if (view?.isHomeBackdrop() && renderer) {
+        this.input.driveCamera(dt, false);
         view.updateHome(now / 1000);
         renderer.render(view.scene, view.camera);
       }
@@ -1525,8 +1526,7 @@ export class App {
         || this.settingsOverlay
       ),
       isPointerBlocked: () => (
-        (!this.browsingWins && isMenuScreen(this.route))
-        || this.home.isOpen()
+        (!this.browsingWins && isMenuScreen(this.route) && !this.home.isOpen())
         || this.intro.isOpen()
       ),
       isModalOpen: () => (
@@ -1536,6 +1536,7 @@ export class App {
         || this.pause.isOpen()
       ),
       isHomeOrIntroOpen: () => this.home.isOpen() || this.intro.isOpen(),
+      isHomeCamera: () => this.home.isOpen() && Boolean(this.view?.isHomeBackdrop()),
       onMenuEscape: () => {
         // Nested first: settings → pause → load modal → tower submenu → other menus.
         if (this.panel.isOpen() || this.settingsOverlay) this.leaveSettings();

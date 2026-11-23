@@ -11,12 +11,14 @@ export type PlayInputPhase = "play" | "falling" | "escaping" | "failing" | "won"
 export type PlayInputHost = {
   /** Any menu/panel that should swallow keyboard input (keys only handle Escape). */
   isMenuBlocking(): boolean;
-  /** Menu screens / home / intro that should swallow pointer input. */
+  /** Menu screens / intro that should swallow pointer input. */
   isPointerBlocked(): boolean;
   /** Editor, level picker, saved levels, or pause is open. */
   isModalOpen(): boolean;
   /** Home or tower intro is open (orientation gate). */
   isHomeOrIntroOpen(): boolean;
+  /** Title home with the live 3D backdrop — meadow-style camera glance. */
+  isHomeCamera(): boolean;
   /** Escape pressed while a menu is blocking. */
   onMenuEscape(): void;
   phase(): PlayInputPhase;
@@ -134,7 +136,11 @@ export class PlayInput {
     const view = this.view();
     if (!view) return;
     const binds = this.settings.keybinds;
-    if (this.host.phase() === "won" || this.host.phase() === "lost") {
+    const meadowGlance =
+      this.host.isHomeCamera()
+      || this.host.phase() === "won"
+      || this.host.phase() === "lost";
+    if (meadowGlance) {
       let dAngle = 0;
       let dOrbit = 0;
       if (
@@ -227,7 +233,7 @@ export class PlayInput {
     this.lastY = event.clientY;
     if (dx === 0 && dy === 0) return;
     const phase = this.host.phase();
-    if (phase === "won" || phase === "lost") {
+    if (phase === "won" || phase === "lost" || this.host.isHomeCamera()) {
       this.view()?.nudgeCamera(-dy * 0.16, -dx * 0.28);
       return;
     }
@@ -244,7 +250,16 @@ export class PlayInput {
 
   private onKeyDown = (event: KeyboardEvent): void => {
     if (this.host.isMenuBlocking()) {
-      if (event.key.toLowerCase() === "escape") this.host.onMenuEscape();
+      if (event.key.toLowerCase() === "escape") {
+        this.host.onMenuEscape();
+        return;
+      }
+      // Home keeps Escape for menus but still accepts camera glance keys.
+      if (!this.host.isHomeCamera()) return;
+      const camKey = normalizeKey(event.key);
+      if (!isCameraKey(this.settings.keybinds, camKey)) return;
+      if (!(event.metaKey || event.ctrlKey || event.altKey)) this.keys.add(camKey);
+      this.host.onKeysChanged();
       return;
     }
     const key = event.key.toLowerCase();

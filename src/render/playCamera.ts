@@ -156,13 +156,15 @@ export function placeHomeBackdropCamera(
     meadowY: number;
     homeOrbit: number;
     glance: PlayCameraGlance;
-    homeView: "menu" | "tower";
+    homeView: "menu" | "tower" | "free";
     homeViewBlend: number;
     homeViewFromEye: Vector3;
     homeViewFromLook: Vector3;
     boardQuat: Quaternion;
     /** 0 = far approach start, 1 = settled title shot. */
     homeArriveT: number;
+    /** Meadow-local center of the free-play tree islet. */
+    freeIsland: Vector3;
   },
 ): void {
   const orbit = opts.homeOrbit + (opts.glance.glanceDOrbit * Math.PI) / 180;
@@ -186,6 +188,20 @@ export function placeHomeBackdropCamera(
       eyeY + farLift,
       Math.cos(orbit) * dist + rightZ * side,
     );
+  } else if (opts.homeView === "free") {
+    // Low orbit around the tree islet — hatch reads clear before the enter dive.
+    const fx = opts.freeIsland.x;
+    const fz = opts.freeIsland.z;
+    const lookY = opts.meadowY + 0.35 + up * 0.25 - down * 0.08;
+    const eyeY = opts.meadowY + 1.35 + up * 0.55 - down * 0.15 + farLift * 0.35;
+    const dist = HOME_TOWER_H * (0.22 + up * 0.06 - down * 0.03);
+    scratch.homeViewLook.set(fx, lookY, fz);
+    scratch.homeViewEye.set(
+      fx + Math.sin(orbit) * dist,
+      eyeY,
+      fz + Math.cos(orbit) * dist,
+    );
+    scratch.homeViewEye.y = Math.max(scratch.homeViewEye.y, opts.meadowY + 0.7);
   } else {
     const lookY = opts.meadowY + HOME_TOWER_H * (0.34 + up * 0.14 - down * 0.08);
     const eyeY = opts.meadowY + 0.85 + down * 0.35 + up * 0.55 + farLift;
