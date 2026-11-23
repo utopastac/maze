@@ -134,7 +134,8 @@ export class ShellMenus {
     this.views.home.setMode("main");
     if (this.host.isHomeBackdrop()) this.host.setHomeView("menu");
     else this.host.enterHomeBackdrop();
-    this.views.playHud.setVisible(true);
+    // DOM home menu — hide 3D play chrome (floor/timer/hearts).
+    this.views.playHud.setVisible(false);
     this.views.playHud.setHomeMenu(false);
     this.views.playHudCanvas.style.cursor = "";
   }
@@ -190,7 +191,7 @@ export class ShellMenus {
     this.setShellScreen("home");
     this.views.home.setMode("tower");
     this.host.setHomeView("tower");
-    this.views.playHud.setVisible(true);
+    this.views.playHud.setVisible(false);
     this.views.playHud.setHomeMenu(false);
     this.views.playHudCanvas.style.cursor = "";
   }

@@ -203,12 +203,16 @@
   left: calc(var(--safe-left) + var(--chrome-edge));
   right: calc(var(--safe-right) + var(--chrome-edge));
   bottom: calc(var(--safe-bottom) + 16px);
-  display: flex;
+  display: none;
   flex-wrap: wrap;
   justify-content: center;
   align-items: center;
   gap: 8px;
   pointer-events: none;
+
+  &[data-open] {
+    display: flex;
+  }
 
   & button {
     pointer-events: auto;

@@ -1,4 +1,5 @@
 import type { PlayHudHomeAction, PlayHudHomeMenuMode } from "../render/playHud.ts";
+import { iconSvg, type IconName } from "./icons.ts";
 import styles from "./home.module.css";
 
 export interface HomeCallbacks {
@@ -9,23 +10,22 @@ type HomeItem = {
   action: PlayHudHomeAction;
   label: string;
   desc: string;
-  glyph: string;
-  primary?: boolean;
+  icon: IconName;
 };
 
 const MAIN_ITEMS: HomeItem[] = [
-  { action: "tower", label: "Tower", desc: "Climb the campaign", glyph: "T", primary: true },
-  { action: "play", label: "Free play", desc: "One random maze", glyph: "F" },
-  { action: "create", label: "Create", desc: "Build & share", glyph: "C" },
-  { action: "saved", label: "Saved", desc: "Your level library", glyph: "S" },
-  { action: "settings", label: "Settings", desc: "Controls & look", glyph: "·" },
+  { action: "tower", label: "Tower", desc: "Climb the campaign", icon: "campaign" },
+  { action: "play", label: "Free play", desc: "One random maze", icon: "new" },
+  { action: "create", label: "Create", desc: "Build & share", icon: "edit" },
+  { action: "saved", label: "Saved", desc: "Your level library", icon: "saved" },
+  { action: "settings", label: "Settings", desc: "Controls & look", icon: "settings" },
 ];
 
 const TOWER_ITEMS: HomeItem[] = [
-  { action: "towerNew", label: "New", desc: "Fresh tower run", glyph: "N", primary: true },
-  { action: "towerLoad", label: "Load", desc: "Continue a save", glyph: "L" },
-  { action: "towerPractice", label: "Practice", desc: "Single floors", glyph: "P" },
-  { action: "towerBack", label: "Back", desc: "Main menu", glyph: "←" },
+  { action: "towerNew", label: "New", desc: "Fresh tower run", icon: "new" },
+  { action: "towerLoad", label: "Load", desc: "Continue a save", icon: "load" },
+  { action: "towerPractice", label: "Practice", desc: "Single floors", icon: "levels" },
+  { action: "towerBack", label: "Back", desc: "Main menu", icon: "home" },
 ];
 
 /** Right-docked home panel — square tiles with short descriptions. */
@@ -103,12 +103,11 @@ export class Home {
       button.dataset.action = item.action;
       button.setAttribute("role", "menuitem");
       button.setAttribute("aria-label", `${item.label}. ${item.desc}`);
-      if (item.primary) button.dataset.primary = "";
 
       const glyph = document.createElement("span");
       glyph.className = styles.glyph;
-      glyph.textContent = item.glyph;
       glyph.setAttribute("aria-hidden", "true");
+      glyph.innerHTML = iconSvg(item.icon, 28);
 
       const copy = document.createElement("span");
       copy.className = styles.copy;

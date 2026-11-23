@@ -55,9 +55,11 @@ export class Hud {
   private readonly coinCount: HTMLElement;
   private readonly winGallery: HTMLElement;
   private readonly winList: HTMLElement;
+  private readonly debugEl: HTMLElement;
   private readonly keycaps: HTMLElement[];
   private keybinds: Keybinds = { ...KEY_DEFAULTS };
   private heldKeys: ReadonlySet<string> = new Set();
+  private debugOpen = false;
 
   constructor(root: HTMLElement, callbacks: HudCallbacks) {
     this.root = root;
@@ -94,7 +96,7 @@ export class Hud {
         </div>
         <div class="${styles.winList}" data-win-list role="listbox" aria-label="Victory screens"></div>
       </aside>
-      <div class="${styles.debug}" data-admin aria-label="Debug menu">
+      <div class="${styles.debug}" data-admin aria-label="Debug menu" aria-keyshortcuts="\`">
         <span data-slot="home"></span>
         <span data-slot="edit"></span>
         <span data-slot="author"></span>
@@ -227,6 +229,9 @@ export class Hud {
     this.coinCount = this.require("[data-coin-count]");
     this.winGallery = this.require("[data-win-gallery]");
     this.winList = this.require("[data-win-list]");
+    this.debugEl = this.require("[data-admin]");
+    this.setDebugOpen(false);
+    window.addEventListener("keydown", this.onDebugKey);
     this.winList.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>("[data-win-index]");
       if (!button) return;
@@ -264,6 +269,25 @@ export class Hud {
     }
     this.setHeld(this.heldKeys);
   }
+
+  /** Bottom debug strip (home / edit / author / wins / settings). Toggled with \` . */
+  setDebugOpen(open: boolean): void {
+    this.debugOpen = open;
+    if (open) this.debugEl.dataset.open = "";
+    else delete this.debugEl.dataset.open;
+    this.debugEl.setAttribute("aria-hidden", open ? "false" : "true");
+  }
+
+  private onDebugKey = (event: KeyboardEvent): void => {
+    if (event.repeat || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.code !== "Backquote" && event.key !== "`") return;
+    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
+      return;
+    }
+    if ((event.target as HTMLElement | null)?.isContentEditable) return;
+    event.preventDefault();
+    this.setDebugOpen(!this.debugOpen);
+  };
 
   setStats(seconds: number, drops: number): void {
     const time = formatTime(seconds);

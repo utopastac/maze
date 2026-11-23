@@ -667,7 +667,7 @@ body,
   pointer-events: none;
 }
 
-/* Home: keep the fixed admin/debug row; hide the rest of play chrome. */
+/* Home: hide play chrome; debug row only when toggled open (\`). */
 #app[data-screen="home"] #chrome {
   visibility: visible;
   pointer-events: none;
@@ -679,12 +679,12 @@ body,
   pointer-events: none;
 }
 
-#app[data-screen="home"] #chrome [data-admin] {
+#app[data-screen="home"] #chrome [data-admin][data-open] {
   visibility: visible;
   pointer-events: none;
 }
 
-#app[data-screen="home"] #chrome [data-admin] button {
+#app[data-screen="home"] #chrome [data-admin][data-open] button {
   pointer-events: auto;
 }
 

@@ -82,7 +82,7 @@
 
   &:hover,
   &:focus-visible {
-    background: color-mix(in srgb, var(--panel-fill) 88%, var(--ink) 12%);
+    box-shadow: inset 0 0 0 2px var(--seam);
   }
 
   &:focus-visible {
@@ -93,10 +93,6 @@
   &:active {
     transform: scale(0.98);
   }
-
-  &[data-primary] {
-    box-shadow: inset 0 0 0 2px var(--seam);
-  }
 }
 
 .glyph {
@@ -104,20 +100,29 @@
   place-items: center;
   width: 100%;
   flex: 1 1 auto;
-  min-height: 36px;
+  min-height: 44px;
+  color: var(--ink);
   background: var(--glass);
   box-shadow: inset 0 0 0 1px var(--glass-border);
-  font-size: var(--text-xl);
-  font-weight: 500;
-  letter-spacing: 0.04em;
-  text-shadow: var(--type-shadow);
+
+  & :is(svg) {
+    width: 28px;
+    height: 28px;
+    display: block;
+    stroke: currentColor;
+    fill: none;
+    stroke-linecap: square;
+    stroke-linejoin: miter;
+    stroke-width: 1.5;
+    shape-rendering: geometricPrecision;
+  }
 }
 
-.tile[data-primary] .glyph {
+.tile:hover .glyph,
+.tile:focus-visible .glyph {
   background: var(--seam);
   color: var(--maze-void);
   box-shadow: none;
-  text-shadow: none;
 }
 
 .copy {
