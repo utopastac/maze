@@ -5,9 +5,11 @@ import {
   MeshToonMaterial,
   Vector3,
   type BufferGeometry,
+  type Camera,
   type Group,
   type Quaternion,
   type Scene,
+  type WebGLRenderer,
 } from "three";
 import type { Piece, PieceKind, TowerLayout } from "../core/layout.ts";
 import { facet, token } from "./boardMaterials.ts";
@@ -74,6 +76,7 @@ export class BoardEffects {
   private readonly raindrops: RainBit[] = [];
   fireworkCooldown = 0;
   rainCooldown = 0;
+  private warmed = false;
   private readonly scene: Scene;
   private readonly ball: Mesh;
   private readonly materials: Record<PieceKind, MeshToonMaterial>;
@@ -85,6 +88,43 @@ export class BoardEffects {
     this.scene = host.scene;
     this.ball = host.ball;
     this.materials = host.materials;
+  }
+
+  /**
+   * Compile transparent debris / glass material variants once so the first
+   * hatch burst and floor crumble do not hitch on shader creation.
+   */
+  warm(renderer: WebGLRenderer, camera: Camera): void {
+    if (this.warmed) return;
+    this.warmed = true;
+    const probes: Mesh[] = [];
+    for (const source of Object.values(this.materials)) {
+      if (!(source instanceof MeshToonMaterial)) continue;
+      const mat = source.clone();
+      mat.transparent = true;
+      mat.opacity = 0.65;
+      mat.depthWrite = false;
+      const mesh = new Mesh(this.sparkGeometry, mat);
+      mesh.frustumCulled = false;
+      this.scene.add(mesh);
+      probes.push(mesh);
+    }
+    const sparkMat = new MeshBasicMaterial({
+      transparent: true,
+      opacity: 1,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const spark = new Mesh(this.sparkGeometry, sparkMat);
+    spark.frustumCulled = false;
+    this.scene.add(spark);
+    probes.push(spark);
+    renderer.compile(this.scene, camera);
+    for (const mesh of probes) {
+      this.scene.remove(mesh);
+      const mat = mesh.material;
+      if (!Array.isArray(mat)) mat.dispose();
+    }
   }
 
   private get tower(): TowerLayout | null {

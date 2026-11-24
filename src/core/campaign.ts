@@ -13,6 +13,8 @@ import { parseFloorTheme, themeForFloor, type FloorThemeId } from "./theme.ts";
 export { decorateMaze } from "./decorate.ts";
 
 export const CAMPAIGN_FLOORS = 100;
+/** How many stacked floors are live in sim/render during a campaign run. */
+export const CAMPAIGN_FLOOR_WINDOW = 5;
 export const CAMPAIGN_LIVES = 3;
 
 const SIZE_MIN = 5;

@@ -1,5 +1,6 @@
 import {
   CAMPAIGN_FLOORS,
+  CAMPAIGN_FLOOR_WINDOW,
   CAMPAIGN_LIVES,
   campaignSizes,
   campaignThemes,
@@ -115,6 +116,10 @@ export class App {
   private shareTimer = 0;
   private floorAt = 1;
   private floorCount = 1;
+  /** Last campaign floor index (0-based) currently mounted in sim/view. */
+  private campaignLoadedThrough = -1;
+  /** True after the next campaign floor was prefetched during a hatch fall. */
+  private campaignFallPrefetch = false;
   private floorCaption: string | null = null;
   private titleCaption = "Untitled";
   private readonly input: PlayInput;
@@ -339,6 +344,8 @@ export class App {
       this.applyRoute(route, true);
     }
     this.resize();
+    // Compile burst/crumble shader variants during boot, not on the first hatch fall.
+    this.view.warmBurstEffects(this.renderer);
     this.last = performance.now();
     requestAnimationFrame(this.frame);
   }
@@ -530,12 +537,14 @@ export class App {
     this.mode = "campaign";
     this.authored = null;
     const start = Math.min(campaign.floors.length - 1, Math.max(0, fromFloor - 1));
-    const count = Math.min(3, campaign.floors.length - start);
+    const count = Math.min(CAMPAIGN_FLOOR_WINDOW, campaign.floors.length - start);
     const plans = campaign.floors.slice(start, start + count).map((floor, index) => ({
       maze: floor.maze,
       goal: start + index === campaign.floors.length - 1,
     }));
     this.tower = { floors: plans.map((plan) => plan.maze) };
+    this.campaignLoadedThrough = start + count - 1;
+    this.campaignFallPrefetch = false;
     this.hud.setCampaign(true);
     this.hud.setLives(this.lives);
     this.beginRun(layoutPlans(plans), start + 1, CAMPAIGN_FLOORS);
@@ -978,6 +987,7 @@ export class App {
     const pitch = this.phase === "won" || this.phase === "lost" ? 0 : this.tilt.pitch;
     const roll = this.phase === "won" || this.phase === "lost" ? 0 : this.tilt.roll;
     const event = sim.update(dt, pitch, roll);
+    const pose = sim.pose();
     const pickedHearts = sim.takeHearts();
     const pickedCoins = sim.takeCoins();
     const pickedStars = sim.takeStars();
@@ -988,6 +998,17 @@ export class App {
     if (this.phase === "play" && pickedStars.length > 0) this.pickStars(pickedStars);
     if (this.phase === "play" && pickedWings.length > 0) this.pickWings(pickedWings);
     if (this.phase === "play" && pickedGhosts.length > 0) this.pickGhosts(pickedGhosts);
+    // After the hatch-burst frame, build the next campaign floor during the fall
+    // so landing does not hitch on layout / mesh / collider creation.
+    if (
+      this.phase === "play"
+      && this.mode === "campaign"
+      && pose.fallingThrough
+      && !this.campaignFallPrefetch
+    ) {
+      this.campaignFallPrefetch = true;
+      requestAnimationFrame(() => this.extendCampaign());
+    }
     if (this.phase === "play" && event === "fell") this.drop();
     else if (this.phase === "play" && event === "escape") this.beginEscape();
     else if ((this.phase === "play" || this.phase === "escaping") && event === "goal") this.win();
@@ -1000,7 +1021,7 @@ export class App {
     const tiltLimit = Math.max(this.settings.tiltRad, 0.001);
     this.hud.setTilt(this.tilt.roll / tiltLimit, this.tilt.pitch / tiltLimit);
 
-    view.update(now / 1000, sim.pose());
+    view.update(now / 1000, pose);
     renderer.render(view.scene, view.camera);
     this.playHud.update(dt, this.reduceMotion);
     requestAnimationFrame(this.frame);
@@ -1050,9 +1071,11 @@ export class App {
     this.floorAt += 1;
     this.setFloorCaption(this.floorAt, this.floorCount);
     this.syncPlayHud();
+    this.campaignFallPrefetch = false;
     if (this.mode === "campaign") {
+      // Prefer prefetch during the fall; keep a safety append if that missed.
       this.extendCampaign();
-      this.autosaveTowerProgress();
+      requestAnimationFrame(() => this.autosaveTowerProgress());
     }
     this.clearShareNote();
     this.hud.setNote("");
@@ -1078,15 +1101,15 @@ export class App {
     const sim = this.sim;
     const view = this.view;
     if (!campaign || !sim || !view) return;
-    const index = this.floorAt + 1;
+    const index = this.campaignLoadedThrough + 1;
     const floor = campaign.floors[index];
-    if (floor) {
-      const layout = layoutMaze(floor.maze, index === campaign.floors.length - 1, true);
-      sim.appendFloor(layout);
-      view.appendFloor(layout);
-      this.coinsMax += floor.maze.coins.length;
-      this.syncCollectHud();
-    }
+    if (!floor) return;
+    const layout = layoutMaze(floor.maze, index === campaign.floors.length - 1, true);
+    sim.appendFloor(layout);
+    view.appendFloor(layout);
+    this.campaignLoadedThrough = index;
+    this.coinsMax += floor.maze.coins.length;
+    this.syncCollectHud();
   }
 
   private pickHearts(cells: string[]): void {

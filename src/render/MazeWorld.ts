@@ -30,6 +30,7 @@ import {
   type Material,
   type Quaternion,
   type Texture,
+  type WebGLRenderer,
 } from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import {
@@ -1099,6 +1100,11 @@ export class MazeWorld {
     tower.depth = Math.max(tower.depth, layout.depth);
     this.setGoalLightsVisible(true);
     this.fit();
+  }
+
+  /** Precompile burst/crumble shader variants so the first descend does not hitch. */
+  warmBurstEffects(renderer: WebGLRenderer): void {
+    this.fx.warm(renderer, this.camera);
   }
 
   collectHeart(cell: string): void {
